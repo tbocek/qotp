@@ -43,6 +43,10 @@ type packetData struct {
 	remoteAddr string
 }
 
+var (
+	bandwidth = 10000 // 10KB/s
+)
+
 // NewConnPair creates a pair of connected NetworkConn implementations
 func NewConnPair(addr1 string, addr2 string) *ConnPair {
 	conn1 := newPairedConn(addr1)
@@ -58,28 +62,58 @@ func NewConnPair(addr1 string, addr2 string) *ConnPair {
 	}
 }
 
-func (c *ConnPair) senderRawToRecipient(addr string, raw []byte) error {
-	return c.Conn1.CopyDataRaw(addr, raw)
+func (c *ConnPair) senderRawToRecipient(addr string, raw []byte) (nextNow uint64, err error) {
+	err = c.Conn1.CopyDataRaw(addr, raw)
+	if err != nil {
+		return 0, err
+	}
+	timeMicros := uint64(len(raw) * 1000000 / bandwidth)
+	return timeMicros, nil
 }
 
-func (c *ConnPair) senderToRecipient(sequence ...int) error {
-	return c.Conn1.CopyData(sequence...)
+func (c *ConnPair) senderToRecipient(sequence ...int) (nextNow uint64, err error) {
+	n, err := c.Conn1.CopyData(sequence...)
+	if err != nil {
+		return 0, err
+	}
+	timeMicros := uint64(n * 1000000 / bandwidth)
+	return timeMicros, nil
 }
 
-func (c *ConnPair) senderToRecipientAll() error {
-	return c.Conn1.SimpleDataCopy()
+func (c *ConnPair) senderToRecipientAll() (nextNow uint64, err error) {
+	n, err := c.Conn1.SimpleDataCopy()
+	if err != nil {
+		return 0, err
+	}
+	timeMicros := uint64(n * 1000000 / bandwidth)
+	return timeMicros, nil
 }
 
-func (c *ConnPair) recipientToSenderAll() error {
-	return c.Conn2.SimpleDataCopy()
+func (c *ConnPair) recipientToSenderAll() (nextNow uint64, err error) {
+	n, err := c.Conn2.SimpleDataCopy()
+	if err != nil {
+		return 0, err
+	}
+	timeMicros := uint64(n * 1000000 / bandwidth)
+	return timeMicros, nil
 }
 
-func (c *ConnPair) recipientRawToSender(addr string, raw []byte) error {
-	return c.Conn2.CopyDataRaw(addr, raw)
+func (c *ConnPair) recipientRawToSender(addr string, raw []byte) (nextNow uint64, err error) {
+	err = c.Conn2.CopyDataRaw(addr, raw)
+	if err != nil {
+		return 0, err
+	}
+	timeMicros := uint64(len(raw) * 1000000 / bandwidth)
+	return timeMicros, nil
 }
 
-func (c *ConnPair) recipientToSender(sequence ...int) error {
-	return c.Conn2.CopyData(sequence...)
+func (c *ConnPair) recipientToSender(sequence ...int) (nextNow uint64, err error) {
+	n, err := c.Conn2.CopyData(sequence...)
+	if err != nil {
+		return 0, err
+	}
+	timeMicros := uint64(n * 1000000 / bandwidth)
+	return timeMicros, nil
 }
 
 func (c *ConnPair) nrOutgoingPacketsSender() int {
@@ -109,7 +143,7 @@ func newPairedConn(localAddr string) *PairedConn {
 }
 
 // ReadFromUDPAddrPort reads data from the read queue
-func (p *PairedConn) ReadFromUDPAddrPort(buf []byte, _ time.Duration) (int, netip.AddrPort, error) {
+func (p *PairedConn) ReadFromUDPAddrPort(buf []byte, d time.Duration) (int, netip.AddrPort, error) {
 	if p.isClosed() {
 		return 0, netip.AddrPort{}, errors.New("connection closed")
 	}
@@ -129,6 +163,7 @@ func (p *PairedConn) ReadFromUDPAddrPort(buf []byte, _ time.Duration) (int, neti
 
 	}
 
+	time.Sleep(d)
 	// No packets available at this time
 	return 0, netip.AddrPort{}, nil
 }
@@ -187,36 +222,33 @@ func (p *PairedConn) CopyDataRaw(addr string, raw []byte) error {
 	return nil
 }
 
-func (p *PairedConn) CopyData(sequence ...int) error {
+func (p *PairedConn) CopyData(sequence ...int) (int, error) {
 	if p.isClosed() {
-		return errors.New("connection closed")
+		return 0, errors.New("connection closed")
 	}
 	if p.partner == nil || p.partner.isClosed() {
-		return errors.New("no partner connection or partner closed")
+		return 0, errors.New("no partner connection or partner closed")
 	}
-
 	// Lock write queue to ensure atomicity
 	p.writeQueueMu.Lock()
 	defer p.writeQueueMu.Unlock()
-
 	// Early return if no data to process
 	if len(p.writeQueue) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	currentPos := 0
+	totalBytesSent := 0
 
 	for _, count := range sequence {
 		// Skip zero values (do nothing)
 		if count == 0 {
 			continue
 		}
-
 		// Check if we've reached the end of the queue
 		if currentPos >= len(p.writeQueue) {
 			break
 		}
-
 		if count > 0 {
 			// Positive: Copy 'count' packets
 			copyCount := count
@@ -224,16 +256,17 @@ func (p *PairedConn) CopyData(sequence ...int) error {
 			if currentPos+copyCount > len(p.writeQueue) {
 				copyCount = len(p.writeQueue) - currentPos
 			}
-
+			// Calculate bytes for packets being sent
+			for i := currentPos; i < currentPos+copyCount; i++ {
+				totalBytesSent += len(p.writeQueue[i].data)
+			}
 			// Copy packets to partner's read queue
 			p.partner.readQueueMu.Lock()
 			p.partner.readQueue = append(p.partner.readQueue,
 				p.writeQueue[currentPos:currentPos+copyCount]...)
 			p.partner.readQueueMu.Unlock()
-
 			// Move current position forward
 			currentPos += copyCount
-
 		} else {
 			// Negative: Drop 'abs(count)' packets
 			dropCount := -count // Convert to positive
@@ -241,24 +274,21 @@ func (p *PairedConn) CopyData(sequence ...int) error {
 			if currentPos+dropCount > len(p.writeQueue) {
 				dropCount = len(p.writeQueue) - currentPos
 			}
-
 			// Just advance position (effectively dropping packets)
 			currentPos += dropCount
 		}
 	}
-
 	// Remove processed packets from write queue
 	if currentPos >= len(p.writeQueue) {
 		p.writeQueue = p.writeQueue[:0] // Clear the queue
 	} else {
 		p.writeQueue = p.writeQueue[currentPos:] // Keep remaining packets
 	}
-
-	return nil
+	return totalBytesSent, nil
 }
 
 // SimpleDataCopy is a convenience wrapper for copying all packets
-func (p *PairedConn) SimpleDataCopy() error {
+func (p *PairedConn) SimpleDataCopy() (int, error) {
 	return p.CopyData(len(p.writeQueue))
 }
 
@@ -326,7 +356,7 @@ func TestWriteAndReadUDP(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, len(testData), n)
 
-	err = connPair.senderToRecipient(1)
+	_, err = connPair.senderToRecipient(1)
 	assert.NoError(t, err)
 
 	// Read on receiver side
@@ -352,7 +382,7 @@ func TestWriteAndReadUDPBidirectional(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, len(dataFromEndpoint1), n1)
 
-	err = connPair.senderToRecipient(1)
+	_, err = connPair.senderToRecipient(1)
 	assert.NoError(t, err)
 
 	// Endpoint 2 reads from Endpoint 1
@@ -367,7 +397,7 @@ func TestWriteAndReadUDPBidirectional(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, len(dataFromEndpoint2), n3)
 
-	err = connPair.recipientToSender(1)
+	_, err = connPair.recipientToSender(1)
 	assert.NoError(t, err)
 
 	// Endpoint 1 reads response from Endpoint 2
@@ -444,7 +474,7 @@ func TestMultipleWrites(t *testing.T) {
 		assert.Equal(t, len(msg), n)
 	}
 
-	err := connPair.senderToRecipient(3)
+	_, err := connPair.senderToRecipient(3)
 	assert.NoError(t, err)
 
 	// Read and verify all messages in order
@@ -488,7 +518,7 @@ func TestWriteAndReadUDPWithDrop(t *testing.T) {
 	assert.Equal(t, len(testData2), n2)
 
 	// Copy the first packet and drop the second one
-	err = connPair.senderToRecipient(1, -1) // Copy packet 1, Drop packet 2
+	_, err = connPair.senderToRecipient(1, -1) // Copy packet 1, Drop packet 2
 	assert.NoError(t, err)
 
 	// Read on receiver side - should only receive packet 1
@@ -502,4 +532,280 @@ func TestWriteAndReadUDPWithDrop(t *testing.T) {
 	n, _, err = receiver.ReadFromUDPAddrPort(buffer, 0)
 	assert.NoError(t, err) // Should return no error but zero bytes
 	assert.Equal(t, 0, n)
+}
+
+// Add these tests to your existing test file
+
+func TestBandwidthTimingCalculation(t *testing.T) {
+	// Create a connection pair
+	connPair := NewConnPair("sender", "receiver")
+	sender := connPair.Conn1
+
+	// Test data of known size
+	testData := make([]byte, 1000) // 1KB
+	for i := range testData {
+		testData[i] = byte(i % 256)
+	}
+
+	// Write data
+	n, err := sender.WriteToUDPAddrPort(testData, netip.AddrPort{})
+	assert.NoError(t, err)
+	assert.Equal(t, len(testData), n)
+
+	// Copy data and measure time
+	elapsed, err := connPair.senderToRecipient(1)
+	assert.NoError(t, err)
+
+	// Expected time: 1000 bytes / 10000 bytes/s = 0.1s = 100,000 microseconds
+	expectedTime := uint64(1000 * 1000000 / bandwidth)
+	assert.Equal(t, expectedTime, elapsed)
+	assert.Equal(t, uint64(100000), elapsed) // 100ms in microseconds
+}
+
+func TestBandwidthTimingMultiplePackets(t *testing.T) {
+	// Create a connection pair
+	connPair := NewConnPair("sender", "receiver")
+	sender := connPair.Conn1
+
+	// Create multiple packets of different sizes
+	packet1 := make([]byte, 500)  // 0.5KB
+	packet2 := make([]byte, 1500) // 1.5KB
+	packet3 := make([]byte, 2000) // 2KB
+
+	// Total: 4KB
+
+	// Write all packets
+	_, err := sender.WriteToUDPAddrPort(packet1, netip.AddrPort{})
+	assert.NoError(t, err)
+	_, err = sender.WriteToUDPAddrPort(packet2, netip.AddrPort{})
+	assert.NoError(t, err)
+	_, err = sender.WriteToUDPAddrPort(packet3, netip.AddrPort{})
+	assert.NoError(t, err)
+
+	// Copy all packets
+	elapsed, err := connPair.senderToRecipient(3)
+	assert.NoError(t, err)
+
+	// Expected time: 4000 bytes / 10000 bytes/s = 0.4s = 400,000 microseconds
+	expectedTime := uint64(4000 * 1000000 / bandwidth)
+	assert.Equal(t, expectedTime, elapsed)
+	assert.Equal(t, uint64(400000), elapsed) // 400ms in microseconds
+}
+
+func TestBandwidthTimingWithDrops(t *testing.T) {
+	// Create a connection pair
+	connPair := NewConnPair("sender", "receiver")
+	sender := connPair.Conn1
+
+	// Create packets
+	packet1 := make([]byte, 1000) // 1KB - will be sent
+	packet2 := make([]byte, 2000) // 2KB - will be dropped
+	packet3 := make([]byte, 500)  // 0.5KB - will be sent
+
+	// Write all packets
+	_, err := sender.WriteToUDPAddrPort(packet1, netip.AddrPort{})
+	assert.NoError(t, err)
+	_, err = sender.WriteToUDPAddrPort(packet2, netip.AddrPort{})
+	assert.NoError(t, err)
+	_, err = sender.WriteToUDPAddrPort(packet3, netip.AddrPort{})
+	assert.NoError(t, err)
+
+	// Send packet1, drop packet2, send packet3
+	elapsed, err := connPair.senderToRecipient(1, -1, 1)
+	assert.NoError(t, err)
+
+	// Expected time: only sent packets count (1000 + 500 = 1500 bytes)
+	// 1500 bytes / 10000 bytes/s = 0.15s = 150,000 microseconds
+	expectedTime := uint64(1500 * 1000000 / bandwidth)
+	assert.Equal(t, expectedTime, elapsed)
+	assert.Equal(t, uint64(150000), elapsed) // 150ms in microseconds
+}
+
+func TestBandwidthTimingRawData(t *testing.T) {
+	// Create a connection pair
+	connPair := NewConnPair("sender", "receiver")
+
+	// Test raw data
+	rawData := make([]byte, 2500) // 2.5KB
+	for i := range rawData {
+		rawData[i] = byte(i % 256)
+	}
+
+	// Send raw data
+	elapsed, err := connPair.senderRawToRecipient("test-addr", rawData)
+	assert.NoError(t, err)
+
+	// Expected time: 2500 bytes / 10000 bytes/s = 0.25s = 250,000 microseconds
+	expectedTime := uint64(2500 * 1000000 / bandwidth)
+	assert.Equal(t, expectedTime, elapsed)
+	assert.Equal(t, uint64(250000), elapsed) // 250ms in microseconds
+}
+
+func TestBandwidthTimingSimpleDataCopy(t *testing.T) {
+	// Create a connection pair
+	connPair := NewConnPair("sender", "receiver")
+	sender := connPair.Conn1
+
+	// Create test packets
+	packets := [][]byte{
+		make([]byte, 800),  // 0.8KB
+		make([]byte, 1200), // 1.2KB
+		make([]byte, 3000), // 3KB
+	}
+	// Total: 5KB
+
+	// Write all packets
+	for _, packet := range packets {
+		_, err := sender.WriteToUDPAddrPort(packet, netip.AddrPort{})
+		assert.NoError(t, err)
+	}
+
+	// Copy all packets using SimpleDataCopy
+	elapsed, err := connPair.senderToRecipientAll()
+	assert.NoError(t, err)
+
+	// Expected time: 5000 bytes / 10000 bytes/s = 0.5s = 500,000 microseconds
+	expectedTime := uint64(5000 * 1000000 / bandwidth)
+	assert.Equal(t, expectedTime, elapsed)
+	assert.Equal(t, uint64(500000), elapsed) // 500ms in microseconds
+}
+
+func TestBandwidthTimingBidirectional(t *testing.T) {
+	// Create a connection pair
+	connPair := NewConnPair("endpoint1", "endpoint2")
+	endpoint1 := connPair.Conn1
+	endpoint2 := connPair.Conn2
+
+	// Data from endpoint1 to endpoint2
+	data1to2 := make([]byte, 1500) // 1.5KB
+	_, err := endpoint1.WriteToUDPAddrPort(data1to2, netip.AddrPort{})
+	assert.NoError(t, err)
+
+	// Data from endpoint2 to endpoint1
+	data2to1 := make([]byte, 2500) // 2.5KB
+	_, err = endpoint2.WriteToUDPAddrPort(data2to1, netip.AddrPort{})
+	assert.NoError(t, err)
+
+	// Send from endpoint1 to endpoint2
+	elapsed1, err := connPair.senderToRecipient(1)
+	assert.NoError(t, err)
+	expectedTime1 := uint64(1500 * 1000000 / bandwidth)
+	assert.Equal(t, expectedTime1, elapsed1)
+
+	// Send from endpoint2 to endpoint1
+	elapsed2, err := connPair.recipientToSender(1)
+	assert.NoError(t, err)
+	expectedTime2 := uint64(2500 * 1000000 / bandwidth)
+	assert.Equal(t, expectedTime2, elapsed2)
+}
+
+func TestBandwidthTimingZeroBytes(t *testing.T) {
+	// Create a connection pair
+	connPair := NewConnPair("sender", "receiver")
+
+	// Test with no packets in queue
+	elapsed, err := connPair.senderToRecipientAll()
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(0), elapsed) // No data = no time
+
+	// Test with zero-length packet
+	sender := connPair.Conn1
+	_, err = sender.WriteToUDPAddrPort([]byte{}, netip.AddrPort{})
+	assert.NoError(t, err)
+
+	elapsed, err = connPair.senderToRecipient(1)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(0), elapsed) // Zero bytes = zero time
+}
+
+func TestBandwidthTiming1KBPerSecond(t *testing.T) {
+	// Save original bandwidth
+	originalBandwidth := bandwidth
+	defer func() { bandwidth = originalBandwidth }()
+
+	// Set bandwidth to 1KB/s
+	bandwidth = 1000
+
+	// Create connection pair
+	connPair := NewConnPair("sender", "receiver")
+	sender := connPair.Conn1
+
+	// Create 1KB test data
+	testData := make([]byte, 1000)
+	_, err := sender.WriteToUDPAddrPort(testData, netip.AddrPort{})
+	assert.NoError(t, err)
+
+	// Measure elapsed time
+	elapsed, err := connPair.senderToRecipient(1)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(1000000), elapsed) // 1 second in microseconds
+}
+
+func TestBandwidthTiming100KBPerSecond(t *testing.T) {
+	// Save original bandwidth
+	originalBandwidth := bandwidth
+	defer func() { bandwidth = originalBandwidth }()
+
+	// Set bandwidth to 100KB/s
+	bandwidth = 100000
+
+	// Create connection pair
+	connPair := NewConnPair("sender", "receiver")
+	sender := connPair.Conn1
+
+	// Create 1KB test data
+	testData := make([]byte, 1000)
+	_, err := sender.WriteToUDPAddrPort(testData, netip.AddrPort{})
+	assert.NoError(t, err)
+
+	// Measure elapsed time
+	elapsed, err := connPair.senderToRecipient(1)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(10000), elapsed) // 10ms in microseconds
+}
+
+func TestBandwidthTiming1MBPerSecond(t *testing.T) {
+	// Save original bandwidth
+	originalBandwidth := bandwidth
+	defer func() { bandwidth = originalBandwidth }()
+
+	// Set bandwidth to 1MB/s
+	bandwidth = 1000000
+
+	// Create connection pair
+	connPair := NewConnPair("sender", "receiver")
+	sender := connPair.Conn1
+
+	// Create 1KB test data
+	testData := make([]byte, 1000)
+	_, err := sender.WriteToUDPAddrPort(testData, netip.AddrPort{})
+	assert.NoError(t, err)
+
+	// Measure elapsed time
+	elapsed, err := connPair.senderToRecipient(1)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(1000), elapsed) // 1ms in microseconds
+}
+
+func TestBandwidthTiming10KBPerSecondWith5KBData(t *testing.T) {
+	// Save original bandwidth
+	originalBandwidth := bandwidth
+	defer func() { bandwidth = originalBandwidth }()
+
+	// Set bandwidth to 10KB/s
+	bandwidth = 10000
+
+	// Create connection pair
+	connPair := NewConnPair("sender", "receiver")
+	sender := connPair.Conn1
+
+	// Create 5KB test data
+	testData := make([]byte, 5000)
+	_, err := sender.WriteToUDPAddrPort(testData, netip.AddrPort{})
+	assert.NoError(t, err)
+
+	// Measure elapsed time
+	elapsed, err := connPair.senderToRecipient(1)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(500000), elapsed) // 500ms in microseconds
 }

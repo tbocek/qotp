@@ -5,7 +5,9 @@ import (
 	"errors"
 	"github.com/stretchr/testify/assert"
 	"net/netip"
+	"sync"
 	"testing"
+	"time"
 )
 
 func createTwoStreams(
@@ -63,7 +65,7 @@ func TestOneStream(t *testing.T) {
 	assert.Nil(t, err)
 
 	// Process and forward the data
-	err = connPair.senderToRecipient(1)
+	_, err = connPair.senderToRecipient(1)
 	assert.Nil(t, err)
 
 	// Received data
@@ -102,7 +104,7 @@ func TestTwoStream(t *testing.T) {
 	assert.Nil(t, err)
 
 	// we send one packet
-	err = connPair.senderToRecipient(1)
+	_, err = connPair.senderToRecipient(1)
 	assert.Nil(t, err)
 
 	// Received data, verification
@@ -117,7 +119,7 @@ func TestTwoStream(t *testing.T) {
 	_, err = listenerB.Flush(nil, 0)
 	assert.Nil(t, err)
 
-	err = connPair.recipientToSender(1)
+	_, err = connPair.recipientToSender(1)
 	assert.Nil(t, err)
 
 	_, err = connA.listener.Listen(0, 0)
@@ -131,7 +133,7 @@ func TestTwoStream(t *testing.T) {
 	stateA, err = connA.listener.Flush(stateA, 0)
 	assert.Nil(t, err)
 
-	err = connPair.senderToRecipient(1)
+	_, err = connPair.senderToRecipient(1)
 	assert.Nil(t, err)
 
 	streamB2, err := listenerB.Listen(0, 0)
@@ -157,12 +159,12 @@ func TestRTO(t *testing.T) {
 	_, err = connA.listener.Flush(nil, 0)
 	assert.Nil(t, err)
 
-	err = connPair.senderToRecipient(-1)
+	_, err = connPair.senderToRecipient(-1)
 
 	_, err = connA.listener.Flush(nil, 250*1000+1)
 	assert.Nil(t, err)
 
-	err = connPair.senderToRecipient(1)
+	_, err = connPair.senderToRecipient(1)
 
 	streamB, err := listenerB.Listen(0, 0)
 	assert.Nil(t, err)
@@ -181,19 +183,19 @@ func TestRTOTimes4Success(t *testing.T) {
 	assert.Nil(t, err)
 	_, err = connA.listener.Flush(nil, 0)
 	assert.Nil(t, err)
-	err = connPair.senderToRecipient(-1)
+	_, err = connPair.senderToRecipient(-1)
 	_, err = connA.listener.Flush(nil, 200000+1)
 	assert.Nil(t, err)
-	err = connPair.senderToRecipient(-1)
+	_, err = connPair.senderToRecipient(-1)
 	_, err = connA.listener.Flush(nil, 200000+400000+2)
 	assert.Nil(t, err)
-	err = connPair.senderToRecipient(-1)
+	_, err = connPair.senderToRecipient(-1)
 	_, err = connA.listener.Flush(nil, 200000+400000+800000+3)
 	assert.Nil(t, err)
-	err = connPair.senderToRecipient(-1)
+	_, err = connPair.senderToRecipient(-1)
 	_, err = connA.listener.Flush(nil, 200000+400000+800000+1600000+4)
 	assert.Nil(t, err)
-	err = connPair.senderToRecipient(1)
+	_, err = connPair.senderToRecipient(1)
 	streamB, err := listenerB.Listen(0, 0)
 	assert.Nil(t, err)
 	assert.True(t, streamB.state == StreamStateOpen)
@@ -213,21 +215,21 @@ func TestRTOTimes4Fail(t *testing.T) {
 	assert.Nil(t, err)
 	_, err = connA.listener.Flush(nil, 0)
 	assert.Nil(t, err)
-	err = connPair.senderToRecipient(-1)
+	_, err = connPair.senderToRecipient(-1)
 
-	err = connPair.senderToRecipient(-1)
+	_, err = connPair.senderToRecipient(-1)
 	_, err = connA.listener.Flush(nil, 200000+1)
 	assert.Nil(t, err)
-	err = connPair.senderToRecipient(-1)
+	_, err = connPair.senderToRecipient(-1)
 	_, err = connA.listener.Flush(nil, 200000+400000+2)
 	assert.Nil(t, err)
-	err = connPair.senderToRecipient(-1)
+	_, err = connPair.senderToRecipient(-1)
 	_, err = connA.listener.Flush(nil, 200000+400000+800000+3)
 	assert.Nil(t, err)
-	err = connPair.senderToRecipient(-1)
+	_, err = connPair.senderToRecipient(-1)
 	_, err = connA.listener.Flush(nil, 200000+400000+800000+1600000+4)
 	assert.Nil(t, err)
-	err = connPair.senderToRecipient(-1)
+	_, err = connPair.senderToRecipient(-1)
 	_, err = connA.listener.Flush(nil, 200000+400000+800000+1600000+3200000+5)
 	assert.Nil(t, err)
 
@@ -252,7 +254,7 @@ func TestCloseAWithInit(t *testing.T) {
 	assert.Nil(t, err)
 
 	// Simulate packet transfer (data packet with FIN flag)
-	err = connPair.senderToRecipient(1)
+	_, err = connPair.senderToRecipient(1)
 	assert.Nil(t, err)
 
 	// Listener B receives data
@@ -270,7 +272,7 @@ func TestCloseAWithInit(t *testing.T) {
 	_, err = streamB.conn.listener.Flush(nil, 0)
 
 	// B sends ACK back to A
-	err = connPair.recipientToSender(1)
+	_, err = connPair.recipientToSender(1)
 	assert.Nil(t, err)
 
 	streamA, err = streamA.conn.listener.Listen(0, 0)
@@ -298,7 +300,7 @@ func TestCloseBWithInit(t *testing.T) {
 	assert.Nil(t, err)
 
 	// Simulate packet transfer (data packet with FIN flag)
-	err = connPair.senderToRecipient(1)
+	_, err = connPair.senderToRecipient(1)
 	assert.Nil(t, err)
 
 	// Listener B receives data
@@ -318,7 +320,7 @@ func TestCloseBWithInit(t *testing.T) {
 	_, err = streamB.conn.listener.Flush(nil, 0)
 
 	// B sends ACK back to A
-	err = connPair.recipientToSender(1)
+	_, err = connPair.recipientToSender(1)
 	assert.Nil(t, err)
 
 	streamA, err = streamA.conn.listener.Listen(0, 0)
@@ -346,7 +348,7 @@ func TestGarbage1(t *testing.T) {
 
 	// Simulate packet transfer (data packet with FIN flag)
 	data := make([]byte, 1400)
-	err = connPair.senderRawToRecipient("tmp", data)
+	_, err = connPair.senderRawToRecipient("tmp", data)
 	assert.Nil(t, err)
 
 	// Listener B receives data
@@ -370,7 +372,7 @@ func TestGarbage2(t *testing.T) {
 	assert.Nil(t, err)
 
 	// Simulate packet transfer (data packet with FIN flag)
-	err = connPair.senderToRecipient(1)
+	_, err = connPair.senderToRecipient(1)
 	assert.Nil(t, err)
 
 	// Listener B receives data
@@ -383,7 +385,7 @@ func TestGarbage2(t *testing.T) {
 
 	// Simulate packet transfer (data packet with FIN flag)
 	data := make([]byte, 1400)
-	err = connPair.recipientRawToSender("tmp", data)
+	_, err = connPair.recipientRawToSender("tmp", data)
 	assert.Nil(t, err)
 
 	streamA, err = streamA.conn.listener.Listen(0, 0)
@@ -408,7 +410,7 @@ func TestBBR(t *testing.T) {
 
 	//send data
 	assert.Equal(t, 1, connPair.nrOutgoingPacketsSender())
-	err = connPair.senderToRecipientAll()
+	_, err = connPair.senderToRecipientAll()
 	assert.Nil(t, err)
 	assert.Equal(t, 1, connPair.nrIncomingPacketsRecipient())
 
@@ -424,7 +426,7 @@ func TestBBR(t *testing.T) {
 
 	//send data
 	assert.Equal(t, 1, connPair.nrOutgoingPacketsReceiver())
-	err = connPair.recipientToSenderAll()
+	_, err = connPair.recipientToSenderAll()
 	assert.Nil(t, err)
 	assert.Equal(t, 1, connPair.nrIncomingPacketsSender())
 	streamA, err = connA.listener.Listen(0, 0)
@@ -432,9 +434,7 @@ func TestBBR(t *testing.T) {
 	assert.Equal(t, uint64(64285), streamA.conn.rcvWndSize)
 
 	//Handshake done, send dataaaaaaaaa
-	n := 1
-	var state *FlushState
-	for n != 0 {
+	for n, state := 1, (*FlushState)(nil); n != 0; {
 		state, err = streamA.conn.listener.Flush(state, 0)
 		assert.Nil(t, err)
 		n = state.bytesSentPerRound
@@ -449,50 +449,68 @@ func TestBBR2(t *testing.T) {
 	connA, listenerB, err := createTwoStreams(connPair.Conn1, connPair.Conn2, testPrvKey1, testPrvKey2)
 	assert.Nil(t, err)
 
-	//write 64k
+	var totalBytesReceived uint64
+	var mu sync.Mutex
+
+	loop(connA.listener, func(s *Stream) {
+		data, _ := s.Read()
+		mu.Lock()
+		totalBytesReceived += uint64(len(data))
+		mu.Unlock()
+	})
+	loop(listenerB, func(s *Stream) {
+		data, _ := s.Read()
+		mu.Lock()
+		totalBytesReceived += uint64(len(data))
+		mu.Unlock()
+	})
+
 	streamA := connA.Stream(0)
-	dataA := make([]byte, initBufferCapacity+1)
-	dataARemaining, err := streamA.Write(dataA)
-	assert.Nil(t, err)
-	assert.Equal(t, 1, len(dataARemaining))
-	assert.Equal(t, 65535, streamA.conn.rbSnd.totalSize)
-	streamA.conn.listener.Flush(nil, 0)
-	err = connPair.senderToRecipientAll()
+
+	dataA := make([]byte, initBufferCapacity)
+	_, err = streamA.Write(dataA)
 	assert.Nil(t, err)
 
-	streamB, err := listenerB.Listen(0, 0)
-	assert.Nil(t, err)
-	streamB.conn.listener.Flush(nil, 0)
-	err = connPair.recipientToSenderAll()
-	assert.Nil(t, err)
+	streamA.Close()
+	nr := 0
+	for {
+		mu.Lock()
+		received := totalBytesReceived
+		mu.Unlock()
 
-	bandwidth := uint64(125000) // 1 Mbps
-	latency := uint64(20000)    // 20ms one-way latency
-	n := calculateTxTime(1400, bandwidth, latency)
-
-	streamA, err = connA.listener.Listen(0, n)
-	assert.Nil(t, err)
-	streamA.conn.listener.Flush(nil, 0)
-	err = connPair.senderToRecipientAll()
-	assert.Nil(t, err)
-
-	streamB, err = listenerB.Listen(0, 0)
-	assert.Nil(t, err)
-	streamB.conn.listener.Flush(nil, 0)
-	err = connPair.recipientToSenderAll()
-	assert.Nil(t, err)
-
-	n += calculateTxTime(1400, bandwidth, latency)
-
-	streamA, err = connA.listener.Listen(0, n)
-	assert.Nil(t, err)
-	streamA.conn.listener.Flush(nil, 0)
-	err = connPair.senderToRecipientAll()
-	assert.Nil(t, err)
-
+		if received >= initBufferCapacity {
+			break
+		}
+		time.Sleep(1 * time.Second)
+		nr++
+		if nr > 10 {
+			return
+		}
+	}
 }
 
-func calculateTxTime(bytes uint64, bandwidthBytesPerSec uint64, latencyMicros uint64) uint64 {
-	transmissionTime := (bytes * 1000000) / bandwidthBytesPerSec
-	return transmissionTime + latencyMicros
+func loop(l *Listener, callback func(s *Stream)) {
+	go func() {
+		for {
+			nowMicrosBeforeListen := uint64(time.Now().UnixMicro())
+			s, err := l.Listen(time.Duration(100)*time.Millisecond, nowMicrosBeforeListen)
+			if err != nil {
+				continue
+			}
+			if s != nil {
+				callback(s)
+			}
+			nowMicrosAfterListen := uint64(time.Now().UnixMicro())
+			nowMicrosFlush := nowMicrosAfterListen
+			//only spend 100ms writing
+			for n, state := 1, (*FlushState)(nil); n != 0 && 100*1000 >= nowMicrosFlush-nowMicrosAfterListen; {
+				state, err = l.Flush(state, nowMicrosFlush)
+				if err != nil {
+					continue
+				}
+				n = state.bytesSentPerRound
+				nowMicrosFlush = uint64(time.Now().UnixMicro())
+			}
+		}
+	}()
 }

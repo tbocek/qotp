@@ -48,10 +48,8 @@ func (c *Connection) UpdateBBR(rttMeasurement uint64, bytesAcked uint64, nowMicr
 		// Decay the minimum (allows it to rise if network conditions change)
 		c.rttMin = (c.rttMin * 100) / c.rttMinDecayFactorPct
 	}
-	if rttMeasurement > 0 && rttMeasurement < c.rttMin*10 { // Ignore values more than 10x the min
-		if rttMeasurement < c.rttMin { //this includes the decay -> more aggressive
-			c.rttMin = rttMeasurement
-		}
+	if rttMeasurement > 0 && rttMeasurement < c.rttMin { // Ignore values more than 10x the min
+		c.rttMin = rttMeasurement
 	}
 
 	// 2. Update bandwidth estimate
@@ -61,15 +59,13 @@ func (c *Connection) UpdateBBR(rttMeasurement uint64, bytesAcked uint64, nowMicr
 	}
 	if rttMeasurement > 0 && bytesAcked > 0 {
 		instantBw := bytesAcked * 1000000 / rttMeasurement
-		if instantBw < c.bwMax*5 || c.bwMax == 0 { // Ignore suspiciously high bandwidth samples
-			if instantBw > c.bwMax { //this includes the decay -> more aggressive
-				c.bwMax = instantBw
-				c.bwInc++
-				c.bwDec = 0
-			} else {
-				c.bwInc = 0
-				c.bwDec++
-			}
+		if c.bwMax == 0 || c.bwMax < instantBw { //this includes the decay -> more aggressive
+			c.bwMax = instantBw
+			c.bwInc++
+			c.bwDec = 0
+		} else {
+			c.bwInc = 0
+			c.bwDec++
 		}
 	}
 
@@ -86,8 +82,6 @@ func (c *Connection) UpdateBBR(rttMeasurement uint64, bytesAcked uint64, nowMicr
 			c.BBR.state = BBRStateNormal //if the bandwidth did not increase for the 3rd time, slow start is over the next time
 		}
 	case BBRStateNormal:
-		// Handle probing in normal state
-
 		// In Normal state: BDP-based cwnd with gain factor
 		if c.bwMax > 0 && c.rttMin != math.MaxUint64 {
 			// Calculate Bandwidth-Delay Product (BDP)

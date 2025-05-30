@@ -186,7 +186,7 @@ func (l *Listener) Close() error {
 }
 
 func (l *Listener) Listen(timeout time.Duration, nowMicros uint64) (s *Stream, err error) {
-	buffer, remoteAddr, err := l.ReadUDP(timeout)
+	buffer, remoteAddr, err := l.readUDP(timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +248,9 @@ func (l *Listener) Flush(currentState *FlushState, nowMicros uint64) (newState *
 	if currentState.stateConn == nil {
 		currentState.stateConn = l.connMap.Min()
 		currentState.bytesSentPerRound = 0
-
+	}
+	if currentState.stateConn == nil {
+		return currentState, nil
 	}
 	c := currentState.stateConn.value
 
@@ -351,7 +353,7 @@ func (l *Listener) newConn(
 	return conn, nil
 }
 
-func (l *Listener) ReadUDP(timeout time.Duration) ([]byte, netip.AddrPort, error) {
+func (l *Listener) readUDP(timeout time.Duration) ([]byte, netip.AddrPort, error) {
 	buffer := make([]byte, maxBuffer)
 
 	numRead, remoteAddr, err := l.localConn.ReadFromUDPAddrPort(buffer, timeout)
@@ -361,15 +363,19 @@ func (l *Listener) ReadUDP(timeout time.Duration) ([]byte, netip.AddrPort, error
 		ok := errors.As(err, &netErr)
 
 		if ok && netErr.Timeout() {
-			slog.Debug("ReadUDP - net.Timeout")
+			slog.Debug("readUDP - net.Timeout")
 			return nil, netip.AddrPort{}, nil // Timeout is normal, return no dataToSend/error
 		} else {
-			slog.Error("ReadUDP - error during read", slog.Any("error", err))
+			slog.Error("readUDP - error during read", slog.Any("error", err))
 			return nil, netip.AddrPort{}, err
 		}
 	}
+	if numRead == 0 {
+		slog.Debug("readUDP - no dataAvailable")
+		return nil, remoteAddr, nil
+	}
 
-	slog.Debug("ReadUDP - dataAvailable")
+	slog.Debug("readUDP - dataAvailable")
 	return buffer[:numRead], remoteAddr, nil
 }
 
