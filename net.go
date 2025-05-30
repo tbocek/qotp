@@ -4,12 +4,14 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"syscall"
 	"time"
 )
 
 type NetworkConn interface {
 	ReadFromUDPAddrPort(p []byte, timeout time.Duration) (n int, remoteAddr netip.AddrPort, err error)
 	CancelRead() error
+	CanWriteUDP() (bool, error)
 	WriteToUDPAddrPort(p []byte, remoteAddr netip.AddrPort) (n int, err error)
 	Close() error
 	LocalAddrString() string
@@ -47,6 +49,30 @@ func (c *UDPNetworkConn) ReadFromUDPAddrPort(p []byte, timeout time.Duration) (i
 
 func (c *UDPNetworkConn) CancelRead() error {
 	return c.conn.SetReadDeadline(time.Time{})
+}
+
+func (c *UDPNetworkConn) CanWriteUDP() (bool, error) {
+	// Get the underlying file descriptor
+	file, err := c.conn.File()
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+
+	fd := int(file.Fd())
+
+	// Use select() to check if socket is ready for writing
+	fdSet := &syscall.FdSet{}
+	fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
+
+	timeout := &syscall.Timeval{Sec: 0, Usec: 0} // Non-blocking
+
+	n, err := syscall.Select(fd+1, nil, fdSet, nil, timeout)
+	if err != nil {
+		return false, err
+	}
+
+	return n > 0, nil
 }
 
 func (c *UDPNetworkConn) WriteToUDPAddrPort(p []byte, remoteAddr netip.AddrPort) (int, error) {

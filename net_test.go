@@ -138,6 +138,10 @@ func (p *PairedConn) CancelRead() error {
 	return nil
 }
 
+func (p *PairedConn) CanWriteUDP() (bool, error) {
+	return true, nil
+}
+
 // WriteToUDPAddrPort writes data to the partner connection
 func (p *PairedConn) WriteToUDPAddrPort(data []byte, remoteAddr netip.AddrPort) (int, error) {
 	if p.isClosed() {

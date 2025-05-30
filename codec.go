@@ -46,7 +46,7 @@ func (s *Stream) Overhead(hasAck bool) (overhead int) {
 
 func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgType) ([]byte, MsgType, error) {
 	p := &PayloadMeta{
-		IsClose:      s.state == StreamStateCloseReceived || s.state == StreamStateCloseRequest,
+		IsClose:      s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
 		IsSender:     s.conn.isSender,
 		RcvWndSize:   initBufferCapacity - uint64(s.conn.rbRcv.Size()),
 		Ack:          ack,
@@ -180,11 +180,11 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		conn.sharedSecret = message.SharedSecret
 		return conn, message, nil
 	case InitHandshakeR0MsgType:
-		conn := l.connMap[origConnId]
+		conn := l.connMap.Get(origConnId).value
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for InitHandshakeR0MsgType")
 		}
-		delete(l.connMap, origConnId) // only sender ep pub key connId no longer needed, we now have a proper connId
+		l.connMap.Remove(origConnId) // only sender ep pub key connId no longer needed, we now have a proper connId
 
 		slog.Debug("DecodeInitHandshakeR0",
 			debugGoroutineID(),
@@ -200,7 +200,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		}
 
 		conn.connId = Uint64(conn.prvKeyEpSnd.PublicKey().Bytes()) ^ Uint64(pubKeyEpRcv.Bytes())
-		l.connMap[conn.connId] = conn
+		l.connMap.Put(conn.connId, conn)
 		conn.pubKeyIdRcv = pubKeyIdRcv
 		conn.pubKeyEpRcv = pubKeyEpRcv
 		conn.pubKeyEpRcvRollover = pubKeyEpRcvRollover
@@ -245,11 +245,11 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		conn.sharedSecret = message.SharedSecret
 		return conn, message, nil
 	case InitWithCryptoR0MsgType:
-		conn := l.connMap[origConnId]
+		conn := l.connMap.Get(origConnId).value
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for InitWithCryptoR0")
 		}
-		delete(l.connMap, origConnId) // only sender ep pub key connId no longer needed, we now have a proper connId
+		l.connMap.Remove(origConnId) // only sender ep pub key connId no longer needed, we now have a proper connId
 
 		slog.Debug("DecodeInitWithCryptoR0", debugGoroutineID(), l.debug(remoteAddr))
 
@@ -260,7 +260,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		}
 
 		conn.connId = Uint64(conn.prvKeyEpSnd.PublicKey().Bytes()) ^ Uint64(pubKeyEpRcv.Bytes())
-		l.connMap[conn.connId] = conn
+		l.connMap.Put(conn.connId, conn)
 		conn.pubKeyEpRcv = pubKeyEpRcv
 		conn.pubKeyEpRcvRollover = pubKeyEpRcvRollover
 		conn.sharedSecret = message.SharedSecret
@@ -268,7 +268,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 
 		return conn, message, nil
 	case Data0MsgType:
-		conn := l.connMap[origConnId]
+		conn := l.connMap.Get(origConnId).value
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for Data0")
 		}
@@ -290,7 +290,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		conn.sharedSecret = message.SharedSecret
 		return conn, message, nil
 	default: //case DataMsgType:
-		conn := l.connMap[origConnId]
+		conn := l.connMap.Get(origConnId).value
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for DataMessage")
 		}

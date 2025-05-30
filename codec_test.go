@@ -157,7 +157,7 @@ func TestStreamEncode_InitialHandshakeR0(t *testing.T) {
 func TestEndToEndCodec(t *testing.T) {
 	// Setup listener
 	lAlice := &Listener{
-		connMap:  make(map[uint64]*Connection),
+		connMap:  newConnHashMap(),
 		prvKeyId: prvIdAlice,
 	}
 
@@ -179,7 +179,7 @@ func TestEndToEndCodec(t *testing.T) {
 	}
 
 	lBob := &Listener{
-		connMap:  make(map[uint64]*Connection),
+		connMap:  newConnHashMap(),
 		prvKeyId: prvIdBob,
 	}
 
@@ -194,7 +194,7 @@ func TestEndToEndCodec(t *testing.T) {
 
 	c, m, err := lBob.decode(encoded, remoteAddr)
 	require.NoError(t, err)
-	s, err := c.decode(m.PayloadRaw, m.MsgType, 0)
+	s, err := c.decode(m.PayloadRaw, 0, 0)
 	require.NoError(t, err)
 
 	_, rb := s.conn.rbRcv.RemoveOldestInOrder(s.streamId)
@@ -209,11 +209,11 @@ func TestEndToEndCodecLargeData(t *testing.T) {
 
 		// Setup listeners
 		lAlice := &Listener{
-			connMap:  make(map[uint64]*Connection),
+			connMap:  newConnHashMap(),
 			prvKeyId: prvIdAlice,
 		}
 		lBob := &Listener{
-			connMap:  make(map[uint64]*Connection),
+			connMap:  newConnHashMap(),
 			prvKeyId: prvIdBob,
 		}
 
@@ -231,7 +231,7 @@ func TestEndToEndCodecLargeData(t *testing.T) {
 			streams:             newStreamHashMap(),
 		}
 		connId := binary.LittleEndian.Uint64(prvEpAlice.PublicKey().Bytes())
-		lAlice.connMap[connId] = connAlice
+		lAlice.connMap.Put(connId, connAlice)
 		connAlice.connId = connId
 
 		streamAlice := &Stream{
@@ -256,7 +256,7 @@ func TestEndToEndCodecLargeData(t *testing.T) {
 
 			connBob, m, err := lBob.decode(encoded, remoteAddr)
 			require.NoError(t, err)
-			s, err := connBob.decode(m.PayloadRaw, m.MsgType, 0)
+			s, err := connBob.decode(m.PayloadRaw, 0, 0)
 			require.NoError(t, err)
 			_, rb := s.conn.rbRcv.RemoveOldestInOrder(s.streamId)
 			decodedData = append(decodedData, rb.data...)
@@ -268,7 +268,7 @@ func TestEndToEndCodecLargeData(t *testing.T) {
 
 			connAlice, m, err = lAlice.decode(encoded, remoteAddr)
 			require.NoError(t, err)
-			s, err = connAlice.decode(m.PayloadRaw, m.MsgType, 0)
+			s, err = connAlice.decode(m.PayloadRaw, 0, 0)
 			require.NoError(t, err)
 			//rb, err = s.ReadBytes()
 			//require.NoError(t, err)
@@ -281,11 +281,11 @@ func TestEndToEndCodecLargeData(t *testing.T) {
 func TestFullHandshakeFlow(t *testing.T) {
 	// Setup listeners
 	lAlice := &Listener{
-		connMap:  make(map[uint64]*Connection),
+		connMap:  newConnHashMap(),
 		prvKeyId: prvIdAlice,
 	}
 	lBob := &Listener{
-		connMap:  make(map[uint64]*Connection),
+		connMap:  newConnHashMap(),
 		prvKeyId: prvIdBob,
 	}
 
@@ -304,7 +304,7 @@ func TestFullHandshakeFlow(t *testing.T) {
 			rbRcv:               NewReceiveBuffer(1000),
 			streams:             newStreamHashMap(),
 		}
-		lAlice.connMap[connAlice.connId] = connAlice
+		lAlice.connMap.Put(connAlice.connId, connAlice)
 
 		streamAlice := &Stream{
 			conn: connAlice,
@@ -338,7 +338,7 @@ func TestFullHandshakeFlow(t *testing.T) {
 		// Alice receives and decodes InitHandshakeR0
 		c, m, err := lAlice.decode(encodedR0, remoteAddr)
 		require.NoError(t, err)
-		s, err := c.decode(m.PayloadRaw, m.MsgType, 0)
+		s, err := c.decode(m.PayloadRaw, 0, 0)
 		require.NoError(t, err)
 		_, rb := s.conn.rbRcv.RemoveOldestInOrder(s.streamId)
 		require.Equal(t, InitHandshakeR0MsgType, m.MsgType)
@@ -365,7 +365,7 @@ func TestFullHandshakeFlow(t *testing.T) {
 			sharedSecret:        seed1[:],
 			streams:             newStreamHashMap(),
 		}
-		lAlice.connMap[connId] = connAlice
+		lAlice.connMap.Put(connId, connAlice)
 
 		connBob := &Connection{
 			isHandshakeComplete: true,
@@ -382,7 +382,7 @@ func TestFullHandshakeFlow(t *testing.T) {
 			sharedSecret:        seed1[:],
 			streams:             newStreamHashMap(),
 		}
-		lBob.connMap[connId] = connBob
+		lBob.connMap.Put(connId, connBob)
 
 		streamAlice := &Stream{
 			conn: connAlice,
@@ -403,7 +403,7 @@ func TestFullHandshakeFlow(t *testing.T) {
 		require.NotNil(t, c)
 		require.Equal(t, DataMsgType, msg.MsgType)
 
-		s, err := c.decode(msg.PayloadRaw, msg.MsgType, 0)
+		s, err := c.decode(msg.PayloadRaw, 0, 0)
 		require.NoError(t, err)
 		_, rb := s.conn.rbRcv.RemoveOldestInOrder(s.streamId)
 		require.Equal(t, testData, rb.data)

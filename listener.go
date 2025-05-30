@@ -21,8 +21,8 @@ const ReadDeadLine uint64 = 200
 type Listener struct {
 	// this is the port we are listening to
 	localConn    NetworkConn
-	prvKeyId     *ecdh.PrivateKey       //never nil
-	connMap      map[uint64]*Connection // here we store the connection to remote peers, we can have up to
+	prvKeyId     *ecdh.PrivateKey               //never nil
+	connMap      *skipList[uint64, *Connection] // here we store the connection to remote peers, we can have up to
 	closed       bool
 	readDeadline uint64
 	mu           sync.Mutex
@@ -154,7 +154,7 @@ func Listen(listenAddr *net.UDPAddr, options ...ListenFunc) (*Listener, error) {
 	l := &Listener{
 		localConn: lOpts.localConn,
 		prvKeyId:  lOpts.prvKeyId,
-		connMap:   make(map[uint64]*Connection),
+		connMap:   newConnHashMap(),
 		mu:        sync.Mutex{},
 	}
 
@@ -174,10 +174,9 @@ func (l *Listener) Close() error {
 
 	l.closed = true
 
-	for _, conn := range l.connMap {
-		conn.Close()
+	for _, conn := range l.connMap.items {
+		conn.value.Close()
 	}
-	clear(l.connMap)
 
 	err := l.localConn.CancelRead()
 	if err != nil {
@@ -202,7 +201,7 @@ func (l *Listener) Listen(timeout time.Duration, nowMicros uint64) (s *Stream, e
 		return nil, err
 	}
 
-	s, err = conn.decode(m.PayloadRaw, m.MsgType, nowMicros)
+	s, err = conn.decode(m.PayloadRaw, len(buffer), nowMicros)
 	if err != nil {
 		return nil, err
 	}
@@ -223,40 +222,78 @@ func (l *Listener) Listen(timeout time.Duration, nowMicros uint64) (s *Stream, e
 	if s.state == StreamStateClosed {
 		conn.streams.Remove(s.streamId)
 		if conn.streams.Size() == 0 {
-			delete(l.connMap, conn.connId)
+			l.connMap.Remove(conn.connId)
 		}
 	}
 
 	return s, nil
 }
 
-func (l *Listener) Flush(nowMicros uint64) (err error) {
+type FlushState struct {
+	stateConn         *shmPair[uint64, *Connection]
+	stateStream       map[uint64]*shmPair[uint32, *Stream]
+	bytesSentPerRound int
+}
 
-	for _, c := range l.connMap {
-		start := c.bytesWritten
-		streamEncData, err := c.Flush(nowMicros)
-		if err != nil {
-			return err
+func (l *Listener) Flush(currentState *FlushState, nowMicros uint64) (newState *FlushState, err error) {
+
+	//State management
+	if currentState == nil {
+		currentState = &FlushState{
+			stateConn: l.connMap.Min(),
 		}
+	} else {
+		currentState.stateConn = currentState.stateConn.Next()
+	}
+	if currentState.stateConn == nil {
+		currentState.stateConn = l.connMap.Min()
+		currentState.bytesSentPerRound = 0
 
-		for _, t := range streamEncData {
-			n, err := c.listener.localConn.WriteToUDPAddrPort(t.encData, c.remoteAddr)
-			if err != nil {
-				return err
-			}
-			t.Update(nowMicros)
+	}
+	c := currentState.stateConn.value
 
-			c.bytesWritten += uint64(n)
-			if c.bytesWritten-start+startMtu > c.cwnd || !c.isHandshakeComplete {
-				break
-			}
+	if currentState.stateStream == nil {
+		currentState.stateStream = make(map[uint64]*shmPair[uint32, *Stream])
+		currentState.stateStream[c.connId] = c.streams.Min()
+	} else {
+		currentState.stateStream[c.connId] = currentState.stateStream[c.connId].Next()
+		if currentState.stateStream[c.connId] == nil {
+			currentState.stateStream[c.connId] = c.streams.Min()
 		}
 	}
-	return nil
+	s := currentState.stateStream[c.connId]
+
+	//check if our local buffer is full
+	ok, err := c.listener.localConn.CanWriteUDP()
+	if err != nil {
+		return currentState, err
+	}
+	if !ok {
+		return currentState, nil
+	}
+
+	if uint64(c.dataInFlight+startMtu) > c.cwnd {
+		return currentState, nil
+	}
+
+	n, err := c.Flush(s.value, nowMicros)
+	if err != nil {
+		return currentState, err
+	}
+
+	currentState.bytesSentPerRound += n
+
+	return currentState, nil
 }
 
 func newStreamHashMap() *skipList[uint32, *Stream] {
 	return newSortedHashMap[uint32, *Stream](func(a, b uint32, c, d *Stream) bool {
+		return a < b
+	})
+}
+
+func newConnHashMap() *skipList[uint64, *Connection] {
+	return newSortedHashMap[uint64, *Connection](func(a, b uint64, c, d *Connection) bool {
 		return a < b
 	})
 }
@@ -283,12 +320,12 @@ func (l *Listener) newConn(
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if conn, ok := l.connMap[connId]; ok {
+	if l.connMap.Contains(connId) {
 		slog.Warn("conn already exists", slog.Any("connId", connId))
-		return conn, errors.New("conn already exists")
+		return nil, errors.New("conn already exists")
 	}
 
-	l.connMap[connId] = &Connection{
+	conn := &Connection{
 		connId:              connId,
 		connIdRollover:      connIdRollover,
 		streams:             newStreamHashMap(),
@@ -309,7 +346,9 @@ func (l *Listener) newConn(
 		rcvWndSize:          initBufferCapacity,
 	}
 
-	return l.connMap[connId], nil
+	l.connMap.Put(connId, conn)
+
+	return conn, nil
 }
 
 func (l *Listener) ReadUDP(timeout time.Duration) ([]byte, netip.AddrPort, error) {

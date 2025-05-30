@@ -54,7 +54,6 @@ func createPacketKey(offset uint64, length uint16) packetKey {
 
 type MetaData struct {
 	beforeSendMicros uint64
-	afterSendMicros  uint64
 	sentNr           int
 	msgType          MsgType //we may know this only after running encryption
 	offset           uint64
