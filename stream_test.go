@@ -472,7 +472,8 @@ func TestBBR2(t *testing.T) {
 	assert.Nil(t, err)
 
 	streamA.Close()
-	nr := 0
+
+	start := time.Now()
 	for {
 		mu.Lock()
 		received := totalBytesReceived
@@ -481,10 +482,18 @@ func TestBBR2(t *testing.T) {
 		if received >= initBufferCapacity {
 			break
 		}
-		time.Sleep(1 * time.Second)
-		nr++
-		if nr > 10 {
-			return
+
+		d1, err := connPair.recipientToSenderAll()
+		assert.Nil(t, err)
+
+		d2, err := connPair.senderToRecipientAll()
+		assert.Nil(t, err)
+
+		time.Sleep(time.Duration(d1+d2) * time.Microsecond)
+		time.Sleep(100 * time.Millisecond)
+
+		if time.Since(start) > 10*time.Second {
+			break
 		}
 	}
 }

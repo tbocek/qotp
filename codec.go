@@ -245,10 +245,11 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		conn.sharedSecret = message.SharedSecret
 		return conn, message, nil
 	case InitWithCryptoR0MsgType:
-		conn := l.connMap.Get(origConnId).value
-		if conn == nil {
+		connP := l.connMap.Get(origConnId)
+		if connP == nil {
 			return nil, nil, errors.New("connection not found for InitWithCryptoR0")
 		}
+		conn := connP.value
 		l.connMap.Remove(origConnId) // only sender ep pub key connId no longer needed, we now have a proper connId
 
 		slog.Debug("DecodeInitWithCryptoR0", debugGoroutineID(), l.debug(remoteAddr))
@@ -290,10 +291,11 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		conn.sharedSecret = message.SharedSecret
 		return conn, message, nil
 	default: //case DataMsgType:
-		conn := l.connMap.Get(origConnId).value
-		if conn == nil {
+		conP := l.connMap.Get(origConnId)
+		if conP == nil {
 			return nil, nil, errors.New("connection not found for DataMessage")
 		}
+		conn := conP.value
 
 		slog.Debug("DecodeDataMessage",
 			debugGoroutineID(),

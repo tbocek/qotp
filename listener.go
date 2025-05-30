@@ -194,7 +194,7 @@ func (l *Listener) Listen(timeout time.Duration, nowMicros uint64) (s *Stream, e
 	if buffer == nil || len(buffer) == 0 {
 		return nil, nil
 	}
-	slog.Debug("RcvUDP", debugGoroutineID(), l.debug(remoteAddr))
+	slog.Debug("RcvUDP", debugGoroutineID(), l.debug(remoteAddr), slog.Any("read len", len(buffer)))
 
 	conn, m, err := l.decode(buffer, remoteAddr)
 	if err != nil {

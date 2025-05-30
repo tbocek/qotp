@@ -62,58 +62,58 @@ func NewConnPair(addr1 string, addr2 string) *ConnPair {
 	}
 }
 
-func (c *ConnPair) senderRawToRecipient(addr string, raw []byte) (nextNow uint64, err error) {
+func (c *ConnPair) senderRawToRecipient(addr string, raw []byte) (deltaNowMicros uint64, err error) {
 	err = c.Conn1.CopyDataRaw(addr, raw)
 	if err != nil {
 		return 0, err
 	}
-	timeMicros := uint64(len(raw) * 1000000 / bandwidth)
-	return timeMicros, nil
+	deltaNowMicros = uint64(len(raw) * 1000000 / bandwidth)
+	return deltaNowMicros, nil
 }
 
-func (c *ConnPair) senderToRecipient(sequence ...int) (nextNow uint64, err error) {
+func (c *ConnPair) senderToRecipient(sequence ...int) (deltaNowMicros uint64, err error) {
 	n, err := c.Conn1.CopyData(sequence...)
 	if err != nil {
 		return 0, err
 	}
-	timeMicros := uint64(n * 1000000 / bandwidth)
-	return timeMicros, nil
+	deltaNowMicros = uint64(n * 1000000 / bandwidth)
+	return deltaNowMicros, nil
 }
 
-func (c *ConnPair) senderToRecipientAll() (nextNow uint64, err error) {
+func (c *ConnPair) senderToRecipientAll() (deltaNowMicros uint64, err error) {
 	n, err := c.Conn1.SimpleDataCopy()
 	if err != nil {
 		return 0, err
 	}
-	timeMicros := uint64(n * 1000000 / bandwidth)
-	return timeMicros, nil
+	deltaNowMicros = uint64(n * 1000000 / bandwidth)
+	return deltaNowMicros, nil
 }
 
-func (c *ConnPair) recipientToSenderAll() (nextNow uint64, err error) {
+func (c *ConnPair) recipientToSenderAll() (deltaNowMicros uint64, err error) {
 	n, err := c.Conn2.SimpleDataCopy()
 	if err != nil {
 		return 0, err
 	}
-	timeMicros := uint64(n * 1000000 / bandwidth)
-	return timeMicros, nil
+	deltaNowMicros = uint64(n * 1000000 / bandwidth)
+	return deltaNowMicros, nil
 }
 
-func (c *ConnPair) recipientRawToSender(addr string, raw []byte) (nextNow uint64, err error) {
+func (c *ConnPair) recipientRawToSender(addr string, raw []byte) (deltaNowMicros uint64, err error) {
 	err = c.Conn2.CopyDataRaw(addr, raw)
 	if err != nil {
 		return 0, err
 	}
-	timeMicros := uint64(len(raw) * 1000000 / bandwidth)
-	return timeMicros, nil
+	deltaNowMicros = uint64(len(raw) * 1000000 / bandwidth)
+	return deltaNowMicros, nil
 }
 
-func (c *ConnPair) recipientToSender(sequence ...int) (nextNow uint64, err error) {
+func (c *ConnPair) recipientToSender(sequence ...int) (deltaNowMicros uint64, err error) {
 	n, err := c.Conn2.CopyData(sequence...)
 	if err != nil {
 		return 0, err
 	}
-	timeMicros := uint64(n * 1000000 / bandwidth)
-	return timeMicros, nil
+	deltaNowMicros = uint64(n * 1000000 / bandwidth)
+	return deltaNowMicros, nil
 }
 
 func (c *ConnPair) nrOutgoingPacketsSender() int {
