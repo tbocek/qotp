@@ -1,6 +1,7 @@
 package tomtp
 
 import (
+	"context"
 	"crypto/ecdh"
 	"crypto/rand"
 	"crypto/sha256"
@@ -74,6 +75,9 @@ func WithSeedStrHex(seedStrHex string) ListenFunc {
 		}
 
 		seed, err := decodeHex(seedStrHex)
+		if len(seed) != 32 {
+			return errors.New("seed must be exactly 32 bytes")
+		}
 		if err != nil {
 			return err
 		}
@@ -230,62 +234,59 @@ func (l *Listener) Listen(timeout time.Duration, nowMicros uint64) (s *Stream, e
 }
 
 type FlushState struct {
-	stateConn         *shmPair[uint64, *Connection]
-	stateStream       map[uint64]*shmPair[uint32, *Stream]
-	bytesSentPerRound int
+	stateConn   *shmPair[uint64, *Connection]
+	stateStream map[uint64]*shmPair[uint32, *Stream]
+	n           int
 }
 
-func (l *Listener) Flush(currentState *FlushState, nowMicros uint64) (newState *FlushState, err error) {
+func (l *Listener) Flush(currentState *FlushState, nowMicros uint64) (newState *FlushState, stop bool, err error) {
 
-	//State management
-	if currentState == nil {
-		currentState = &FlushState{
-			stateConn: l.connMap.Min(),
-		}
+	//Connection roll over
+	if currentState.stateConn == nil {
+		currentState.stateConn = l.connMap.Min()
 	} else {
 		currentState.stateConn = currentState.stateConn.Next()
 	}
 	if currentState.stateConn == nil {
-		currentState.stateConn = l.connMap.Min()
-		currentState.bytesSentPerRound = 0
-	}
-	if currentState.stateConn == nil {
-		return currentState, nil
-	}
-	c := currentState.stateConn.value
-
-	if currentState.stateStream == nil {
-		currentState.stateStream = make(map[uint64]*shmPair[uint32, *Stream])
-		currentState.stateStream[c.connId] = c.streams.Min()
-	} else {
-		currentState.stateStream[c.connId] = currentState.stateStream[c.connId].Next()
-		if currentState.stateStream[c.connId] == nil {
-			currentState.stateStream[c.connId] = c.streams.Min()
+		if currentState.n > 0 {
+			currentState.n = 0
+			return currentState, false, nil
+		} else {
+			return currentState, true, nil
 		}
 	}
-	s := currentState.stateStream[c.connId]
 
-	//check if our local buffer is full
-	ok, err := c.listener.localConn.CanWriteUDP()
-	if err != nil {
-		return currentState, err
+	//Stream loop until we found something to write
+	for {
+		if currentState.stateStream[currentState.stateConn.value.connId] == nil {
+			currentState.stateStream[currentState.stateConn.value.connId] = currentState.stateConn.value.streams.Min()
+		} else {
+			currentState.stateStream[currentState.stateConn.value.connId] = currentState.stateStream[currentState.stateConn.value.connId].Next()
+			if currentState.stateStream[currentState.stateConn.value.connId] == nil {
+				return currentState, false, nil
+			}
+		}
+		stream := currentState.stateStream[currentState.stateConn.value.connId].value
+
+		//check if our local buffer is full
+		ok, err := currentState.stateConn.value.listener.localConn.CanWriteUDP()
+		if err != nil {
+			return currentState, false, err
+		}
+		if !ok {
+			return currentState, true, nil
+		}
+
+		if uint64(currentState.stateConn.value.dataInFlight+startMtu) > currentState.stateConn.value.cwnd {
+			return currentState, false, nil
+		}
+
+		n, err := currentState.stateConn.value.Flush(stream, nowMicros)
+		if err != nil {
+			return currentState, false, err
+		}
+		currentState.n += n
 	}
-	if !ok {
-		return currentState, nil
-	}
-
-	if uint64(c.dataInFlight+startMtu) > c.cwnd {
-		return currentState, nil
-	}
-
-	n, err := c.Flush(s.value, nowMicros)
-	if err != nil {
-		return currentState, err
-	}
-
-	currentState.bytesSentPerRound += n
-
-	return currentState, nil
 }
 
 func newStreamHashMap() *skipList[uint32, *Stream] {
@@ -377,6 +378,75 @@ func (l *Listener) readUDP(timeout time.Duration) ([]byte, netip.AddrPort, error
 
 	slog.Debug("readUDP - dataAvailable")
 	return buffer[:numRead], remoteAddr, nil
+}
+
+func (l *Listener) ProcessReadWrite(hasDataToWrite bool, state *FlushState, callback func(s *Stream)) (bool, error) {
+	// Phase 1: Listen for incoming packets
+	nowMicrosBeforeListen := uint64(time.Now().UnixMicro())
+	timeout := time.Duration(0)
+	if !hasDataToWrite {
+		timeout = time.Duration(100) * time.Millisecond
+	}
+
+	s, err := l.Listen(timeout, nowMicrosBeforeListen)
+	if err != nil {
+		return false, err
+	}
+	if s != nil {
+		callback(s) // Process received stream
+	}
+
+	// Phase 2: Flush outgoing data
+	nowMicrosAfterListen := uint64(time.Now().UnixMicro())
+	nowMicrosFlush := nowMicrosAfterListen
+
+	for {
+		var stop bool
+		state, stop, err = l.Flush(state, nowMicrosFlush)
+		if err != nil {
+			return false, err
+		}
+
+		if stop {
+			return false, nil // No more data to flush
+		}
+
+		// Limit flush time to 100ms to ensure fairness
+		// Fixed the comparison - now correctly limits flush time
+		if nowMicrosFlush-nowMicrosAfterListen >= 100*1000 {
+			return true, nil // We may have more data
+		}
+		nowMicrosFlush = uint64(time.Now().UnixMicro())
+	}
+}
+
+func (l *Listener) Loop(ctx context.Context, callback func(s *Stream)) {
+	go func() {
+		// Initialize flush state
+		state := &FlushState{
+			stateConn:   nil,
+			stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
+		}
+		hasDataToWrite := false
+
+		for {
+			// Check if context is cancelled
+			select {
+			case <-ctx.Done():
+				slog.Debug("loop - context cancelled, exiting")
+				return
+			default:
+				// Continue with normal operation
+			}
+
+			var err error
+			hasDataToWrite, err = l.ProcessReadWrite(hasDataToWrite, state, callback)
+			if err != nil {
+				slog.Error("Error in loop", slog.Any("error", err))
+				return
+			}
+		}
+	}()
 }
 
 func (l *Listener) debug(addr netip.AddrPort) slog.Attr {
