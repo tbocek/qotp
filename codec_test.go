@@ -27,29 +27,9 @@ var (
 	prvEpBobRoll, _   = ecdh.X25519().NewPrivateKey(seed6[:])
 )
 
-func TestStreamEncode_StreamClosed(t *testing.T) {
-	// Setup
-	conn := &Connection{
-		rbRcv:               NewReceiveBuffer(1000),
-		pubKeyEpRcv:         prvEpBob.PublicKey(),
-		prvKeyEpSnd:         prvEpAlice,
-		pubKeyIdRcv:         prvIdAlice.PublicKey(),
-		prvKeyEpSndRollover: prvEpAliceRoll,
-		listener:            &Listener{prvKeyId: prvIdAlice},
-		streams:             newStreamHashMap()}
-	stream := conn.Stream(1)
-	stream.Close()
-
-	// Test
-	output, _, err := stream.encode([]byte("test data"), 0, nil, stream.msgType())
-
-	// Verify
-	assert.NotNil(t, output)
-	assert.Nil(t, err)
-}
-
-func TestStreamEncode_ConnectionClosed(t *testing.T) {
-	// Setup
+// Test encoding when stream or connection is closed
+func TestStreamEncodeClosedStates(t *testing.T) {
+	// Setup base connection
 	conn := &Connection{
 		rbRcv:               NewReceiveBuffer(1000),
 		pubKeyEpRcv:         prvEpBob.PublicKey(),
@@ -58,155 +38,131 @@ func TestStreamEncode_ConnectionClosed(t *testing.T) {
 		prvKeyEpSndRollover: prvEpAliceRoll,
 		sharedSecret:        bytes.Repeat([]byte{1}, 32),
 		listener:            &Listener{prvKeyId: prvIdAlice},
-		streams:             newStreamHashMap()}
+		streams:             newStreamHashMap(),
+	}
+
+	// Test stream closed
 	stream := conn.Stream(1)
-	stream.conn.Close()
-
-	// Test
+	stream.Close()
 	output, _, err := stream.encode([]byte("test data"), 0, nil, stream.msgType())
+	assert.NotNil(t, output)
+	assert.Nil(t, err)
 
-	// Verify
+	// Test connection closed
+	stream2 := conn.Stream(2)
+	stream2.conn.Close()
+	output, _, err = stream2.encode([]byte("test data"), 0, nil, stream2.msgType())
 	assert.NotNil(t, output)
 	assert.Nil(t, err)
 }
 
-func TestStreamEncode_InitialSenderPacket(t *testing.T) {
-	// Setup
-	conn := &Connection{
+// Test all handshake message types
+func TestStreamEncodeHandshakeTypes(t *testing.T) {
+	testCases := []struct {
+		name         string
+		isSender     bool
+		withCrypto   bool
+		expectedType MsgType
+		hasData      bool
+	}{
+		{"InitHandshakeS0", true, false, InitHandshakeS0MsgType, false},
+		{"InitHandshakeR0", false, false, InitHandshakeR0MsgType, true},
+		{"InitWithCryptoS0", true, true, InitWithCryptoS0MsgType, true},
+		{"InitWithCryptoR0", false, true, InitWithCryptoR0MsgType, true},
+	}
+
+	for _, tc := range testCases {
+		conn := &Connection{
+			isSender:            tc.isSender,
+			withCrypto:          tc.withCrypto,
+			snCrypto:            0,
+			mtu:                 1400,
+			pubKeyIdRcv:         prvIdBob.PublicKey(),
+			prvKeyEpSnd:         prvEpAlice,
+			prvKeyEpSndRollover: prvEpAliceRoll,
+			listener:            &Listener{prvKeyId: prvIdAlice},
+			rbRcv:               NewReceiveBuffer(1000),
+		}
+
+		if !tc.isSender {
+			conn.pubKeyIdRcv = prvIdAlice.PublicKey()
+			conn.pubKeyEpRcv = prvEpAlice.PublicKey()
+		}
+
+		stream := &Stream{conn: conn}
+
+		var input []byte
+		if tc.hasData {
+			input = []byte("test data")
+		}
+
+		output, _, err := stream.encode(input, 0, nil, stream.msgType())
+		assert.NoError(t, err, tc.name)
+		assert.NotNil(t, output, tc.name)
+
+		// Verify message type
+		_, msgType, err := decodeHeader(output)
+		assert.NoError(t, err, tc.name)
+		assert.Equal(t, tc.expectedType, msgType, tc.name)
+	}
+}
+
+// Test data message types (Data0 and Data)
+func TestStreamEncodeDataTypes(t *testing.T) {
+	// Test Data0 (rollover)
+	connRollover := &Connection{
+		isHandshakeComplete: true,
 		isSender:            true,
-		snCrypto:            0,
+		isRollover:          true,
+		snCrypto:            1,
 		mtu:                 1400,
 		pubKeyIdRcv:         prvIdBob.PublicKey(),
 		prvKeyEpSnd:         prvEpAlice,
 		prvKeyEpSndRollover: prvEpAliceRoll,
-		listener: &Listener{
-			prvKeyId: prvIdAlice,
-		},
-		rbRcv: NewReceiveBuffer(1000),
-	}
-	stream := &Stream{conn: conn}
-	input := []byte("test data")
-
-	// Test
-	output, _, err := stream.encode(input, 0, nil, stream.msgType())
-
-	// Verify
-	assert.NoError(t, err)
-	assert.NotNil(t, output)
-}
-
-func TestStreamEncode_InitialHandshakeS0(t *testing.T) {
-	// Setup
-	conn := &Connection{
-		isSender:            true,
-		snCrypto:            0,
-		mtu:                 1400,
-		prvKeyEpSnd:         prvEpAlice,
-		prvKeyEpSndRollover: prvEpAliceRoll,
-		listener: &Listener{
-			prvKeyId: prvIdAlice,
-		},
-		rbRcv: NewReceiveBuffer(1000),
-	}
-	stream := &Stream{conn: conn}
-
-	// Test
-	output, _, err := stream.encode(nil, 0, nil, stream.msgType())
-
-	// Verify
-	assert.NoError(t, err)
-	assert.NotNil(t, output)
-
-	// Verify it's an InitHandshakeS0 message
-	_, msgType, err := decodeHeader(output)
-	assert.NoError(t, err)
-	assert.Equal(t, InitHandshakeS0MsgType, msgType)
-}
-
-func TestStreamEncode_InitialHandshakeR0(t *testing.T) {
-	// Setup
-	conn := &Connection{
-		isSender:            false,
-		snCrypto:            0,
-		mtu:                 1400,
-		pubKeyIdRcv:         prvIdAlice.PublicKey(),
-		prvKeyEpSnd:         prvEpBob,
-		prvKeyEpSndRollover: prvEpBobRoll,
-		pubKeyEpRcv:         prvEpAlice.PublicKey(),
-		listener: &Listener{
-			prvKeyId: prvIdBob,
-		},
-		rbRcv: NewReceiveBuffer(1000),
-	}
-	stream := &Stream{conn: conn}
-	input := []byte("handshake response")
-
-	// Test
-	output, _, err := stream.encode(input, 0, nil, stream.msgType())
-
-	// Verify
-	assert.NoError(t, err)
-	assert.NotNil(t, output)
-
-	// Verify it's an InitHandshakeR0 message
-	_, msgType, err := decodeHeader(output)
-	assert.NoError(t, err)
-	assert.Equal(t, InitHandshakeR0MsgType, msgType)
-}
-
-func TestEndToEndCodec(t *testing.T) {
-	// Setup listener
-	lAlice := &Listener{
-		connMap:  newConnHashMap(),
-		prvKeyId: prvIdAlice,
-	}
-
-	// Create a test stream
-	connAlice := &Connection{
-		isSender:            true,
-		withCrypto:          true,
-		snCrypto:            0,
-		mtu:                 1400,
-		pubKeyIdRcv:         prvIdBob.PublicKey(),
-		prvKeyEpSnd:         prvEpAlice,
-		prvKeyEpSndRollover: prvEpAliceRoll,
-		listener:            lAlice,
+		pubKeyEpRcv:         prvEpBob.PublicKey(),
+		listener:            &Listener{prvKeyId: prvIdAlice},
 		rbRcv:               NewReceiveBuffer(1000),
+		sharedSecret:        seed1[:],
+		streams:             newStreamHashMap(),
 	}
 
-	streamAlice := &Stream{
-		conn: connAlice,
+	streamRollover := &Stream{conn: connRollover}
+	output, _, err := streamRollover.encode([]byte("rollover data"), 0, nil, streamRollover.msgType())
+	assert.NoError(t, err)
+	assert.NotNil(t, output)
+	_, msgType, _ := decodeHeader(output)
+	assert.Equal(t, Data0MsgType, msgType)
+
+	// Test regular Data message
+	connData := &Connection{
+		isHandshakeComplete: true,
+		isSender:            true,
+		isRollover:          false,
+		snCrypto:            1,
+		mtu:                 1400,
+		pubKeyIdRcv:         prvIdBob.PublicKey(),
+		prvKeyEpSnd:         prvEpAlice,
+		//prvKeyEpSndRollover: prvEpAliceRoll,
+		pubKeyEpRcv:  prvEpBob.PublicKey(),
+		listener:     &Listener{prvKeyId: prvIdAlice},
+		rbRcv:        NewReceiveBuffer(1000),
+		sharedSecret: seed1[:],
+		streams:      newStreamHashMap(),
 	}
 
-	lBob := &Listener{
-		connMap:  newConnHashMap(),
-		prvKeyId: prvIdBob,
-	}
-
-	// Test encoding and decoding
-	testData := []byte("test message")
-	encoded, _, err := streamAlice.encode(testData, 0, nil, streamAlice.msgType())
-	require.NoError(t, err)
-	require.NotNil(t, encoded)
-
-	a, _ := netip.ParseAddr("127.0.0.1")
-	remoteAddr := netip.AddrPortFrom(a, uint16(8080))
-
-	c, m, err := lBob.decode(encoded, remoteAddr)
-	require.NoError(t, err)
-	s, err := c.decode(m.PayloadRaw, 0, 0)
-	require.NoError(t, err)
-
-	_, rb := s.conn.rbRcv.RemoveOldestInOrder(s.streamId)
-	assert.Equal(t, testData, rb.data)
+	streamData := &Stream{conn: connData}
+	output, _, err = streamData.encode([]byte("regular data"), 0, nil, streamData.msgType())
+	assert.NoError(t, err)
+	assert.NotNil(t, output)
+	_, msgType, _ = decodeHeader(output)
+	assert.Equal(t, DataMsgType, msgType)
 }
 
-func TestEndToEndCodecLargeData(t *testing.T) {
-	// Test with various dataToSend sizes
-	dataSizes := []int{100, 1000, 2000, 10000}
-	for _, size := range dataSizes {
-		// Create Alice's connection and stream
+// Test end-to-end codec with various data sizes
+func TestEndToEndCodec(t *testing.T) {
+	dataSizes := []int{0, 100, 1000, 2000, 10000}
 
+	for _, size := range dataSizes {
 		// Setup listeners
 		lAlice := &Listener{
 			connMap:  newConnHashMap(),
@@ -217,6 +173,7 @@ func TestEndToEndCodecLargeData(t *testing.T) {
 			prvKeyId: prvIdBob,
 		}
 
+		// Create Alice's connection
 		connAlice := &Connection{
 			isSender:            true,
 			withCrypto:          true,
@@ -226,7 +183,7 @@ func TestEndToEndCodecLargeData(t *testing.T) {
 			prvKeyEpSnd:         prvEpAlice,
 			prvKeyEpSndRollover: prvEpAliceRoll,
 			listener:            lAlice,
-			rbSnd:               NewSendBuffer(initBufferCapacity),
+			rbSnd:               NewSendBuffer(rcvBufferCapacity),
 			rbRcv:               NewReceiveBuffer(12000),
 			streams:             newStreamHashMap(),
 		}
@@ -234,50 +191,40 @@ func TestEndToEndCodecLargeData(t *testing.T) {
 		lAlice.connMap.Put(connId, connAlice)
 		connAlice.connId = connId
 
-		streamAlice := &Stream{
-			conn: connAlice,
+		streamAlice := &Stream{conn: connAlice}
+
+		// Create test data
+		testData := make([]byte, size)
+		for i := 0; i < len(testData); i++ {
+			testData[i] = byte(i % 256)
 		}
 
+		// Encode
+		encoded, _, err := streamAlice.encode(testData, 0, nil, streamAlice.msgType())
+		require.NoError(t, err, fmt.Sprintf("Size %d", size))
+		require.NotNil(t, encoded, fmt.Sprintf("Size %d", size))
+
+		// Decode at Bob's side
 		a, _ := netip.ParseAddr("127.0.0.1")
 		remoteAddr := netip.AddrPortFrom(a, uint16(8080))
 
-		t.Run(fmt.Sprintf("Size_%d", size), func(t *testing.T) {
-			testData := make([]byte, size)
-			for i := 0; i < len(testData); i++ {
-				testData[i] = byte(i % 256)
-			}
+		connBob, m, err := lBob.decode(encoded, remoteAddr)
+		require.NoError(t, err, fmt.Sprintf("Size %d", size))
 
-			remainingData := testData
-			var decodedData []byte
-
-			encoded, _, err := streamAlice.encode(remainingData, 0, nil, streamAlice.msgType())
-			require.NoError(t, err)
-			require.NotNil(t, encoded)
-
-			connBob, m, err := lBob.decode(encoded, remoteAddr)
-			require.NoError(t, err)
+		// Only process payload if we have data
+		if size > 0 || m.MsgType == InitWithCryptoR0MsgType {
 			s, err := connBob.decode(m.PayloadRaw, 0, 0)
-			require.NoError(t, err)
-			_, rb := s.conn.rbRcv.RemoveOldestInOrder(s.streamId)
-			decodedData = append(decodedData, rb.data...)
+			require.NoError(t, err, fmt.Sprintf("Size %d", size))
 
-			streamBob := connBob.Stream(s.streamId)
-			encoded, _, err = streamBob.encode([]byte{}, 0, nil, streamBob.msgType())
-			require.NoError(t, err)
-			require.NotNil(t, encoded)
-
-			connAlice, m, err = lAlice.decode(encoded, remoteAddr)
-			require.NoError(t, err)
-			s, err = connAlice.decode(m.PayloadRaw, 0, 0)
-			require.NoError(t, err)
-			//rb, err = s.ReadBytes()
-			//require.NoError(t, err)
-
-			assert.Equal(t, testData, decodedData, "Data mismatch for Size %d", size)
-		})
+			if size > 0 {
+				_, rb := s.conn.rbRcv.RemoveOldestInOrder(s.streamId)
+				assert.Equal(t, testData, rb.data, fmt.Sprintf("Data mismatch for Size %d", size))
+			}
+		}
 	}
 }
 
+// Test full handshake flow
 func TestFullHandshakeFlow(t *testing.T) {
 	// Setup listeners
 	lAlice := &Listener{
@@ -289,123 +236,136 @@ func TestFullHandshakeFlow(t *testing.T) {
 		prvKeyId: prvIdBob,
 	}
 
+	a, _ := netip.ParseAddr("127.0.0.1")
+	remoteAddr := netip.AddrPortFrom(a, uint16(8080))
+
 	// Test InitHandshakeS0 -> InitHandshakeR0 flow
-	t.Run("Initial Handshake Flow", func(t *testing.T) {
-		// Alice creates initial handshake
+	connAlice := &Connection{
+		connId:              Uint64(prvEpAlice.PublicKey().Bytes()),
+		isSender:            true,
+		snCrypto:            0,
+		mtu:                 1400,
+		prvKeyEpSnd:         prvEpAlice,
+		prvKeyEpSndRollover: prvEpAliceRoll,
+		listener:            lAlice,
+		rbRcv:               NewReceiveBuffer(1000),
+		streams:             newStreamHashMap(),
+	}
+	lAlice.connMap.Put(connAlice.connId, connAlice)
 
-		connAlice := &Connection{
-			connId:              Uint64(prvEpAlice.PublicKey().Bytes()),
-			isSender:            true,
-			snCrypto:            0,
-			mtu:                 1400,
-			prvKeyEpSnd:         prvEpAlice,
-			prvKeyEpSndRollover: prvEpAliceRoll,
-			listener:            lAlice,
-			rbRcv:               NewReceiveBuffer(1000),
-			streams:             newStreamHashMap(),
+	streamAlice := &Stream{conn: connAlice}
+
+	// Alice encodes InitHandshakeS0
+	encoded, _, err := streamAlice.encode(nil, 0, nil, streamAlice.msgType())
+	require.NoError(t, err)
+	require.NotNil(t, encoded)
+
+	// Bob receives and decodes InitHandshakeS0
+	connBob, msgS0, err := lBob.decode(encoded, remoteAddr)
+	require.NoError(t, err)
+	require.NotNil(t, connBob)
+	require.Equal(t, InitHandshakeS0MsgType, msgS0.MsgType)
+
+	// Bob responds with InitHandshakeR0
+	streamBob := &Stream{conn: connBob}
+	testData := []byte("handshake response")
+	encodedR0, _, err := streamBob.encode(testData, 0, nil, streamBob.msgType())
+	require.NoError(t, err)
+	require.NotNil(t, encodedR0)
+
+	// Alice receives and decodes InitHandshakeR0
+	c, m, err := lAlice.decode(encodedR0, remoteAddr)
+	require.NoError(t, err)
+	s, err := c.decode(m.PayloadRaw, 0, 0)
+	require.NoError(t, err)
+	_, rb := s.conn.rbRcv.RemoveOldestInOrder(s.streamId)
+	require.Equal(t, InitHandshakeR0MsgType, m.MsgType)
+	require.Equal(t, testData, rb.data)
+
+	// Test Data message flow after handshake
+	connId := binary.LittleEndian.Uint64(prvIdAlice.PublicKey().Bytes()) ^ binary.LittleEndian.Uint64(prvIdBob.PublicKey().Bytes())
+
+	// Setup established connections
+	connAlice.isHandshakeComplete = true
+	connAlice.pubKeyIdRcv = prvIdBob.PublicKey()
+	connAlice.pubKeyEpRcv = prvEpBob.PublicKey()
+	connAlice.sharedSecret = seed1[:]
+	lAlice.connMap.Put(connId, connAlice)
+
+	connBob.isHandshakeComplete = true
+	connBob.sharedSecret = seed1[:]
+	lBob.connMap.Put(connId, connBob)
+
+	// Alice sends Data message
+	dataMsg := []byte("data message")
+	encoded, _, err = streamAlice.encode(dataMsg, 0, nil, streamAlice.msgType())
+	require.NoError(t, err)
+	require.NotNil(t, encoded)
+
+	// Bob receives and decodes Data message
+	c, msg, err := lBob.decode(encoded, remoteAddr)
+	require.NoError(t, err)
+	require.NotNil(t, c)
+	require.Equal(t, DataMsgType, msg.MsgType)
+
+	s, err = c.decode(msg.PayloadRaw, 0, 0)
+	require.NoError(t, err)
+	_, rb = s.conn.rbRcv.RemoveOldestInOrder(s.streamId)
+	require.Equal(t, dataMsg, rb.data)
+}
+
+// Test msgType() function
+func TestStreamMsgType(t *testing.T) {
+	testCases := []struct {
+		isHandshakeComplete bool
+		withCrypto          bool
+		isSender            bool
+		isRollover          bool
+		expected            MsgType
+	}{
+		{false, true, true, false, InitWithCryptoS0MsgType},
+		{false, true, false, false, InitWithCryptoR0MsgType},
+		{false, false, true, false, InitHandshakeS0MsgType},
+		{false, false, false, false, InitHandshakeR0MsgType},
+		{true, false, false, true, Data0MsgType},
+		{true, false, false, false, DataMsgType},
+	}
+
+	for _, tc := range testCases {
+		conn := &Connection{
+			isHandshakeComplete: tc.isHandshakeComplete,
+			withCrypto:          tc.withCrypto,
+			isSender:            tc.isSender,
+			isRollover:          tc.isRollover,
 		}
-		lAlice.connMap.Put(connAlice.connId, connAlice)
+		stream := &Stream{conn: conn}
+		assert.Equal(t, tc.expected, stream.msgType())
+	}
+}
 
-		streamAlice := &Stream{
-			conn: connAlice,
+// Test Overhead calculations
+func TestOverheadCalculations(t *testing.T) {
+	testCases := []struct {
+		ack        *Ack
+		dataOffset uint64
+		msgType    MsgType
+		mtu        uint16
+		maxData    uint16
+	}{
+		{nil, 100, InitHandshakeS0MsgType, 1400, 0},
+		{nil, 100, InitHandshakeR0MsgType, 1400, uint16(1400 - CalcProtoOverhead(false, false) - MinR0InitHandshakeSize)},
+		{&Ack{offset: 0xFFFFFF + 1}, 100, DataMsgType, 1400, uint16(1400 - CalcProtoOverhead(true, true) - MinDataMessageSize)},
+		{nil, 0xFFFFFF + 1, DataMsgType, 1400, uint16(1400 - CalcProtoOverhead(false, true) - MinDataMessageSize)},
+	}
+
+	for i, tc := range testCases {
+		o := &Overhead{
+			ack:        tc.ack,
+			dataOffset: tc.dataOffset,
+			msgType:    tc.msgType,
+			currentMtu: tc.mtu,
 		}
-
-		// Alice encodes InitHandshakeS0
-		encoded, _, err := streamAlice.encode(nil, 0, nil, streamAlice.msgType())
-		require.NoError(t, err)
-		require.NotNil(t, encoded)
-
-		// Bob receives and decodes InitHandshakeS0
-		a, _ := netip.ParseAddr("127.0.0.1")
-		remoteAddr := netip.AddrPortFrom(a, uint16(8080))
-
-		connBob, msgS0, err := lBob.decode(encoded, remoteAddr)
-		require.NoError(t, err)
-		require.NotNil(t, connBob)
-		require.Equal(t, InitHandshakeS0MsgType, msgS0.MsgType)
-
-		// Bob responds with InitHandshakeR0
-		streamBob := &Stream{
-			conn: connBob,
-		}
-
-		// Bob encodes InitHandshakeR0
-		testData := []byte("handshake response")
-		encodedR0, _, err := streamBob.encode(testData, 0, nil, streamBob.msgType())
-		require.NoError(t, err)
-		require.NotNil(t, encodedR0)
-
-		// Alice receives and decodes InitHandshakeR0
-		c, m, err := lAlice.decode(encodedR0, remoteAddr)
-		require.NoError(t, err)
-		s, err := c.decode(m.PayloadRaw, 0, 0)
-		require.NoError(t, err)
-		_, rb := s.conn.rbRcv.RemoveOldestInOrder(s.streamId)
-		require.Equal(t, InitHandshakeR0MsgType, m.MsgType)
-		require.Equal(t, testData, rb.data)
-	})
-
-	// Test Data0 message flow
-	t.Run("Data0 Message Flow", func(t *testing.T) {
-		connId := binary.LittleEndian.Uint64(prvIdAlice.PublicKey().Bytes()) ^ binary.LittleEndian.Uint64(prvIdBob.PublicKey().Bytes())
-
-		// Setup established connection
-		connAlice := &Connection{
-			isHandshakeComplete: true,
-			isSender:            true,
-			snCrypto:            1,
-			mtu:                 1400,
-			pubKeyIdRcv:         prvIdBob.PublicKey(),
-			prvKeyEpSnd:         prvEpAlice,
-			prvKeyEpSndRollover: prvEpAliceRoll,
-			pubKeyEpRcv:         prvEpBob.PublicKey(),
-			listener:            lAlice,
-			rbRcv:               NewReceiveBuffer(1000),
-			isRollover:          false,
-			sharedSecret:        seed1[:],
-			streams:             newStreamHashMap(),
-		}
-		lAlice.connMap.Put(connId, connAlice)
-
-		connBob := &Connection{
-			isHandshakeComplete: true,
-			isSender:            false,
-			snCrypto:            1,
-			mtu:                 1400,
-			pubKeyIdRcv:         prvIdAlice.PublicKey(),
-			prvKeyEpSnd:         prvEpBob,
-			prvKeyEpSndRollover: prvEpBobRoll,
-			pubKeyEpRcv:         prvEpAlice.PublicKey(),
-			listener:            lBob,
-			rbRcv:               NewReceiveBuffer(1000),
-			isRollover:          false,
-			sharedSecret:        seed1[:],
-			streams:             newStreamHashMap(),
-		}
-		lBob.connMap.Put(connId, connBob)
-
-		streamAlice := &Stream{
-			conn: connAlice,
-		}
-
-		// Alice sends Data0
-		testData := []byte("data0 message")
-		encoded, _, err := streamAlice.encode(testData, 0, nil, streamAlice.msgType())
-		require.NoError(t, err)
-		require.NotNil(t, encoded)
-
-		// Bob receives and decodes Data0
-		a, _ := netip.ParseAddr("127.0.0.1")
-		remoteAddr := netip.AddrPortFrom(a, uint16(8080))
-
-		c, msg, err := lBob.decode(encoded, remoteAddr)
-		require.NoError(t, err)
-		require.NotNil(t, c)
-		require.Equal(t, DataMsgType, msg.MsgType)
-
-		s, err := c.decode(msg.PayloadRaw, 0, 0)
-		require.NoError(t, err)
-		_, rb := s.conn.rbRcv.RemoveOldestInOrder(s.streamId)
-		require.Equal(t, testData, rb.data)
-	})
+		maxData := o.CalcMaxData()
+		assert.Equal(t, tc.maxData, maxData, fmt.Sprintf("Test case %d", i))
+	}
 }

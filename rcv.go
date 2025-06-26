@@ -163,6 +163,12 @@ func (rb *ReceiveBuffer) Size() int {
 	return rb.size
 }
 
+func (rb *ReceiveBuffer) Available() int {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+	return rb.capacity - rb.size
+}
+
 func (rb *ReceiveBuffer) GetSndAck() *Ack {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()

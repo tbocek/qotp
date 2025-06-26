@@ -62,7 +62,7 @@ func TestOneStream(t *testing.T) {
 	streamA := connA.Stream(0)
 	_, err = streamA.Write(a)
 	assert.Nil(t, err)
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 0)
@@ -96,7 +96,7 @@ func TestTwoStream(t *testing.T) {
 	streamA1 := connA.Stream(0)
 	_, err = streamA1.Write(a1)
 	assert.Nil(t, err)
-	stateA, _, err := connA.listener.Flush(&FlushState{
+	stateA, _, _, err := connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 0)
@@ -107,7 +107,7 @@ func TestTwoStream(t *testing.T) {
 	_, err = streamA2.Write(a2)
 	assert.Nil(t, err)
 	//this should not work, as we can only send 1 packet at the start, that we did with "hallo1"
-	stateA, _, err = connA.listener.Flush(stateA, 0)
+	stateA, _, _, err = connA.listener.Flush(stateA, 0)
 	assert.Nil(t, err)
 
 	// we send one packet
@@ -123,7 +123,7 @@ func TestTwoStream(t *testing.T) {
 	assert.Equal(t, a1, b1)
 	_, err = streamB1.Write(nil)
 	assert.Nil(t, err)
-	_, _, err = listenerB.Flush(&FlushState{
+	_, _, _, err = listenerB.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 0)
@@ -138,9 +138,9 @@ func TestTwoStream(t *testing.T) {
 	//a2Test, err = streamA2.Write(a2)
 	//assert.Nil(t, err)
 	//assert.Equal(t, 0, len(a2Test))
-	stateA, _, err = connA.listener.Flush(stateA, 0)
+	stateA, _, _, err = connA.listener.Flush(stateA, 0)
 	assert.Nil(t, err)
-	stateA, _, err = connA.listener.Flush(stateA, 0)
+	stateA, _, _, err = connA.listener.Flush(stateA, 0)
 	assert.Nil(t, err)
 
 	_, err = connPair.senderToRecipient(1)
@@ -166,7 +166,7 @@ func TestRTO(t *testing.T) {
 	streamA1 := connA.Stream(0)
 	_, err = streamA1.Write(a1)
 	assert.Nil(t, err)
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 0)
@@ -174,7 +174,7 @@ func TestRTO(t *testing.T) {
 
 	_, err = connPair.senderToRecipient(-1)
 
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 250*1000+1)
@@ -197,31 +197,31 @@ func TestRTOTimes4Success(t *testing.T) {
 	streamA1 := connA.Stream(0)
 	_, err = streamA1.Write(a1)
 	assert.Nil(t, err)
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 0)
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(-1)
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 200000+1)
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(-1)
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 200000+400000+2)
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(-1)
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 200000+400000+800000+3)
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(-1)
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 200000+400000+800000+1600000+4)
@@ -244,7 +244,7 @@ func TestRTOTimes4Fail(t *testing.T) {
 	streamA1 := connA.Stream(0)
 	_, err = streamA1.Write(a1)
 	assert.Nil(t, err)
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 0)
@@ -252,37 +252,37 @@ func TestRTOTimes4Fail(t *testing.T) {
 	_, err = connPair.senderToRecipient(-1)
 
 	_, err = connPair.senderToRecipient(-1)
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 200000+1)
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(-1)
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 200000+400000+2)
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(-1)
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 200000+400000+800000+3)
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(-1)
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 200000+400000+800000+1600000+4)
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(-1)
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 200000+400000+800000+1600000+3200000+5)
 	assert.Nil(t, err)
 
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 0)
@@ -302,7 +302,7 @@ func TestCloseAWithInit(t *testing.T) {
 	connA.Close()
 	assert.True(t, streamA.state == StreamStateCloseRequest)
 
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 0)
@@ -324,7 +324,7 @@ func TestCloseAWithInit(t *testing.T) {
 
 	assert.Equal(t, a1, buffer)
 
-	_, _, err = streamB.conn.listener.Flush(&FlushState{
+	_, _, _, err = streamB.conn.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 0)
@@ -354,7 +354,7 @@ func TestCloseBWithInit(t *testing.T) {
 	assert.Nil(t, err)
 	assert.True(t, streamA.state == StreamStateOpen)
 
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 0)
@@ -378,7 +378,7 @@ func TestCloseBWithInit(t *testing.T) {
 
 	assert.Equal(t, a1, buffer)
 
-	_, _, err = streamB.conn.listener.Flush(&FlushState{
+	_, _, _, err = streamB.conn.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 0)
@@ -407,7 +407,7 @@ func TestGarbage1(t *testing.T) {
 	assert.Nil(t, err)
 	assert.True(t, streamA.state == StreamStateOpen)
 
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 0)
@@ -435,7 +435,7 @@ func TestGarbage2(t *testing.T) {
 	assert.Nil(t, err)
 	assert.True(t, streamA.state == StreamStateOpen)
 
-	_, _, err = connA.listener.Flush(&FlushState{
+	_, _, _, err = connA.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 0)
@@ -451,7 +451,7 @@ func TestGarbage2(t *testing.T) {
 
 	_, err = streamB.Write([]byte("hallo"))
 	assert.Nil(t, err)
-	_, _, err = streamB.conn.listener.Flush(&FlushState{
+	_, _, _, err = streamB.conn.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}, 0)
@@ -474,11 +474,11 @@ func TestBBR(t *testing.T) {
 
 	//write 64k
 	streamA := connA.Stream(0)
-	dataA := make([]byte, initBufferCapacity+1)
+	dataA := make([]byte, rcvBufferCapacity+1)
 	dataARemaining, err := streamA.Write(dataA)
 	assert.Nil(t, err)
 	assert.Equal(t, 1, len(dataARemaining))
-	assert.Equal(t, 65535, streamA.conn.rbSnd.totalSize)
+	assert.Equal(t, 1048576, streamA.conn.rbSnd.totalSize)
 	streamA.conn.listener.Flush(&FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
@@ -493,8 +493,8 @@ func TestBBR(t *testing.T) {
 	//send 64 back
 	streamB, err := listenerB.Listen(0, 0)
 	assert.Nil(t, err)
-	assert.Equal(t, uint64(65535), streamB.conn.rcvWndSize)
-	dataB1 := make([]byte, initBufferCapacity+1)
+	assert.Equal(t, uint64(1572864), streamB.conn.rcvWndSize)
+	dataB1 := make([]byte, rcvBufferCapacity+1)
 	dataB1Remaining, err := streamB.Write(dataB1)
 	assert.Nil(t, err)
 	assert.Equal(t, 1, len(dataB1Remaining))
@@ -510,17 +510,17 @@ func TestBBR(t *testing.T) {
 	assert.Equal(t, 1, connPair.nrIncomingPacketsSender())
 	streamA, err = connA.listener.Listen(0, 0)
 	assert.Nil(t, err)
-	assert.Equal(t, uint64(64285), streamA.conn.rcvWndSize)
+	assert.Equal(t, uint64(786432), streamA.conn.rcvWndSize)
 
 	//Handshake done, send dataaaaaaaaa
 	state := &FlushState{
 		stateConn:   nil,
 		stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
 	}
-	for n := 1; n != 0; {
-		state, _, err = streamA.conn.listener.Flush(state, 0)
+
+	for i := 0; i < 40; i++ {
+		state, _, _, err = streamA.conn.listener.Flush(state, 0)
 		assert.Nil(t, err)
-		n += state.n
 	}
 	assert.Equal(t, 10, connPair.nrOutgoingPacketsSender())
 }
@@ -550,7 +550,7 @@ func TestBBR2(t *testing.T) {
 
 	streamA := connA.Stream(0)
 
-	dataA := make([]byte, initBufferCapacity)
+	dataA := make([]byte, rcvBufferCapacity)
 	_, err = streamA.Write(dataA)
 	assert.Nil(t, err)
 
@@ -562,7 +562,7 @@ func TestBBR2(t *testing.T) {
 		received := totalBytesReceived
 		mu.Unlock()
 
-		if received >= initBufferCapacity {
+		if received >= rcvBufferCapacity {
 			break
 		}
 

@@ -39,19 +39,3 @@ func TestConnection_GetOrNewStreamRcv(t *testing.T) {
 		})
 	}
 }
-
-// Helper function for absolute value of int64
-func abs(n int64) int64 {
-	if n < 0 {
-		return -n
-	}
-	return n
-}
-
-// getPacingGain returns the appropriate pacing gain based on probing state
-func getPacingGainPct(inProbing bool) int {
-	if inProbing {
-		return 150
-	}
-	return 200 // Default from NewBBR
-}

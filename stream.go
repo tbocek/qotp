@@ -16,17 +16,14 @@ const (
 )
 
 var (
-	ErrStreamClosed   = errors.New("stream closed")
-	ErrStreamNotExist = errors.New("stream does not exist")
+	ErrStreamClosed = errors.New("stream closed")
 )
 
 type Stream struct {
-	streamId     uint32
-	conn         *Connection
-	state        StreamState
-	bytesWritten int
-	bytesRead    int
-	mu           sync.Mutex
+	streamId uint32
+	conn     *Connection
+	state    StreamState
+	mu       sync.Mutex
 }
 
 func (s *Stream) NotifyStreamChange() error {
@@ -58,7 +55,6 @@ func (s *Stream) Read() (readData []byte, err error) {
 
 	readData = data.data
 	s.conn.updateState(s, data.isClose)
-	s.bytesRead += len(readData)
 	return readData, nil
 }
 
@@ -75,7 +71,7 @@ func (s *Stream) Write(writeData []byte) (remainingWriteData []byte, err error) 
 	}
 
 	slog.Debug("Write", debugGoroutineID(), s.debug(), slog.String("b...", string(writeData[:min(10, len(writeData))])))
-	n, status := s.conn.rbSnd.Insert(s.streamId, writeData, s.conn.rcvWndSize)
+	n, status := s.conn.rbSnd.Insert(s.streamId, writeData)
 	if status != InsertStatusOk {
 		slog.Debug("Status Nok", debugGoroutineID(), s.debug(), slog.Any("status", status))
 	} else {
@@ -86,7 +82,6 @@ func (s *Stream) Write(writeData []byte) (remainingWriteData []byte, err error) 
 		}
 	}
 
-	s.bytesWritten += n
 	remainingWriteData = writeData[n:]
 	return remainingWriteData, nil
 }

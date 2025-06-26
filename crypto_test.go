@@ -284,7 +284,7 @@ func TestEncodeDecodeInitHandshake(t *testing.T) {
 		buffer := EncodeInitHandshakeS0(
 			alicePrvKeyId.PublicKey(),
 			alicePrvKeyEp,
-			alicePrvKeyEpRollover, 1)
+			alicePrvKeyEpRollover)
 
 		// Bob receives and decodes InitHandshakeS0
 		pubKeyIdSnd, pubKeyEpSnd, pubKeyEpSndRollover, msg, err := DecodeInitHandshakeS0(
@@ -327,7 +327,7 @@ func TestEncodeDecodeInitHandshake(t *testing.T) {
 			bobPrvKeyId.PublicKey(),
 			alicePrvKeyEp.PublicKey(),
 			bobPrvKeyEp,
-			bobPrvKeyEpRollover, 1,
+			bobPrvKeyEpRollover,
 			rawData)
 
 		assert.NoError(t, err)
@@ -371,7 +371,7 @@ func TestEncodeDecodeInitHandshake(t *testing.T) {
 		bufferS0 := EncodeInitHandshakeS0(
 			alicePrvKeyId.PublicKey(),
 			alicePrvKeyEp,
-			alicePrvKeyEpRollover, 1)
+			alicePrvKeyEpRollover)
 
 		// Step 2: Bob receives and decodes InitHandshakeS0
 		_, _, _, msgS0, err := DecodeInitHandshakeS0(
@@ -386,7 +386,7 @@ func TestEncodeDecodeInitHandshake(t *testing.T) {
 			bobPrvKeyId.PublicKey(),
 			alicePrvKeyEp.PublicKey(),
 			bobPrvKeyEp,
-			bobPrvKeyEpRollover, 1,
+			bobPrvKeyEpRollover,
 			rawData)
 		assert.NoError(t, err)
 
@@ -403,11 +403,11 @@ func TestEncodeDecodeInitHandshake(t *testing.T) {
 	t.Run("nil key handling", func(t *testing.T) {
 		// Test encoding with nil keys
 		assert.Panics(t, func() {
-			EncodeInitHandshakeS0(nil, nil, nil, 1)
+			EncodeInitHandshakeS0(nil, nil, nil)
 		})
 
 		assert.Panics(t, func() {
-			EncodeInitHandshakeR0(nil, nil, nil, nil, nil, 1, []byte("test"))
+			EncodeInitHandshakeR0(nil, nil, nil, nil, nil, []byte("test"))
 		})
 
 		validBuffer := make([]byte, startMtu)

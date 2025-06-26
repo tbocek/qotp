@@ -24,31 +24,57 @@ func (s *Stream) msgType() MsgType {
 	}
 }
 
-func (s *Stream) Overhead(hasAck bool) (overhead int) {
-	protoOverhead := CalcProtoOverhead(hasAck)
+type Overhead struct {
+	// Variables needed to calc the overhead
+	ack        *Ack
+	dataOffset uint64
+	msgType    MsgType
+	currentMtu uint16
+	debug      uint16
+}
 
-	msgType := s.msgType()
-	switch msgType {
-	case InitHandshakeS0MsgType:
-		return MinS0InitHandshakeSize //we cannot send data, this is unencrypted
-	case InitHandshakeR0MsgType:
-		return protoOverhead + MinR0InitHandshakeSize
-	case InitWithCryptoS0MsgType:
-		return protoOverhead + MinS0CryptoHandshakeSize
-	case InitWithCryptoR0MsgType:
-		return protoOverhead + MinR0CryptoHandshakeSize
-	case Data0MsgType:
-		return protoOverhead + MinData0MessageSize
-	default: //case DataMsgType:
-		return protoOverhead + MinDataMessageSize
+func (o *Overhead) CalcOverhead() (needsExtend bool, overhead int) {
+	hasAck := false
+	if o.ack != nil {
+		hasAck = true
+		needsExtend = o.ack.offset > 0xFFFFFF
 	}
+	needsExtend = needsExtend || o.dataOffset > 0xFFFFFF
+
+	overhead = CalcProtoOverhead(hasAck, needsExtend)
+	return needsExtend, overhead
+}
+
+func (o *Overhead) CalcMaxData() (overhead uint16) {
+	if o.debug > 0 {
+		return o.debug
+	}
+
+	_, tmpOverhead := o.CalcOverhead()
+
+	switch o.msgType {
+	case InitHandshakeS0MsgType:
+		return 0 //we cannot send data, this is unencrypted
+	case InitHandshakeR0MsgType:
+		tmpOverhead += MinR0InitHandshakeSize
+	case InitWithCryptoS0MsgType:
+		tmpOverhead += MinS0CryptoHandshakeSize
+	case InitWithCryptoR0MsgType:
+		tmpOverhead += MinR0CryptoHandshakeSize
+	case Data0MsgType:
+		tmpOverhead += MinData0MessageSize
+	case DataMsgType:
+		tmpOverhead += MinDataMessageSize
+	}
+
+	return o.currentMtu - uint16(tmpOverhead)
 }
 
 func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgType) ([]byte, MsgType, error) {
 	p := &PayloadMeta{
 		IsClose:      s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
 		IsSender:     s.conn.isSender,
-		RcvWndSize:   initBufferCapacity - uint64(s.conn.rbRcv.Size()),
+		RcvWndSize:   rcvBufferCapacity - uint64(s.conn.rbRcv.Size()),
 		Ack:          ack,
 		StreamId:     s.streamId,
 		StreamOffset: offset,
@@ -61,17 +87,14 @@ func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgTyp
 	// Create payload early for cases that need it
 	var payRaw []byte
 	var data []byte
-	var err error
 
 	// Only encode payload if not InitHandshakeS0 (which doesn't need it)
 	if msgType != InitHandshakeS0MsgType {
-		payRaw, _, err = EncodePayload(p, origData)
-		if err != nil {
-			return nil, -1, err
-		}
+		payRaw, _ = EncodePayload(p, origData)
 	}
 
 	// Handle message encoding based on connection state
+	var err error
 	switch msgType {
 	case InitWithCryptoS0MsgType:
 		slog.Debug("EncodeInitWithCryptoS0", debugGoroutineID(), s.debug(), slog.Int("len(payRaw)", len(payRaw)))
@@ -98,7 +121,6 @@ func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.conn.listener.prvKeyId.PublicKey(),
 			s.conn.prvKeyEpSnd,
 			s.conn.prvKeyEpSndRollover,
-			s.conn.connId,
 		)
 	case InitHandshakeR0MsgType:
 		slog.Debug("EncodeInitHandshakeR0", debugGoroutineID(), s.debug(), slog.Int("len(payRaw)", len(payRaw)))
@@ -108,7 +130,6 @@ func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.conn.pubKeyEpRcv,
 			s.conn.prvKeyEpSnd,
 			s.conn.prvKeyEpSndRollover,
-			s.conn.connId,
 			payRaw,
 		)
 	case Data0MsgType:
@@ -130,6 +151,9 @@ func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.conn.snCrypto,
 			payRaw,
 		)
+	}
+	if err != nil {
+		return nil, 0, err
 	}
 
 	//update state ofter encode of packet

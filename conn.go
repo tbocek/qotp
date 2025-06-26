@@ -41,10 +41,7 @@ type Connection struct {
 	withCrypto            bool
 	snCrypto              uint64 //this is 48bit
 	tmpRollover           *tmpRollover
-
-	// Flow control
-	rcvWndSize uint64 // Receive window Size
-
+	rcvWndSize            uint64 // Flow control - receive window Size
 	BBR
 	RTT
 	mu sync.Mutex
@@ -90,9 +87,7 @@ func (c *Connection) decode(decryptedData []byte, rawLen int, nowMicros uint64) 
 		return nil, err
 	}
 
-	if p.RcvWndSize > 0 {
-		c.rcvWndSize = p.RcvWndSize
-	}
+	c.rcvWndSize = p.RcvWndSize
 
 	// Get or create stream using StreamId from Data
 	s = c.Stream(p.StreamId)
@@ -132,7 +127,7 @@ func (c *Connection) updateState(s *Stream, isClose bool) {
 	}
 }
 
-func (c *Connection) Flush(stream *Stream, nowMicros uint64) (n int, err error) {
+func (c *Connection) Flush(stream *Stream, nowMicros uint64) (n int, pacingMicros uint64, err error) {
 
 	//update state for receiver
 	if stream.state == StreamStateCloseReceived {
@@ -140,31 +135,39 @@ func (c *Connection) Flush(stream *Stream, nowMicros uint64) (n int, err error) 
 	}
 
 	ack := c.rbRcv.GetSndAck()
-	hasAck := ack != nil
 
-	maxData := uint16(startMtu - stream.Overhead(hasAck))
+	overhead := &Overhead{
+		msgType:    stream.msgType(),
+		ack:        ack,
+		dataOffset: 0,
+		currentMtu: startMtu,
+	}
 
 	// Retransmission case
-	splitData, m, err := c.rbSnd.ReadyToRetransmit(stream.streamId, maxData, c.rtoMicros(), nowMicros)
+	splitData, m, err := c.rbSnd.ReadyToRetransmit(stream.streamId, overhead, c.rtoMicros(), nowMicros)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	switch {
 	case m != nil && splitData != nil:
-
 		c.OnPacketLoss()
 		encData, msgType, err := stream.encode(splitData, m.offset, ack, m.msgType)
 		if msgType != m.msgType {
 			panic("cryptoType changed")
 		}
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		slog.Debug("UpdateSnd/ReadyToRetransmit", debugGoroutineID(), slog.Any("len(dataToSend)", len(encData)))
 		_, err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr)
-		//c.dataInFlight += n -> this is a retransmit, so do not add to dataInFlight
-		return len(encData), err
+		if err != nil {
+			return 0, 0, err
+		}
+
+		packetLen := len(encData)
+		pacingMicros = c.GetPacingInterval(uint64(packetLen))
+		return packetLen, pacingMicros, nil
 
 	case !c.isHandshakeComplete && c.isFirstPacketProduced:
 		// Handshake mode - already sent first packet, can only retransmit or ack
@@ -172,43 +175,57 @@ func (c *Connection) Flush(stream *Stream, nowMicros uint64) (n int, err error) 
 		case ack != nil:
 			encData, _, err := stream.encode([]byte{}, stream.currentOffset(), ack, -1)
 			if err != nil {
-				return 0, err
+				return 0, 0, err
 			}
 			slog.Debug("UpdateSnd/Acks1", debugGoroutineID(), slog.Any("len(dataToSend)", len(encData)))
 			_, err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr)
-			//c.dataInFlight += n -> this is a only ack, so do not add to dataInFlight
-			return len(encData), err
+			if err != nil {
+				return 0, 0, err
+			}
+
+			packetLen := len(encData)
+			return packetLen, 0, nil
 		default:
-			return 0, nil // need to wait, go to next connection
+			return 0, 100 * 1000, nil // need to wait, go to next connection
 		}
 
 	}
 
 	// Normal operation - try to send new data
-	splitData, m = c.rbSnd.ReadyToSend(stream.streamId, maxData, nowMicros)
+	splitData, m = c.rbSnd.ReadyToSend(stream.streamId, overhead, nowMicros)
 	switch {
 	case m != nil && splitData != nil:
 		encData, msgType, err := stream.encode(splitData, m.offset, ack, -1)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		m.msgType = msgType
 		c.isFirstPacketProduced = true
 		slog.Debug("UpdateSnd/ReadyToSend/splitData", debugGoroutineID(), slog.Any("len(dataToSend)", len(encData)))
 		n, err := c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr)
+		if err != nil {
+			return 0, 0, err
+		}
+
 		c.dataInFlight += n
-		return len(encData), err
+		packetLen := len(encData)
+		pacingMicros = c.GetPacingInterval(uint64(packetLen))
+		return packetLen, pacingMicros, nil
 	case ack != nil:
 		// Only have acks to send
 		encData, _, err := stream.encode([]byte{}, stream.currentOffset(), ack, -1)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		slog.Debug("UpdateSnd/Acks2", debugGoroutineID(), slog.Any("len(dataToSend)", len(encData)))
 		_, err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr)
-		//c.dataInFlight += n -> this is a only ack, so do not add to dataInFlight
-		return len(encData), err
+		if err != nil {
+			return 0, 0, err
+		}
+		packetLen := len(encData)
+		return packetLen, 0, nil
+
 	default:
-		return 0, nil
+		return 0, 0, nil // need to wait, go to next stream
 	}
 }

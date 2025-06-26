@@ -47,8 +47,6 @@ type Message struct {
 	MsgType      MsgType
 	SnConn       uint64
 	PayloadRaw   []byte
-	Payload      *PayloadMeta
-	Fill         []byte
 	SharedSecret []byte
 }
 
@@ -69,8 +67,7 @@ func fillHeaderKey(header []byte, msgType MsgType, pubKeyEpSnd *ecdh.PublicKey, 
 func EncodeInitHandshakeS0(
 	pubKeyIdSnd *ecdh.PublicKey,
 	prvKeyEpSnd *ecdh.PrivateKey,
-	prvKeyEpSndRollover *ecdh.PrivateKey,
-	connId uint64) (encData []byte) {
+	prvKeyEpSndRollover *ecdh.PrivateKey) (encData []byte) {
 
 	if pubKeyIdSnd == nil || prvKeyEpSnd == nil || prvKeyEpSndRollover == nil {
 		panic("handshake keys cannot be nil")
@@ -99,7 +96,6 @@ func EncodeInitHandshakeR0(
 	pubKeyEpRcv *ecdh.PublicKey,
 	prvKeyEpSnd *ecdh.PrivateKey,
 	prvKeyEpSndRollover *ecdh.PrivateKey,
-	connId uint64,
 	rawData []byte) (encData []byte, err error) {
 
 	if pubKeyIdRcv == nil || pubKeyIdSnd == nil || pubKeyEpRcv == nil || prvKeyEpSnd == nil ||

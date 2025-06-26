@@ -11,7 +11,6 @@ type InsertStatus int
 const (
 	InsertStatusOk InsertStatus = iota
 	InsertStatusSndFull
-	InsertStatusRcvFull
 	InsertStatusNoData
 )
 
@@ -117,7 +116,7 @@ func NewSendBuffer(capacity int) *SendBuffer {
 }
 
 // Insert stores the dataToSend in the dataMap, does not send yet
-func (sb *SendBuffer) Insert(streamId uint32, data []byte, rcvWndSize uint64) (inserted int, status InsertStatus) {
+func (sb *SendBuffer) Insert(streamId uint32, data []byte) (inserted int, status InsertStatus) {
 	remainingData := data
 
 	if len(remainingData) <= 0 {
@@ -133,13 +132,8 @@ func (sb *SendBuffer) Insert(streamId uint32, data []byte, rcvWndSize uint64) (i
 		return 0, InsertStatusSndFull
 	}
 
-	remainingCapacityRcv := int(rcvWndSize) - sb.totalSize
-	if remainingCapacityRcv <= 0 {
-		return 0, InsertStatusRcvFull
-	}
-
 	// Calculate chunk size
-	inserted = min(len(remainingData), remainingCapacitySnd, remainingCapacityRcv)
+	inserted = min(len(remainingData), remainingCapacitySnd)
 	chunk := remainingData[:inserted]
 
 	// Get or create stream buffer
@@ -160,7 +154,7 @@ func (sb *SendBuffer) Insert(streamId uint32, data []byte, rcvWndSize uint64) (i
 }
 
 // ReadyToSend gets data from dataToSend and creates an entry in dataInFlightMap
-func (sb *SendBuffer) ReadyToSend(streamId uint32, maxData uint16, nowMicros uint64) (splitData []byte, m *MetaData) {
+func (sb *SendBuffer) ReadyToSend(streamId uint32, overhead *Overhead, nowMicros uint64) (splitData []byte, m *MetaData) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 
@@ -176,6 +170,9 @@ func (sb *SendBuffer) ReadyToSend(streamId uint32, maxData uint16, nowMicros uin
 	// Check if there's unsent dataToSend, if true, we have unsent dataToSend
 	if stream.unsentOffset > stream.sentOffset {
 		remainingData := stream.unsentOffset - stream.sentOffset
+
+		overhead.dataOffset = stream.sentOffset
+		maxData := overhead.CalcMaxData()
 
 		//the max length we can send
 		length := uint16(min(uint64(maxData), remainingData))
@@ -207,7 +204,7 @@ func (sb *SendBuffer) ReadyToSend(streamId uint32, maxData uint16, nowMicros uin
 }
 
 // ReadyToRetransmit finds expired dataInFlightMap that need to be resent
-func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, maxData uint16, rtoMicros uint64, nowMicros uint64) (data []byte, m *MetaData, err error) {
+func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, rtoMicros uint64, nowMicros uint64) (data []byte, m *MetaData, err error) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 
@@ -244,6 +241,9 @@ func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, maxData uint16, rtoMicr
 			// Get dataToSend using bias
 			dataOffset := rangeOffset - stream.bias
 			data = stream.dataToSend[dataOffset : dataOffset+uint64(rangeLen)]
+
+			overhead.dataOffset = dataOffset
+			maxData := overhead.CalcMaxData()
 
 			sb.lastReadToRetransmitStream = streamId
 			if rangeLen <= maxData {
@@ -315,18 +315,4 @@ func (sb *SendBuffer) AcknowledgeRange(ack *Ack) (status AckStatus, sentTimeMicr
 	}
 	sb.mu.Unlock()
 	return AckStatusOk, sentTimeMicros
-}
-
-// Size returns the total size of data in the send buffer
-func (sb *SendBuffer) Size() int {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	return sb.totalSize
-}
-
-func (sb *SendBuffer) HasCapacity() bool {
-	sb.mu.Lock()
-	defer sb.mu.Unlock()
-	remainingCapacity := sb.capacity - sb.totalSize
-	return remainingCapacity > 0
 }

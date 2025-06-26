@@ -56,7 +56,7 @@ only mentions 9 primary RFCs and 48 extensions and informational RFCs, totalling
 
 ## Messages Format (encryption layer)
 
-The magic byte is 0xa9 to better identify the protocol and the current version is 0. The available types are:
+The current version is 0. The available types are:
 
 * 000b: INIT_HANDSHAKE_S0
 * 001b: INIT_HANDSHAKE_R0
@@ -272,45 +272,44 @@ To simplify the implementation, there is only one payload header.
 title: "TomTP Payload Packet"
 ---
 packet-beta
-  0: "Ack"
-  1: "S/R"
-  2: "CLOSE"
-  3-7: "UNUSED"
-  8-71: "RCV_WND_SIZE 64bit"
-  72-103: "Opt. ACKs: Example ACK: StreamId 32bit"
-  104-167: "Opt. ACKs: Example ACK: StreamOffset 64bit"
-  168-183: "Opt. ACKs: Example ACK: Len 16bit"
-  184-215: "StreamId 32bit"
-  216-279: "StreamOffset 64bit"
-  280-287: "Data..."
+  0: "S/R"
+  1-2: "ACK/PAK"
+  3-7: "RCV_WND_SIZE" 
+  8-39: "Opt. ACKs: Example ACK: StreamId 32bit"
+  40-63: "Opt. ACKs: Example ACK: StreamOffset 24/48bit"
+  64-79: "Opt. ACKs: Example ACK: Len 16bit"
+  80-111: "StreamId 32bit"
+  112-135: "StreamOffset 24/48bit"
+  136-143: "Data..."
 ```
 The TomTP payload packet begins with a header byte containing several control bits:
 
-* Bits 0 contain the "Ack" field, indicating the if ACK and RCV_WINDOW is present
-* Bit 1 is the "S/R" flag which distinguishes between sender and receiver roles.
-* Bit 2 closes the stream
-* Bits 3-7 are not used.
-* 
-* Bytes 8-71 hold the RCV_WND_SIZE, using 64 bits
+* Bit 0 is the "S/R" flag which distinguishes between sender and receiver roles.
+* Bits 1-2: 
+  * 0: No ACK/Data with 24bit,
+  * 1: No ACK/Data with 48bit,
+  * 2: ACK with 24bit/Data with 24bit, 
+  * 3: ACK with 48bit/Data with 48bit,
+* Bits 3-7: Receiver window size: 1024 << (bits - 1), 31 is not used for rcv, but means CLOSE. Max receiver size is 512GB
 
 If ACK bit is present then:
 
-* Bytes 72-103 contain the StreamId (32 bits)
-* Bytes 104-167 hold the StreamOffset, using 64 bits
-* Bytes 168-183 contain the Len field (16 bits)
+* Bytes 8-39 contain the StreamId (32 bits)
+* Bytes 40-63 hold the StreamOffset (24 or 48 bits)
+* Bytes 64-79 contain the Len field (16 bits)
 
 The Data section:
 
-* Bytes 184-215 contain the StreamId (32 bits)
-* Bytes 216-279 hold the StreamOffset, using 64 bits
+* Bytes 80-111 contain the StreamId (32 bits)
+* Bytes 112-135 hold the StreamOffset (24 or 48 bits)
 
 Only if data length is greater than zero:
 
-* Bytes 280-... and beyond contain the actual data payload
+* Bytes 136-... and beyond contain the actual data payload
 
 ### Overhead
 - **Total Overhead for Data Packets:**  
-  52 bytes (crypto header 39 bytes + payload header 13 bytes) with 0 data (for a 1400-byte packet, this results in an overhead of ~3.7%).
+  47 bytes (crypto header 39 bytes + payload header 8 bytes) with 0 data (for a 1400-byte packet, this results in an overhead of ~3.3%).
 
 ### Communication States and Corner Cases
 

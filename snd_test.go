@@ -11,7 +11,7 @@ func TestInsert(t *testing.T) {
 	sb := NewSendBuffer(1000)
 
 	// Basic insert
-	_, status := sb.Insert(1, []byte("test"), math.MaxInt)
+	_, status := sb.Insert(1, []byte("test"))
 	assert.Equal(InsertStatusOk, status)
 
 	// Verify stream created correctly
@@ -24,7 +24,7 @@ func TestInsert(t *testing.T) {
 
 	// Test capacity limit
 	sb = NewSendBuffer(3)
-	nr, status := sb.Insert(1, []byte("test"), math.MaxInt)
+	nr, status := sb.Insert(1, []byte("test"))
 	assert.Equal(InsertStatusOk, status)
 	assert.Equal(3, nr)
 
@@ -33,7 +33,7 @@ func TestInsert(t *testing.T) {
 	stream = NewStreamBuffer()
 	stream.unsentOffset = math.MaxUint64 - 2
 	sb.streams[1] = stream
-	_, status = sb.Insert(1, []byte("test"), math.MaxInt)
+	_, status = sb.Insert(1, []byte("test"))
 	assert.Equal(InsertStatusOk, status) // Should succeed now
 
 	stream = sb.streams[1]
@@ -48,11 +48,11 @@ func TestReadyToSend(t *testing.T) {
 	nowMillis2 := uint64(100)
 
 	// Insert data
-	sb.Insert(1, []byte("test1"), math.MaxInt)
-	sb.Insert(2, []byte("test2"), math.MaxInt)
+	sb.Insert(1, []byte("test1"))
+	sb.Insert(2, []byte("test2"))
 
 	// Basic send
-	data, _ := sb.ReadyToSend(1, 10, nowMillis2)
+	data, _ := sb.ReadyToSend(1, &Overhead{debug: 10}, nowMillis2)
 	assert.Equal([]byte("test1"), data)
 
 	// Verify range tracking
@@ -63,15 +63,15 @@ func TestReadyToSend(t *testing.T) {
 	assert.Equal(uint16(5), rangePair.key.length())
 	assert.Equal(nowMillis2, rangePair.value.beforeSendMicros)
 
-	sb.ReadyToSend(1, 10, nowMillis2)
+	sb.ReadyToSend(1, &Overhead{debug: 10}, nowMillis2)
 
 	// Test MTU limiting
-	sb.Insert(3, []byte("toolongdata"), math.MaxInt)
-	data, _ = sb.ReadyToSend(3, 4, nowMillis2)
+	sb.Insert(3, []byte("toolongdata"))
+	data, _ = sb.ReadyToSend(3, &Overhead{debug: 4}, nowMillis2)
 	assert.Equal([]byte("tool"), data)
 
 	// test no data available
-	data, _ = sb.ReadyToSend(4, 10, nowMillis2)
+	data, _ = sb.ReadyToSend(4, &Overhead{debug: 10}, nowMillis2)
 	assert.Nil(data)
 }
 
@@ -80,31 +80,31 @@ func TestReadyToRetransmit(t *testing.T) {
 	sb := NewSendBuffer(1000)
 
 	// Setup test data
-	sb.Insert(1, []byte("test1"), math.MaxInt)
-	sb.Insert(2, []byte("test2"), math.MaxInt)
+	sb.Insert(1, []byte("test1"))
+	sb.Insert(2, []byte("test2"))
 
-	sb.ReadyToSend(1, 10, 100) // Initial send at time 100
-	sb.ReadyToSend(2, 10, 100) // Initial send at time 100
+	sb.ReadyToSend(1, &Overhead{debug: 10}, 100) // Initial send at time 100
+	sb.ReadyToSend(2, &Overhead{debug: 10}, 100) // Initial send at time 100
 
 	// Test basic retransmit
-	data, _, err := sb.ReadyToRetransmit(1, 10, 50, 200) // RTO = 50, now = 200.  200-100 > 50
+	data, _, err := sb.ReadyToRetransmit(1, &Overhead{debug: 10}, 50, 200) // RTO = 50, now = 200.  200-100 > 50
 	assert.Nil(err)
 	assert.Equal([]byte("test1"), data)
 
-	data, _, err = sb.ReadyToRetransmit(2, 10, 100, 200) //RTO = 100, now = 200. 200-100 = 100, thus ok
+	data, _, err = sb.ReadyToRetransmit(2, &Overhead{debug: 10}, 100, 200) //RTO = 100, now = 200. 200-100 = 100, thus ok
 	assert.Nil(err)
 	assert.Nil(data)
 
-	data, _, err = sb.ReadyToRetransmit(1, 10, 99, 399) // RTO = 99, now = 200. 200-100 > 99
+	data, _, err = sb.ReadyToRetransmit(1, &Overhead{debug: 10}, 99, 399) // RTO = 99, now = 200. 200-100 > 99
 	assert.Nil(err)
 	assert.Equal([]byte("test1"), data)
 
 	// Test MTU split
 	sb = NewSendBuffer(1000)
-	sb.Insert(1, []byte("testdata"), math.MaxInt)
-	sb.ReadyToSend(1, 100, 100) // Initial send
+	sb.Insert(1, []byte("testdata"))
+	sb.ReadyToSend(1, &Overhead{debug: 100}, 100) // Initial send
 
-	data, _, err = sb.ReadyToRetransmit(1, 4, 99, 200)
+	data, _, err = sb.ReadyToRetransmit(1, &Overhead{debug: 4}, 99, 200)
 	assert.Nil(err)
 	assert.Equal([]byte("test"), data)
 
@@ -120,8 +120,8 @@ func TestReadyToRetransmit(t *testing.T) {
 func TestAcknowledgeRangeBasic(t *testing.T) {
 	assert := require.New(t)
 	sb := NewSendBuffer(1000)
-	sb.Insert(1, []byte("testdata"), math.MaxInt)
-	sb.ReadyToSend(1, 4, 100)
+	sb.Insert(1, []byte("testdata"))
+	sb.ReadyToSend(1, &Overhead{debug: 4}, 100)
 	stream := sb.streams[1]
 
 	_, time := sb.AcknowledgeRange(&Ack{
