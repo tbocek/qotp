@@ -77,7 +77,7 @@ type StreamBuffer struct {
 	// this is the offset of the dataToSend we did send
 	sentOffset uint64
 	// when dataToSend is acked, we Remove the dataToSend, however we don't want to update all the offsets, hence this bias
-	// TODO: check what happens on an 64bit rollover
+	// TODO: check what happens on an 48bit rollover
 	bias uint64
 	// inflight dataToSend - key is offset, which is uint48, len in 16bit is added to a 64bit key. value is sentTime
 	// If MTU changes for inflight packets and need to be resent. The range is split. Example:

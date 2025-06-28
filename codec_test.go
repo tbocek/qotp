@@ -31,14 +31,16 @@ var (
 func TestStreamEncodeClosedStates(t *testing.T) {
 	// Setup base connection
 	conn := &Connection{
-		rbRcv:               NewReceiveBuffer(1000),
-		pubKeyEpRcv:         prvEpBob.PublicKey(),
-		prvKeyEpSnd:         prvEpAlice,
-		pubKeyIdRcv:         prvIdAlice.PublicKey(),
-		prvKeyEpSndRollover: prvEpAliceRoll,
-		sharedSecret:        bytes.Repeat([]byte{1}, 32),
-		listener:            &Listener{prvKeyId: prvIdAlice},
-		streams:             newStreamHashMap(),
+		rbRcv: NewReceiveBuffer(1000),
+		keys: ConnectionKeys{
+			pubKeyEpRcv:     prvEpBob.PublicKey(),
+			prvKeyEpSnd:     prvEpAlice,
+			pubKeyIdRcv:     prvIdAlice.PublicKey(),
+			prvKeyEpSndRoll: prvEpAliceRoll,
+		},
+		sharedSecret: bytes.Repeat([]byte{1}, 32),
+		listener:     &Listener{prvKeyId: prvIdAlice},
+		streams:      newStreamHashMap(),
 	}
 
 	// Test stream closed
@@ -73,20 +75,24 @@ func TestStreamEncodeHandshakeTypes(t *testing.T) {
 
 	for _, tc := range testCases {
 		conn := &Connection{
-			isSender:            tc.isSender,
-			withCrypto:          tc.withCrypto,
-			snCrypto:            0,
-			mtu:                 1400,
-			pubKeyIdRcv:         prvIdBob.PublicKey(),
-			prvKeyEpSnd:         prvEpAlice,
-			prvKeyEpSndRollover: prvEpAliceRoll,
-			listener:            &Listener{prvKeyId: prvIdAlice},
-			rbRcv:               NewReceiveBuffer(1000),
+			state: ConnectionState{
+				isSender:   tc.isSender,
+				withCrypto: tc.withCrypto,
+			},
+			snCrypto: 0,
+			mtu:      1400,
+			keys: ConnectionKeys{
+				pubKeyIdRcv:     prvIdBob.PublicKey(),
+				prvKeyEpSnd:     prvEpAlice,
+				prvKeyEpSndRoll: prvEpAliceRoll,
+			},
+			listener: &Listener{prvKeyId: prvIdAlice},
+			rbRcv:    NewReceiveBuffer(1000),
 		}
 
 		if !tc.isSender {
-			conn.pubKeyIdRcv = prvIdAlice.PublicKey()
-			conn.pubKeyEpRcv = prvEpAlice.PublicKey()
+			conn.keys.pubKeyIdRcv = prvIdAlice.PublicKey()
+			conn.keys.pubKeyEpRcv = prvEpAlice.PublicKey()
 		}
 
 		stream := &Stream{conn: conn}
@@ -111,19 +117,23 @@ func TestStreamEncodeHandshakeTypes(t *testing.T) {
 func TestStreamEncodeDataTypes(t *testing.T) {
 	// Test Data0 (rollover)
 	connRollover := &Connection{
-		isHandshakeComplete: true,
-		isSender:            true,
-		isRollover:          true,
-		snCrypto:            1,
-		mtu:                 1400,
-		pubKeyIdRcv:         prvIdBob.PublicKey(),
-		prvKeyEpSnd:         prvEpAlice,
-		prvKeyEpSndRollover: prvEpAliceRoll,
-		pubKeyEpRcv:         prvEpBob.PublicKey(),
-		listener:            &Listener{prvKeyId: prvIdAlice},
-		rbRcv:               NewReceiveBuffer(1000),
-		sharedSecret:        seed1[:],
-		streams:             newStreamHashMap(),
+		state: ConnectionState{
+			isHandshakeComplete: true,
+			isSender:            true,
+			isRoll:              true,
+		},
+		snCrypto: 1,
+		mtu:      1400,
+		keys: ConnectionKeys{
+			pubKeyIdRcv:     prvIdBob.PublicKey(),
+			prvKeyEpSnd:     prvEpAlice,
+			prvKeyEpSndRoll: prvEpAliceRoll,
+			pubKeyEpRcv:     prvEpBob.PublicKey(),
+		},
+		listener:     &Listener{prvKeyId: prvIdAlice},
+		rbRcv:        NewReceiveBuffer(1000),
+		sharedSecret: seed1[:],
+		streams:      newStreamHashMap(),
 	}
 
 	streamRollover := &Stream{conn: connRollover}
@@ -135,15 +145,18 @@ func TestStreamEncodeDataTypes(t *testing.T) {
 
 	// Test regular Data message
 	connData := &Connection{
-		isHandshakeComplete: true,
-		isSender:            true,
-		isRollover:          false,
-		snCrypto:            1,
-		mtu:                 1400,
-		pubKeyIdRcv:         prvIdBob.PublicKey(),
-		prvKeyEpSnd:         prvEpAlice,
-		//prvKeyEpSndRollover: prvEpAliceRoll,
-		pubKeyEpRcv:  prvEpBob.PublicKey(),
+		state: ConnectionState{
+			isHandshakeComplete: true,
+			isSender:            true,
+			isRoll:              false,
+		},
+		snCrypto: 1,
+		mtu:      1400,
+		keys: ConnectionKeys{
+			pubKeyIdRcv: prvIdBob.PublicKey(),
+			prvKeyEpSnd: prvEpAlice,
+			pubKeyEpRcv: prvEpBob.PublicKey(),
+		},
 		listener:     &Listener{prvKeyId: prvIdAlice},
 		rbRcv:        NewReceiveBuffer(1000),
 		sharedSecret: seed1[:],
@@ -175,17 +188,21 @@ func TestEndToEndCodec(t *testing.T) {
 
 		// Create Alice's connection
 		connAlice := &Connection{
-			isSender:            true,
-			withCrypto:          true,
-			snCrypto:            0,
-			mtu:                 1400,
-			pubKeyIdRcv:         prvIdBob.PublicKey(),
-			prvKeyEpSnd:         prvEpAlice,
-			prvKeyEpSndRollover: prvEpAliceRoll,
-			listener:            lAlice,
-			rbSnd:               NewSendBuffer(rcvBufferCapacity),
-			rbRcv:               NewReceiveBuffer(12000),
-			streams:             newStreamHashMap(),
+			state: ConnectionState{
+				isSender:   true,
+				withCrypto: true,
+			},
+			snCrypto: 0,
+			mtu:      1400,
+			keys: ConnectionKeys{
+				pubKeyIdRcv:     prvIdBob.PublicKey(),
+				prvKeyEpSnd:     prvEpAlice,
+				prvKeyEpSndRoll: prvEpAliceRoll,
+			},
+			listener: lAlice,
+			rbSnd:    NewSendBuffer(rcvBufferCapacity),
+			rbRcv:    NewReceiveBuffer(12000),
+			streams:  newStreamHashMap(),
 		}
 		connId := binary.LittleEndian.Uint64(prvEpAlice.PublicKey().Bytes())
 		lAlice.connMap.Put(connId, connAlice)
@@ -241,15 +258,19 @@ func TestFullHandshakeFlow(t *testing.T) {
 
 	// Test InitHandshakeS0 -> InitHandshakeR0 flow
 	connAlice := &Connection{
-		connId:              Uint64(prvEpAlice.PublicKey().Bytes()),
-		isSender:            true,
-		snCrypto:            0,
-		mtu:                 1400,
-		prvKeyEpSnd:         prvEpAlice,
-		prvKeyEpSndRollover: prvEpAliceRoll,
-		listener:            lAlice,
-		rbRcv:               NewReceiveBuffer(1000),
-		streams:             newStreamHashMap(),
+		connId: Uint64(prvEpAlice.PublicKey().Bytes()),
+		state: ConnectionState{
+			isSender: true,
+		},
+		snCrypto: 0,
+		mtu:      1400,
+		keys: ConnectionKeys{
+			prvKeyEpSnd:     prvEpAlice,
+			prvKeyEpSndRoll: prvEpAliceRoll,
+		},
+		listener: lAlice,
+		rbRcv:    NewReceiveBuffer(1000),
+		streams:  newStreamHashMap(),
 	}
 	lAlice.connMap.Put(connAlice.connId, connAlice)
 
@@ -286,13 +307,13 @@ func TestFullHandshakeFlow(t *testing.T) {
 	connId := binary.LittleEndian.Uint64(prvIdAlice.PublicKey().Bytes()) ^ binary.LittleEndian.Uint64(prvIdBob.PublicKey().Bytes())
 
 	// Setup established connections
-	connAlice.isHandshakeComplete = true
-	connAlice.pubKeyIdRcv = prvIdBob.PublicKey()
-	connAlice.pubKeyEpRcv = prvEpBob.PublicKey()
+	connAlice.state.isHandshakeComplete = true
+	connAlice.keys.pubKeyIdRcv = prvIdBob.PublicKey()
+	connAlice.keys.pubKeyEpRcv = prvEpBob.PublicKey()
 	connAlice.sharedSecret = seed1[:]
 	lAlice.connMap.Put(connId, connAlice)
 
-	connBob.isHandshakeComplete = true
+	connBob.state.isHandshakeComplete = true
 	connBob.sharedSecret = seed1[:]
 	lBob.connMap.Put(connId, connBob)
 
@@ -333,10 +354,12 @@ func TestStreamMsgType(t *testing.T) {
 
 	for _, tc := range testCases {
 		conn := &Connection{
-			isHandshakeComplete: tc.isHandshakeComplete,
-			withCrypto:          tc.withCrypto,
-			isSender:            tc.isSender,
-			isRollover:          tc.isRollover,
+			state: ConnectionState{
+				isHandshakeComplete: tc.isHandshakeComplete,
+				withCrypto:          tc.withCrypto,
+				isSender:            tc.isSender,
+				isRoll:              tc.isRollover,
+			},
 		}
 		stream := &Stream{conn: conn}
 		assert.Equal(t, tc.expected, stream.msgType())

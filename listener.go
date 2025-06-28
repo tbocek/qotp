@@ -24,6 +24,7 @@ type Listener struct {
 	localConn NetworkConn
 	prvKeyId  *ecdh.PrivateKey               //never nil
 	connMap   *skipList[uint64, *Connection] // here we store the connection to remote peers, we can have up to
+	stateConn *shmPair[uint64, *Connection]
 	closed    bool
 	mu        sync.Mutex
 }
@@ -209,81 +210,87 @@ func (l *Listener) Listen(timeout time.Duration, nowMicros uint64) (s *Stream, e
 		return nil, err
 	}
 
-	if !conn.isHandshakeComplete {
-		if conn.isSender {
+	if !conn.state.isHandshakeComplete {
+		if conn.state.isSender {
 			if m.MsgType == InitHandshakeR0MsgType || m.MsgType == InitWithCryptoR0MsgType {
-				conn.isHandshakeComplete = true
+				conn.state.isHandshakeComplete = true
 			}
 		} else {
 			if m.MsgType == DataMsgType || m.MsgType == Data0MsgType {
-				conn.isHandshakeComplete = true
+				conn.state.isHandshakeComplete = true
 			}
-		}
-	}
-
-	//cleanup if we received an ack for our fin
-	if s.state == StreamStateClosed {
-		conn.streams.Remove(s.streamId)
-		if conn.streams.Size() == 0 {
-			l.connMap.Remove(conn.connId)
 		}
 	}
 
 	return s, nil
 }
 
-type FlushState struct {
-	stateConn   *shmPair[uint64, *Connection]
-	stateStream map[uint64]*shmPair[uint32, *Stream]
-	n           int
-	i           int
-}
+func (l *Listener) Flush(nowMicros uint64) (waitNextMicros uint64, err error) {
+	minPacing := uint64(100 * 1000)
+	startConnection := l.stateConn
+	firstIterationConn := true
 
-func (l *Listener) Flush(currentState *FlushState, nowMicros uint64) (newState *FlushState, stop bool, waitNextMicros uint64, err error) {
-
-	//Connection roll over
-	if currentState.stateConn == nil {
-		currentState.stateConn = l.connMap.Min()
-	} else {
-		currentState.stateConn = currentState.stateConn.Next()
-	}
-	if currentState.stateConn == nil {
-		if currentState.n > 0 {
-			currentState.n = 0
-			currentState.i = 0
-		}
-		//we reached the end of our connections, stop for now, hand over to read/listen
-		return currentState, true, uint64(100 * 1000), nil
-	}
-
-	//receiver buffer is full, so we go to the next connection
-	if currentState.stateConn.value.rcvWndSize < uint64(currentState.stateConn.value.dataInFlight) {
-		return currentState, true, 0, nil
-	}
-
-	//Stream loop until we found something to write
 	for {
-		if currentState.stateStream[currentState.stateConn.value.connId] == nil {
-			currentState.stateStream[currentState.stateConn.value.connId] = currentState.stateConn.value.streams.Min()
+		if !firstIterationConn && l.stateConn == startConnection {
+			//we made the full round, we have nothing more to write, return minPacing
+			return minPacing, nil
+		}
+		firstIterationConn = false
+
+		if l.stateConn == nil {
+			l.stateConn = l.connMap.Min()
 		} else {
-			currentState.stateStream[currentState.stateConn.value.connId] = currentState.stateStream[currentState.stateConn.value.connId].Next()
-			if currentState.stateStream[currentState.stateConn.value.connId] == nil {
-				//we reached the end of our streams, go to the next connection
-				return currentState, false, 0, nil
+			l.stateConn = l.stateConn.Next()
+			if l.stateConn == nil {
+				continue
 			}
 		}
-		stream := currentState.stateStream[currentState.stateConn.value.connId].value
-
-		n, pacingMicros, err := currentState.stateConn.value.Flush(stream, nowMicros)
-		if err != nil {
-			return currentState, false, 0, err
+		if l.stateConn == nil {
+			//no connections
+			return minPacing, nil
 		}
-		currentState.i++
-		currentState.n += n
 
-		if n > 0 {
-			slog.Debug("we need pacing, stop sending from this stream", slog.Uint64("pacingMicros", pacingMicros))
-			return currentState, false, pacingMicros, nil
+		startStream := l.stateConn.Value().stateStream
+
+		firstIterationStream := true
+		for {
+			if l.stateConn == nil || (!firstIterationStream && l.stateConn.Value().stateStream == startStream) {
+				//we made the full round, go to next connection
+				break
+			}
+			firstIterationStream = false
+
+			if l.stateConn.Value().stateStream == nil {
+				l.stateConn.Value().stateStream = l.stateConn.Value().streams.Min()
+			} else {
+				l.stateConn.Value().stateStream = l.stateConn.Value().stateStream.Next()
+				if l.stateConn.Value().stateStream == nil {
+					continue
+				}
+			}
+			if l.stateConn.Value().stateStream == nil {
+				//no streams, go to next connection
+				break
+			}
+
+			_, data, pacingMicros, err := l.stateConn.value.Flush(l.stateConn.Value().stateStream.Value(), nowMicros)
+			if err != nil {
+				l.stateConn.Value().cleanup2(l.stateConn.Value().connId)
+				return 0, err
+			}
+
+			if l.stateConn.Value().stateStream.Value().state == StreamStateClosed {
+				l.stateConn.value.cleanup(l.stateConn.Value().stateStream.Value().streamId)
+			}
+
+			if pacingMicros < minPacing {
+				minPacing = pacingMicros
+			}
+
+			if data > 0 {
+				//we do not return minpacing, as we may have more to write
+				return 0, nil
+			}
 		}
 	}
 }
@@ -311,7 +318,7 @@ func (l *Listener) newConn(
 	withCrypto bool) (*Connection, error) {
 
 	connId := binary.LittleEndian.Uint64(prvKeyEpSnd.PublicKey().Bytes())                 // prvKeyEpSnd is never nil
-	connIdRollover := binary.LittleEndian.Uint64(prvKeyEpSndRollover.PublicKey().Bytes()) // prvKeyEpSndRollover is never nil
+	connIdRollover := binary.LittleEndian.Uint64(prvKeyEpSndRollover.PublicKey().Bytes()) // prvKeyEpSndRoll is never nil
 	if pubKeyEdRcv != nil {
 		connId = connId ^ binary.LittleEndian.Uint64(pubKeyEdRcv.Bytes()) //this is the id for regular data flow
 	}
@@ -328,24 +335,28 @@ func (l *Listener) newConn(
 	}
 
 	conn := &Connection{
-		connId:              connId,
-		connIdRollover:      connIdRollover,
-		streams:             newStreamHashMap(),
-		remoteAddr:          remoteAddr,
-		pubKeyIdRcv:         pubKeyIdRcv,
-		prvKeyEpSnd:         prvKeyEpSnd,
-		prvKeyEpSndRollover: prvKeyEpSndRollover,
-		pubKeyEpRcvRollover: pubKeyEpRcvRollover,
-		pubKeyEpRcv:         pubKeyEdRcv,
-		mu:                  sync.Mutex{},
-		listener:            l,
-		isSender:            isSender,
-		withCrypto:          withCrypto,
-		mtu:                 startMtu,
-		rbSnd:               NewSendBuffer(rcvBufferCapacity),
-		rbRcv:               NewReceiveBuffer(rcvBufferCapacity),
-		BBR:                 NewBBR(),
-		rcvWndSize:          0, //initially 0, will be sent to us in the 1st handshake
+		connId:     connId,
+		connIdRoll: connIdRollover,
+		streams:    newStreamHashMap(),
+		remoteAddr: remoteAddr,
+		keys: ConnectionKeys{
+			pubKeyIdRcv:     pubKeyIdRcv,
+			prvKeyEpSnd:     prvKeyEpSnd,
+			prvKeyEpSndRoll: prvKeyEpSndRollover,
+			pubKeyEpRcvRoll: pubKeyEpRcvRollover,
+			pubKeyEpRcv:     pubKeyEdRcv,
+		},
+		mu:       sync.Mutex{},
+		listener: l,
+		state: ConnectionState{
+			isSender:   isSender,
+			withCrypto: withCrypto,
+		},
+		mtu:        startMtu,
+		rbSnd:      NewSendBuffer(rcvBufferCapacity),
+		rbRcv:      NewReceiveBuffer(rcvBufferCapacity),
+		BBR:        NewBBR(),
+		rcvWndSize: 0, //initially 0, will be sent to us in the 1st handshake
 	}
 
 	l.connMap.Put(connId, conn)
@@ -379,60 +390,9 @@ func (l *Listener) readUDP(timeout time.Duration) ([]byte, netip.AddrPort, error
 	return buffer[:numRead], remoteAddr, nil
 }
 
-func (l *Listener) ProcessListen(waitNextMicros uint64, callback func(s *Stream), nowMicros uint64) error {
-	// Phase 1: Listen for incoming packets
-	timeout := time.Duration(waitNextMicros) * time.Microsecond
-	s, err := l.Listen(timeout, nowMicros)
-	if err != nil {
-		return err
-	}
-	if s != nil {
-		callback(s) // Process received stream
-	}
-	return nil
-}
-
-func (l *Listener) ProcessFlush(ctx context.Context, state *FlushState, nowMicros uint64) (waitNextMicros uint64, err error) {
-	// Phase 2: Flush outgoing data
-	minWaitNextMicros := uint64(100 * 1000)
-	current := state.i
-	for i := current; i < current+20; i++ { //process 20 flushes at most, then check read
-		if ctx != nil {
-			select {
-			case <-ctx.Done():
-				slog.Debug("read write process - context cancelled, exiting")
-				return 0, nil
-			default:
-				// Continue with normal operation
-			}
-		}
-		var stop bool
-		state, stop, waitNextMicros, err = l.Flush(state, nowMicros)
-		if err != nil {
-			return 0, err
-		}
-
-		if waitNextMicros < minWaitNextMicros {
-			minWaitNextMicros = waitNextMicros
-		}
-
-		if stop {
-			return minWaitNextMicros, nil // No more data to flush
-		}
-	}
-	return minWaitNextMicros, nil
-}
-
 func (l *Listener) Loop(ctx context.Context, callback func(s *Stream)) {
 	go func() {
-		// Initialize flush state
-		state := &FlushState{
-			stateConn:   nil,
-			stateStream: make(map[uint64]*shmPair[uint32, *Stream]),
-		}
-
 		waitNextMicros := uint64(100 * 1000)
-
 		for {
 			// Check if context is cancelled
 			if ctx != nil {
@@ -445,14 +405,23 @@ func (l *Listener) Loop(ctx context.Context, callback func(s *Stream)) {
 				}
 			}
 
+			//Listen
 			nowMicros := uint64(time.Now().UnixMicro())
-			err := l.ProcessListen(waitNextMicros, callback, nowMicros)
+			timeout := time.Duration(waitNextMicros) * time.Microsecond
+			s, err := l.Listen(timeout, nowMicros)
+			if err != nil {
+				slog.Error("Error in loop listen", slog.Any("error", err))
+			}
+			if s != nil {
+				callback(s) // Process received stream
+			}
+
+			//Flush
 			nowMicros = uint64(time.Now().UnixMicro())
-			waitNextMicros, err = l.ProcessFlush(ctx, state, nowMicros)
+			waitNextMicros, err = l.Flush(nowMicros)
 
 			if err != nil {
-				slog.Error("Error in loop", slog.Any("error", err))
-				return
+				slog.Error("Error in loop flush", slog.Any("error", err))
 			}
 		}
 	}()
@@ -467,4 +436,8 @@ func (l *Listener) debug(addr netip.AddrPort) slog.Attr {
 	lastColonIndex := strings.LastIndex(localAddrString, ":")
 
 	return slog.String("net", strconv.Itoa(int(addr.Port()))+"->"+localAddrString[lastColonIndex+1:])
+}
+
+func (l *Listener) ForceClose(c *Connection) {
+	c.cleanup2(c.connId)
 }

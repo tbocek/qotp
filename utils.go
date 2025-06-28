@@ -183,17 +183,3 @@ func generateTwoKeys() (*ecdh.PrivateKey, *ecdh.PrivateKey, error) {
 	}
 	return prvKey1, prvKey2, nil
 }
-
-func minUint64(a, b uint64) uint64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func maxUint64(a, b uint64) uint64 {
-	if a > b {
-		return a
-	}
-	return b
-}

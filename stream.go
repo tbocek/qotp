@@ -33,13 +33,6 @@ func (s *Stream) NotifyStreamChange() error {
 	return s.conn.listener.localConn.CancelRead()
 }
 
-func (s *Stream) State() StreamState {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.state
-}
-
 func (s *Stream) Read() (readData []byte, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

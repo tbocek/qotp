@@ -9,15 +9,15 @@ import (
 
 func (s *Stream) msgType() MsgType {
 	switch {
-	case !s.conn.isHandshakeComplete && s.conn.withCrypto && s.conn.isSender:
+	case !s.conn.state.isHandshakeComplete && s.conn.state.withCrypto && s.conn.state.isSender:
 		return InitWithCryptoS0MsgType
-	case !s.conn.isHandshakeComplete && s.conn.withCrypto:
+	case !s.conn.state.isHandshakeComplete && s.conn.state.withCrypto:
 		return InitWithCryptoR0MsgType
-	case !s.conn.isHandshakeComplete && s.conn.isSender:
+	case !s.conn.state.isHandshakeComplete && s.conn.state.isSender:
 		return InitHandshakeS0MsgType
-	case !s.conn.isHandshakeComplete:
+	case !s.conn.state.isHandshakeComplete:
 		return InitHandshakeR0MsgType
-	case s.conn.isRollover:
+	case s.conn.state.isRoll:
 		return Data0MsgType
 	default:
 		return DataMsgType
@@ -34,13 +34,8 @@ type Overhead struct {
 }
 
 func (o *Overhead) CalcOverhead() (needsExtend bool, overhead int) {
-	hasAck := false
-	if o.ack != nil {
-		hasAck = true
-		needsExtend = o.ack.offset > 0xFFFFFF
-	}
-	needsExtend = needsExtend || o.dataOffset > 0xFFFFFF
-
+	hasAck := o.ack != nil
+	needsExtend = (hasAck && o.ack.offset > 0xFFFFFF) || o.dataOffset > 0xFFFFFF
 	overhead = CalcProtoOverhead(hasAck, needsExtend)
 	return needsExtend, overhead
 }
@@ -71,15 +66,6 @@ func (o *Overhead) CalcMaxData() (overhead uint16) {
 }
 
 func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgType) ([]byte, MsgType, error) {
-	p := &PayloadMeta{
-		IsClose:      s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
-		IsSender:     s.conn.isSender,
-		RcvWndSize:   rcvBufferCapacity - uint64(s.conn.rbRcv.Size()),
-		Ack:          ack,
-		StreamId:     s.streamId,
-		StreamOffset: offset,
-	}
-
 	if msgType == -1 {
 		msgType = s.msgType()
 	}
@@ -88,10 +74,28 @@ func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgTyp
 	var payRaw []byte
 	var data []byte
 
-	// Only encode payload if not InitHandshakeS0 (which doesn't need it)
-	if msgType != InitHandshakeS0MsgType {
-		payRaw, _ = EncodePayload(p, origData)
+	// Special case: InitHandshakeS0 doesn't need payload
+	if msgType == InitHandshakeS0MsgType {
+		slog.Debug("EncodeInitHandshakeS0", debugGoroutineID(), s.debug())
+		data = EncodeInitHandshakeS0(
+			s.conn.listener.prvKeyId.PublicKey(),
+			s.conn.keys.prvKeyEpSnd,
+			s.conn.keys.prvKeyEpSndRoll,
+		)
+		s.conn.snCrypto++
+		return data, msgType, nil
 	}
+
+	// Create payload for all other message types
+	p := &PayloadMeta{
+		IsClose:      s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
+		IsSender:     s.conn.state.isSender,
+		RcvWndSize:   rcvBufferCapacity - uint64(s.conn.rbRcv.Size()),
+		Ack:          ack,
+		StreamId:     s.streamId,
+		StreamOffset: offset,
+	}
+	payRaw, _ = EncodePayload(p, origData)
 
 	// Handle message encoding based on connection state
 	var err error
@@ -99,58 +103,53 @@ func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgTyp
 	case InitWithCryptoS0MsgType:
 		slog.Debug("EncodeInitWithCryptoS0", debugGoroutineID(), s.debug(), slog.Int("len(payRaw)", len(payRaw)))
 		data, err = EncodeInitWithCryptoS0(
-			s.conn.pubKeyIdRcv,
+			s.conn.keys.pubKeyIdRcv,
 			s.conn.listener.prvKeyId.PublicKey(),
-			s.conn.prvKeyEpSnd,
-			s.conn.prvKeyEpSndRollover,
+			s.conn.keys.prvKeyEpSnd,
+			s.conn.keys.prvKeyEpSndRoll,
 			payRaw,
 		)
 	case InitWithCryptoR0MsgType:
 		slog.Debug("EncodeInitWithCryptoR0", debugGoroutineID(), s.debug(), slog.Int("len(payRaw)", len(payRaw)))
 		data, err = EncodeInitWithCryptoR0(
-			s.conn.pubKeyIdRcv,
+			s.conn.keys.pubKeyIdRcv,
 			s.conn.listener.prvKeyId.PublicKey(),
-			s.conn.pubKeyEpRcv,
-			s.conn.prvKeyEpSnd,
-			s.conn.prvKeyEpSndRollover,
+			s.conn.keys.pubKeyEpRcv,
+			s.conn.keys.prvKeyEpSnd,
+			s.conn.keys.prvKeyEpSndRoll,
 			payRaw,
-		)
-	case InitHandshakeS0MsgType:
-		slog.Debug("EncodeInitHandshakeS0", debugGoroutineID(), s.debug())
-		data = EncodeInitHandshakeS0(
-			s.conn.listener.prvKeyId.PublicKey(),
-			s.conn.prvKeyEpSnd,
-			s.conn.prvKeyEpSndRollover,
 		)
 	case InitHandshakeR0MsgType:
 		slog.Debug("EncodeInitHandshakeR0", debugGoroutineID(), s.debug(), slog.Int("len(payRaw)", len(payRaw)))
 		data, err = EncodeInitHandshakeR0(
-			s.conn.pubKeyIdRcv,
+			s.conn.keys.pubKeyIdRcv,
 			s.conn.listener.prvKeyId.PublicKey(),
-			s.conn.pubKeyEpRcv,
-			s.conn.prvKeyEpSnd,
-			s.conn.prvKeyEpSndRollover,
+			s.conn.keys.pubKeyEpRcv,
+			s.conn.keys.prvKeyEpSnd,
+			s.conn.keys.prvKeyEpSndRoll,
 			payRaw,
 		)
 	case Data0MsgType:
 		slog.Debug("EncodeData0", debugGoroutineID(), s.debug(), slog.Int("len(payRaw)", len(payRaw)))
 		data, err = EncodeData0(
-			s.conn.prvKeyEpSnd.PublicKey(),
-			s.conn.pubKeyEpRcv,
-			s.conn.isSender,
-			s.conn.prvKeyEpSndRollover,
+			s.conn.keys.prvKeyEpSnd.PublicKey(),
+			s.conn.keys.pubKeyEpRcv,
+			s.conn.state.isSender,
+			s.conn.keys.prvKeyEpSndRoll,
 			payRaw,
 		)
-	default: //case DataMsgType:
+	case DataMsgType:
 		slog.Debug("EncodeData", debugGoroutineID(), s.debug(), slog.Int("len(payRaw)", len(payRaw)))
 		data, err = EncodeData(
-			s.conn.prvKeyEpSnd.PublicKey(),
-			s.conn.pubKeyEpRcv,
-			s.conn.isSender,
+			s.conn.keys.prvKeyEpSnd.PublicKey(),
+			s.conn.keys.pubKeyEpRcv,
+			s.conn.state.isSender,
 			s.conn.sharedSecret,
 			s.conn.snCrypto,
 			payRaw,
 		)
+	default:
+		return nil, 0, fmt.Errorf("unknown message type: %v", msgType)
 	}
 	if err != nil {
 		return nil, 0, err
@@ -169,21 +168,14 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 
 	switch msgType {
 	case InitHandshakeS0MsgType:
-		// Generate keys for the receiver
-		prvKeyEpRcv, prvKeyEpRcvRollover, err := generateTwoKeys()
+		slog.Debug("DecodeInitHandshakeS0", debugGoroutineID(), l.debug(remoteAddr))
+		prvKeyEpRcv, prvKeyEpRcvRoll, err := generateTwoKeys()
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to generate keys: %w", err)
 		}
 
-		slog.Debug("DecodeInitHandshakeS0",
-			debugGoroutineID(),
-			l.debug(remoteAddr),
-			debugPrvKey("prvKeyEpRcv", prvKeyEpRcv))
-
 		// Decode S0 message
-		pubKeyIdSnd, pubKeyEpSnd, pubKeyEpSndRollover, message, err := DecodeInitHandshakeS0(
-			buffer,
-			prvKeyEpRcv)
+		pubKeyIdSnd, pubKeyEpSnd, pubKeyEpSndRoll, message, err := DecodeInitHandshakeS0(buffer, prvKeyEpRcv)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to decode InitHandshakeS0: %w", err)
 		}
@@ -192,10 +184,10 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		conn, err := l.newConn(
 			remoteAddr,
 			prvKeyEpRcv,
-			prvKeyEpRcvRollover,
+			prvKeyEpRcvRoll,
 			pubKeyIdSnd,
 			pubKeyEpSnd,
-			pubKeyEpSndRollover,
+			pubKeyEpSndRoll,
 			false, false)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to create connection: %w", err)
@@ -204,48 +196,38 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		conn.sharedSecret = message.SharedSecret
 		return conn, message, nil
 	case InitHandshakeR0MsgType:
+		slog.Debug("DecodeInitHandshakeR0", debugGoroutineID(), l.debug(remoteAddr))
 		conn := l.connMap.Get(origConnId).value
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for InitHandshakeR0MsgType")
 		}
 		l.connMap.Remove(origConnId) // only sender ep pub key connId no longer needed, we now have a proper connId
 
-		slog.Debug("DecodeInitHandshakeR0",
-			debugGoroutineID(),
-			l.debug(remoteAddr),
-			debugPrvKey("prvKeyEpSnd", conn.prvKeyEpSnd))
-
 		// Decode R0 message
-		pubKeyIdRcv, pubKeyEpRcv, pubKeyEpRcvRollover, message, err := DecodeInitHandshakeR0(
+		pubKeyIdRcv, pubKeyEpRcv, pubKeyEpRcvRoll, message, err := DecodeInitHandshakeR0(
 			buffer,
-			conn.prvKeyEpSnd)
+			conn.keys.prvKeyEpSnd)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to decode InitHandshakeR0: %w", err)
 		}
 
-		conn.connId = Uint64(conn.prvKeyEpSnd.PublicKey().Bytes()) ^ Uint64(pubKeyEpRcv.Bytes())
+		conn.connId = Uint64(conn.keys.prvKeyEpSnd.PublicKey().Bytes()) ^ Uint64(pubKeyEpRcv.Bytes())
 		l.connMap.Put(conn.connId, conn)
-		conn.pubKeyIdRcv = pubKeyIdRcv
-		conn.pubKeyEpRcv = pubKeyEpRcv
-		conn.pubKeyEpRcvRollover = pubKeyEpRcvRollover
+		conn.keys.pubKeyIdRcv = pubKeyIdRcv
+		conn.keys.pubKeyEpRcv = pubKeyEpRcv
+		conn.keys.pubKeyEpRcvRoll = pubKeyEpRcvRoll
 		conn.sharedSecret = message.SharedSecret
 
 		return conn, message, nil
 	case InitWithCryptoS0MsgType:
-		// Generate keys for the receiver
-		prvKeyEpRcv, prvKeyEpRcvRollover, err := generateTwoKeys()
+		slog.Debug("DecodeInitWithCryptoS0", debugGoroutineID(), l.debug(remoteAddr))
+		prvKeyEpRcv, prvKeyEpRcvRoll, err := generateTwoKeys()
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to generate keys: %w", err)
 		}
 
-		slog.Debug("DecodeInitWithCryptoS0",
-			debugGoroutineID(),
-			l.debug(remoteAddr),
-			debugPrvKey("privKeyId", l.prvKeyId),
-			debugPrvKey("prvKeyEpRcv", prvKeyEpRcv))
-
 		// Decode crypto S0 message
-		pubKeyIdSnd, pubKeyEpSnd, pubKeyEpSndRollover, message, err := DecodeInitWithCryptoS0(
+		pubKeyIdSnd, pubKeyEpSnd, pubKeyEpSndRoll, message, err := DecodeInitWithCryptoS0(
 			buffer,
 			l.prvKeyId,
 			prvKeyEpRcv)
@@ -257,10 +239,10 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		conn, err := l.newConn(
 			remoteAddr,
 			prvKeyEpRcv,
-			prvKeyEpRcvRollover,
+			prvKeyEpRcvRoll,
 			pubKeyIdSnd,
 			pubKeyEpSnd,
-			pubKeyEpSndRollover,
+			pubKeyEpSndRoll,
 			false, true)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to create connection: %w", err)
@@ -269,6 +251,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		conn.sharedSecret = message.SharedSecret
 		return conn, message, nil
 	case InitWithCryptoR0MsgType:
+		slog.Debug("DecodeInitWithCryptoR0", debugGoroutineID(), l.debug(remoteAddr))
 		connP := l.connMap.Get(origConnId)
 		if connP == nil {
 			return nil, nil, errors.New("connection not found for InitWithCryptoR0")
@@ -276,18 +259,16 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		conn := connP.value
 		l.connMap.Remove(origConnId) // only sender ep pub key connId no longer needed, we now have a proper connId
 
-		slog.Debug("DecodeInitWithCryptoR0", debugGoroutineID(), l.debug(remoteAddr))
-
 		// Decode crypto R0 message
-		pubKeyEpRcv, pubKeyEpRcvRollover, message, err := DecodeInitWithCryptoR0(buffer, conn.prvKeyEpSnd)
+		pubKeyEpRcv, pubKeyEpRcvRoll, message, err := DecodeInitWithCryptoR0(buffer, conn.keys.prvKeyEpSnd)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to decode InitWithCryptoR0: %w", err)
 		}
 
-		conn.connId = Uint64(conn.prvKeyEpSnd.PublicKey().Bytes()) ^ Uint64(pubKeyEpRcv.Bytes())
+		conn.connId = Uint64(conn.keys.prvKeyEpSnd.PublicKey().Bytes()) ^ Uint64(pubKeyEpRcv.Bytes())
 		l.connMap.Put(conn.connId, conn)
-		conn.pubKeyEpRcv = pubKeyEpRcv
-		conn.pubKeyEpRcvRollover = pubKeyEpRcvRollover
+		conn.keys.pubKeyEpRcv = pubKeyEpRcv
+		conn.keys.pubKeyEpRcvRoll = pubKeyEpRcvRoll
 		conn.sharedSecret = message.SharedSecret
 		conn.sharedSecret = message.SharedSecret
 
@@ -306,15 +287,15 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		//rollover - TODO delete(l.connMap, origConnId)
 
 		// Decode Data0 message
-		pubKeyEpRollover, message, err := DecodeData0(buffer, conn.isSender, conn.prvKeyEpSnd)
+		pubKeyEpRoll, message, err := DecodeData0(buffer, conn.state.isSender, conn.keys.prvKeyEpSnd)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to decode Data0: %w", err)
 		}
 
-		conn.pubKeyEpRcvRollover = pubKeyEpRollover
+		conn.keys.pubKeyEpRcvRoll = pubKeyEpRoll
 		conn.sharedSecret = message.SharedSecret
 		return conn, message, nil
-	default: //case DataMsgType:
+	case DataMsgType:
 		conP := l.connMap.Get(origConnId)
 		if conP == nil {
 			return nil, nil, errors.New("connection not found for DataMessage")
@@ -327,10 +308,12 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 			slog.Int("len(buffer)", len(buffer)))
 
 		// Decode Data message
-		message, err := DecodeData(buffer, conn.isSender, conn.sharedSecret)
+		message, err := DecodeData(buffer, conn.state.isSender, conn.sharedSecret)
 		if err != nil {
 			return nil, nil, err
 		}
 		return conn, message, nil
+	default:
+		return nil, nil, fmt.Errorf("unknown message type: %v", msgType)
 	}
 }
