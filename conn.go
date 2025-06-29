@@ -176,8 +176,9 @@ func (c *Connection) Flush(stream *Stream, nowMicros uint64) (raw int, data int,
 
 	// Respect pacing
 	if c.nextWriteTime > nowMicros {
+		slog.Debug("repecting pacing: %v", slog.Uint64("nowMicros", nowMicros))
 		if ack != nil {
-			return c.writeAck(stream, ack)
+			return c.writeAck(stream, ack, nowMicros)
 		}
 	}
 
@@ -205,7 +206,7 @@ func (c *Connection) Flush(stream *Stream, nowMicros uint64) (raw int, data int,
 			return 0, 0, 0, err
 		}
 		slog.Debug("UpdateSnd/ReadyToRetransmit", debugGoroutineID(), slog.Any("len(dataToSend)", len(encData)))
-		raw, err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr)
+		raw, err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowMicros)
 		if err != nil {
 			return 0, 0, 0, err
 		}
@@ -222,7 +223,7 @@ func (c *Connection) Flush(stream *Stream, nowMicros uint64) (raw int, data int,
 		// Handshake mode - already sent first packet, can only retransmit or ack
 		switch {
 		case ack != nil:
-			return c.writeAck(stream, ack)
+			return c.writeAck(stream, ack, nowMicros)
 		default:
 			return 0, 0, 100 * 1000, nil // need to wait, go to next connection
 		}
@@ -240,7 +241,7 @@ func (c *Connection) Flush(stream *Stream, nowMicros uint64) (raw int, data int,
 		m.msgType = msgType
 		c.state.isFirstPacketProduced = true
 		slog.Debug("UpdateSnd/ReadyToSend/splitData", debugGoroutineID(), slog.Any("len(dataToSend)", len(encData)))
-		raw, err := c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr)
+		raw, err := c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowMicros)
 		if err != nil {
 			return 0, 0, 0, err
 		}
@@ -255,20 +256,20 @@ func (c *Connection) Flush(stream *Stream, nowMicros uint64) (raw int, data int,
 		return raw, packetLen, pacingMicros, nil
 	case ack != nil:
 		// Only have acks to send
-		return c.writeAck(stream, ack)
+		return c.writeAck(stream, ack, nowMicros)
 
 	default:
 		return 0, 0, 100 * 1000, nil // need to wait, go to next stream
 	}
 }
 
-func (c *Connection) writeAck(stream *Stream, ack *Ack) (raw int, data int, pacingMicros uint64, err error) {
+func (c *Connection) writeAck(stream *Stream, ack *Ack, nowMicros uint64) (raw int, data int, pacingMicros uint64, err error) {
 	encData, _, err := stream.encode([]byte{}, stream.currentOffset(), ack, -1)
 	if err != nil {
 		return 0, 0, 0, err
 	}
 	slog.Debug("UpdateSnd/Acks", debugGoroutineID(), slog.Any("len(dataToSend)", len(encData)))
-	raw, err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr)
+	raw, err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowMicros)
 	if err != nil {
 		return 0, 0, 0, err
 	}

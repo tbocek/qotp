@@ -2,7 +2,6 @@ package tomtp
 
 import (
 	"errors"
-	"log/slog"
 	"sync"
 )
 
@@ -225,13 +224,6 @@ func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, rto
 		if err != nil {
 			return nil, nil, err
 		}
-
-		slog.Debug("RTO check vars",
-			slog.Int("sentNr", rtoData.sentNr),
-			slog.Uint64("nowMicros", nowMicros),
-			slog.Uint64("rtoData.beforeSendMicros", rtoData.beforeSendMicros),
-			slog.Uint64("diff", nowMicros-rtoData.beforeSendMicros),
-			slog.Uint64("currentRto", currentRto))
 
 		if nowMicros-rtoData.beforeSendMicros > currentRto {
 			// Extract offset and length from key

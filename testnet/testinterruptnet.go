@@ -33,7 +33,7 @@ func main() {
 			n, _, err := conn.ReadFromUDP(buffer)
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					fmt.Println("Read timeout occurred")
+					//fmt.Println("Read timeout occurred")
 					continue
 				}
 				fmt.Printf("Read error: %v\n", err)

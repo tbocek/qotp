@@ -1,7 +1,6 @@
 package tomtp
 
 import (
-	"context"
 	"crypto/ecdh"
 	"crypto/rand"
 	"crypto/sha256"
@@ -14,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
+	"sync/atomic"
 )
 
 const ReadDeadLine uint64 = 200
@@ -182,15 +181,15 @@ func (l *Listener) Close() error {
 		conn.value.Close()
 	}
 
-	err := l.localConn.CancelRead()
+	err := l.localConn.TimeoutReadNow()
 	if err != nil {
 		return err
 	}
 	return l.localConn.Close()
 }
 
-func (l *Listener) Listen(timeout time.Duration, nowMicros uint64) (s *Stream, err error) {
-	buffer, remoteAddr, err := l.readUDP(timeout)
+func (l *Listener) Listen(timeoutMicros uint64, nowMicros uint64) (s *Stream, err error) {
+	buffer, remoteAddr, err := l.readUDP(timeoutMicros, nowMicros)
 	if err != nil {
 		return nil, err
 	}
@@ -364,10 +363,10 @@ func (l *Listener) newConn(
 	return conn, nil
 }
 
-func (l *Listener) readUDP(timeout time.Duration) ([]byte, netip.AddrPort, error) {
+func (l *Listener) readUDP(timeoutMicros uint64, nowMicros uint64) ([]byte, netip.AddrPort, error) {
 	buffer := make([]byte, maxMtu)
 
-	numRead, remoteAddr, err := l.localConn.ReadFromUDPAddrPort(buffer, timeout)
+	numRead, remoteAddr, err := l.localConn.ReadFromUDPAddrPort(buffer, timeoutMicros, nowMicros)
 
 	if err != nil {
 		var netErr net.Error
@@ -382,7 +381,7 @@ func (l *Listener) readUDP(timeout time.Duration) ([]byte, netip.AddrPort, error
 		}
 	}
 	if numRead == 0 {
-		slog.Debug("readUDP - no dataAvailable")
+		//slog.Debug("readUDP - no dataAvailable")
 		return nil, remoteAddr, nil
 	}
 
@@ -390,25 +389,15 @@ func (l *Listener) readUDP(timeout time.Duration) ([]byte, netip.AddrPort, error
 	return buffer[:numRead], remoteAddr, nil
 }
 
-func (l *Listener) Loop(ctx context.Context, callback func(s *Stream)) {
+func (l *Listener) Loop(callback func(s *Stream)) func() {
+	running := new(atomic.Bool)
+	running.Store(true)
+
 	go func() {
 		waitNextMicros := uint64(100 * 1000)
-		for {
-			// Check if context is cancelled
-			if ctx != nil {
-				select {
-				case <-ctx.Done():
-					slog.Debug("loop - context cancelled, exiting")
-					return
-				default:
-					// Continue with normal operation
-				}
-			}
-
+		for running.Load() {
 			//Listen
-			nowMicros := uint64(time.Now().UnixMicro())
-			timeout := time.Duration(waitNextMicros) * time.Microsecond
-			s, err := l.Listen(timeout, nowMicros)
+			s, err := l.Listen(waitNextMicros, timeNowMicros())
 			if err != nil {
 				slog.Error("Error in loop listen", slog.Any("error", err))
 			}
@@ -417,14 +406,17 @@ func (l *Listener) Loop(ctx context.Context, callback func(s *Stream)) {
 			}
 
 			//Flush
-			nowMicros = uint64(time.Now().UnixMicro())
-			waitNextMicros, err = l.Flush(nowMicros)
+			waitNextMicros, err = l.Flush(timeNowMicros())
 
 			if err != nil {
 				slog.Error("Error in loop flush", slog.Any("error", err))
 			}
 		}
 	}()
+
+	return func() {
+		running.Store(false)
+	}
 }
 
 func (l *Listener) debug(addr netip.AddrPort) slog.Attr {

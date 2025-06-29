@@ -30,7 +30,7 @@ func (s *Stream) NotifyStreamChange() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.conn.listener.localConn.CancelRead()
+	return s.conn.listener.localConn.TimeoutReadNow()
 }
 
 func (s *Stream) Read() (readData []byte, err error) {
@@ -69,7 +69,7 @@ func (s *Stream) Write(writeData []byte) (remainingWriteData []byte, err error) 
 		slog.Debug("Status Nok", debugGoroutineID(), s.debug(), slog.Any("status", status))
 	} else {
 		//data is read, so signal to cancel read, since we could do a flush
-		err = s.conn.listener.localConn.CancelRead()
+		err = s.conn.listener.localConn.TimeoutReadNow()
 		if err != nil {
 			return nil, err
 		}

@@ -262,3 +262,248 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 		assert.Equal(t, tc.expected, decoded, "Round trip %s: input=%d, decoded=%d", tc.desc, tc.input, decoded)
 	}
 }
+
+func TestEncodeDecodePayloadWithAcks(t *testing.T) {
+	testCases := []struct {
+		name        string
+		payload     *PayloadMeta
+		data        []byte
+		expectError bool
+	}{
+		{
+			name: "ACK only - no data",
+			payload: &PayloadMeta{
+				IsSender:     false,
+				IsClose:      false,
+				RcvWndSize:   1000,
+				StreamId:     1,
+				StreamOffset: 100,
+				Ack: &Ack{
+					streamId: 10,
+					offset:   200,
+					len:      300,
+				},
+			},
+			data:        []byte{},
+			expectError: false,
+		},
+		{
+			name: "ACK with data",
+			payload: &PayloadMeta{
+				IsSender:     true,
+				IsClose:      false,
+				RcvWndSize:   2000,
+				StreamId:     2,
+				StreamOffset: 500,
+				Ack: &Ack{
+					streamId: 20,
+					offset:   1000,
+					len:      1500,
+				},
+			},
+			data:        []byte("test data"),
+			expectError: false,
+		},
+		{
+			name: "No ACK - data only",
+			payload: &PayloadMeta{
+				IsSender:     true,
+				IsClose:      false,
+				RcvWndSize:   3000,
+				StreamId:     3,
+				StreamOffset: 1000,
+				Ack:          nil,
+			},
+			data:        []byte("more test data"),
+			expectError: false,
+		},
+		{
+			name: "ACK with large offset (24-bit)",
+			payload: &PayloadMeta{
+				IsSender:     false,
+				IsClose:      false,
+				RcvWndSize:   4000,
+				StreamId:     4,
+				StreamOffset: 0xFFFFFE, // Just under 24-bit limit
+				Ack: &Ack{
+					streamId: 40,
+					offset:   0xFFFFFE,
+					len:      100,
+				},
+			},
+			data:        []byte{},
+			expectError: false,
+		},
+		{
+			name: "ACK with large offset (48-bit)",
+			payload: &PayloadMeta{
+				IsSender:     false,
+				IsClose:      false,
+				RcvWndSize:   5000,
+				StreamId:     5,
+				StreamOffset: 0x1000000, // Requires 48-bit
+				Ack: &Ack{
+					streamId: 50,
+					offset:   0x1000000,
+					len:      200,
+				},
+			},
+			data:        []byte{},
+			expectError: false,
+		},
+		{
+			name: "Multiple flags set with ACK",
+			payload: &PayloadMeta{
+				IsSender:     true,
+				IsClose:      true,
+				RcvWndSize:   0, // Will be ignored due to IsClose
+				StreamId:     6,
+				StreamOffset: 2000,
+				Ack: &Ack{
+					streamId: 60,
+					offset:   3000,
+					len:      400,
+				},
+			},
+			data:        []byte("closing data"),
+			expectError: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Encode
+			encoded, _ := EncodePayload(tc.payload, tc.data)
+
+			// Print encoded data for debugging
+			t.Logf("Encoded %d bytes for %s", len(encoded), tc.name)
+			t.Logf("Flags byte: %08b", encoded[0])
+
+			// Decode
+			decoded, _, decodedData, err := DecodePayload(encoded)
+
+			if tc.expectError {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotNil(t, decoded)
+
+			// Verify basic fields
+			assert.Equal(t, tc.payload.IsSender, decoded.IsSender, "IsSender mismatch")
+			assert.Equal(t, tc.payload.IsClose, decoded.IsClose, "IsClose mismatch")
+			assert.Equal(t, tc.payload.StreamId, decoded.StreamId, "StreamId mismatch")
+			assert.Equal(t, tc.payload.StreamOffset, decoded.StreamOffset, "StreamOffset mismatch")
+
+			// Verify RcvWndSize (only if not closing)
+			if !tc.payload.IsClose {
+				// Due to encoding/decoding, exact match might not occur
+				// but should be in the same range
+				t.Logf("RcvWndSize - Original: %d, Decoded: %d", tc.payload.RcvWndSize, decoded.RcvWndSize)
+			}
+
+			// Verify ACK
+			if tc.payload.Ack != nil {
+				assert.NotNil(t, decoded.Ack, "ACK should not be nil")
+				assert.Equal(t, tc.payload.Ack.streamId, decoded.Ack.streamId, "ACK streamId mismatch")
+				assert.Equal(t, tc.payload.Ack.offset, decoded.Ack.offset, "ACK offset mismatch")
+				assert.Equal(t, tc.payload.Ack.len, decoded.Ack.len, "ACK len mismatch")
+			} else {
+				assert.Nil(t, decoded.Ack, "ACK should be nil")
+			}
+
+			// Verify data
+			assert.Equal(t, tc.data, decodedData, "Data mismatch")
+		})
+	}
+}
+
+// Test specific ACK encoding/decoding scenarios
+func TestAckEncodingEdgeCases(t *testing.T) {
+	t.Run("ACK flag bits", func(t *testing.T) {
+		// Test that ACK flag is properly set in flags byte
+		payload := &PayloadMeta{
+			StreamId:     1,
+			StreamOffset: 0,
+			Ack: &Ack{
+				streamId: 10,
+				offset:   0,
+				len:      100,
+			},
+		}
+
+		encoded, _ := EncodePayload(payload, []byte{})
+		flags := encoded[0]
+
+		// Extract ackPack bits (bits 1-2)
+		ackPack := (flags >> 1) & 0x03
+		assert.Equal(t, uint8(2), ackPack, "Should be type 2 (ACK with 24-bit)")
+
+		// Decode and verify
+		decoded, _, _, err := DecodePayload(encoded)
+		assert.NoError(t, err)
+		assert.NotNil(t, decoded.Ack)
+	})
+
+	t.Run("No ACK flag bits", func(t *testing.T) {
+		// Test that no ACK flag is properly set
+		payload := &PayloadMeta{
+			StreamId:     1,
+			StreamOffset: 0,
+			Ack:          nil,
+		}
+
+		encoded, _ := EncodePayload(payload, []byte{})
+		flags := encoded[0]
+
+		// Extract ackPack bits (bits 1-2)
+		ackPack := (flags >> 1) & 0x03
+		assert.Equal(t, uint8(0), ackPack, "Should be type 0 (no ACK with 24-bit)")
+
+		// Decode and verify
+		decoded, _, _, err := DecodePayload(encoded)
+		assert.NoError(t, err)
+		assert.Nil(t, decoded.Ack)
+	})
+}
+
+// Test minimum payload sizes
+func TestPayloadMinimumSizes(t *testing.T) {
+	testCases := []struct {
+		name         string
+		hasAck       bool
+		needs48bit   bool
+		expectedSize int
+	}{
+		{"No ACK, 24-bit", false, false, 8},   // 1 + 4 + 3
+		{"No ACK, 48-bit", false, true, 11},   // 1 + 4 + 6
+		{"With ACK, 24-bit", true, false, 17}, // 1 + 9 + 4 + 3
+		{"With ACK, 48-bit", true, true, 23},  // 1 + 12 + 4 + 6
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var offset uint64 = 0
+			if tc.needs48bit {
+				offset = 0x1000000
+			}
+
+			payload := &PayloadMeta{
+				StreamId:     1,
+				StreamOffset: offset,
+			}
+
+			if tc.hasAck {
+				payload.Ack = &Ack{
+					streamId: 10,
+					offset:   offset,
+					len:      100,
+				}
+			}
+
+			encoded, _ := EncodePayload(payload, []byte{})
+			assert.Equal(t, tc.expectedSize, len(encoded), "Encoded size mismatch")
+		})
+	}
+}

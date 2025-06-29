@@ -1,7 +1,6 @@
 package tomtp
 
 import (
-	"context"
 	"crypto/ecdh"
 	"errors"
 	"github.com/stretchr/testify/assert"
@@ -167,7 +166,7 @@ func TestRTO(t *testing.T) {
 
 	_, err = connPair.senderToRecipient(1)
 
-	streamB, err := listenerB.Listen(0, 0)
+	streamB, err := listenerB.Listen(0, 250*1000+1)
 	assert.Nil(t, err)
 	assert.True(t, streamB.state == StreamStateOpen)
 }
@@ -197,7 +196,7 @@ func TestRTOTimes4Success(t *testing.T) {
 	_, err = connA.listener.Flush(200000 + 400000 + 800000 + 1600000 + 4)
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(1)
-	streamB, err := listenerB.Listen(0, 0)
+	streamB, err := listenerB.Listen(0, 200000+400000+800000+1600000+4)
 	assert.Nil(t, err)
 	assert.True(t, streamB.state == StreamStateOpen)
 }
@@ -349,7 +348,7 @@ func TestGarbage1(t *testing.T) {
 
 	// Simulate packet transfer (data packet with FIN flag)
 	data := make([]byte, 1400)
-	_, err = connPair.senderRawToRecipient("tmp", data)
+	_, err = connPair.senderRawToRecipient("tmp", data, 0)
 	assert.Nil(t, err)
 
 	// Listener B receives data
@@ -386,7 +385,7 @@ func TestGarbage2(t *testing.T) {
 
 	// Simulate packet transfer (data packet with FIN flag)
 	data := make([]byte, 1400)
-	_, err = connPair.recipientRawToSender("tmp", data)
+	_, err = connPair.recipientRawToSender("tmp", data, 0)
 	assert.Nil(t, err)
 
 	streamA, err = streamA.conn.listener.Listen(0, 0)
@@ -447,21 +446,32 @@ func TestBBR2(t *testing.T) {
 	defer connPair.Conn2.Close()
 	connA, listenerB, err := createTwoStreams(connPair.Conn1, connPair.Conn2, testPrvKey1, testPrvKey2)
 	assert.Nil(t, err)
+	specificMicros = 0
 
 	var totalBytesReceived uint64
 	var mu sync.Mutex
 
-	connA.listener.Loop(context.Background(), func(s *Stream) {
-		data, _ := s.Read()
-		mu.Lock()
-		totalBytesReceived += uint64(len(data))
-		mu.Unlock()
+	cancelA := connA.listener.Loop(func(s *Stream) {
+		for {
+			data, err := s.Read()
+			if err != nil || len(data) == 0 {
+				break
+			}
+			mu.Lock()
+			totalBytesReceived += uint64(len(data))
+			mu.Unlock()
+		}
 	})
-	listenerB.Loop(context.Background(), func(s *Stream) {
-		data, _ := s.Read()
-		mu.Lock()
-		totalBytesReceived += uint64(len(data))
-		mu.Unlock()
+	cancelB := listenerB.Loop(func(s *Stream) {
+		for {
+			data, err := s.Read()
+			if err != nil || len(data) == 0 {
+				break
+			}
+			mu.Lock()
+			totalBytesReceived += uint64(len(data))
+			mu.Unlock()
+		}
 	})
 
 	streamA := connA.Stream(0)
@@ -470,8 +480,6 @@ func TestBBR2(t *testing.T) {
 	_, err = streamA.Write(dataA)
 	assert.Nil(t, err)
 
-	streamA.Close()
-
 	start := time.Now()
 	for {
 		mu.Lock()
@@ -479,19 +487,23 @@ func TestBBR2(t *testing.T) {
 		mu.Unlock()
 
 		if received >= rcvBufferCapacity {
+			cancelA()
+			cancelB()
 			break
 		}
 
-		d1, err := connPair.recipientToSenderAll()
+		_, err = connPair.recipientToSenderAll()
 		assert.Nil(t, err)
 
-		d2, err := connPair.senderToRecipientAll()
+		_, err = connPair.senderToRecipientAll()
 		assert.Nil(t, err)
 
-		time.Sleep(time.Duration(d1+d2) * time.Microsecond)
+		//time.Sleep(time.Duration(d1+d2) * time.Microsecond)
 		time.Sleep(100 * time.Millisecond)
 
-		if time.Since(start) > 10*time.Second {
+		if time.Since(start) > 5*time.Second {
+			cancelA()
+			cancelB()
 			break
 		}
 	}

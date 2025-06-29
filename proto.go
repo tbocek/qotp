@@ -221,7 +221,7 @@ func DecodePayload(data []byte) (payload *PayloadMeta, offset int, payloadData [
 	ackPack := (flags >> FlagAckPakShift) & 3
 	ack, needsExtended := DecodePacketType(ackPack)
 	expectedSize := CalcProtoOverhead(ack, needsExtended)
-	if offset+int(expectedSize) > dataLen {
+	if offset+expectedSize > dataLen {
 		return nil, 0, nil, ErrPayloadTooSmall
 	}
 

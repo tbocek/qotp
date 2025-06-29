@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"golang.org/x/sys/unix"
 	"log/slog"
+	"math"
 	"net"
 	"reflect"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // based on: https://github.com/quic-go/quic-go/blob/d540f545b0b70217220eb0fbd5278ece436a7a20/sys_conn_df_linux.go#L15
@@ -182,4 +184,13 @@ func generateTwoKeys() (*ecdh.PrivateKey, *ecdh.PrivateKey, error) {
 		return nil, nil, err
 	}
 	return prvKey1, prvKey2, nil
+}
+
+var specificMicros uint64 = math.MaxUint64
+
+func timeNowMicros() uint64 {
+	if specificMicros == math.MaxUint64 {
+		return uint64(time.Now().UnixMicro())
+	}
+	return specificMicros
 }
