@@ -348,7 +348,7 @@ func TestGarbage1(t *testing.T) {
 
 	// Simulate packet transfer (data packet with FIN flag)
 	data := make([]byte, 1400)
-	_, err = connPair.senderRawToRecipient("tmp", data, 0)
+	err = connPair.senderRawToRecipient("tmp", data, 0)
 	assert.Nil(t, err)
 
 	// Listener B receives data
@@ -385,7 +385,7 @@ func TestGarbage2(t *testing.T) {
 
 	// Simulate packet transfer (data packet with FIN flag)
 	data := make([]byte, 1400)
-	_, err = connPair.recipientRawToSender("tmp", data, 0)
+	err = connPair.recipientRawToSender("tmp", data, 0)
 	assert.Nil(t, err)
 
 	streamA, err = streamA.conn.listener.Listen(0, 0)
