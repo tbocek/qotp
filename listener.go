@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 )
 
-const ReadDeadLine uint64 = 200
+const MinDeadLine uint64 = 100 * 1000
 
 type Listener struct {
 	// this is the port we are listening to
@@ -225,7 +225,7 @@ func (l *Listener) Listen(timeoutMicros uint64, nowMicros uint64) (s *Stream, er
 }
 
 func (l *Listener) Flush(nowMicros uint64) (waitNextMicros uint64, err error) {
-	minPacing := uint64(100 * 1000)
+	minPacing := MinDeadLine
 	startConnection := l.stateConn
 	firstIterationConn := true
 
@@ -394,7 +394,7 @@ func (l *Listener) Loop(callback func(s *Stream)) func() {
 	running.Store(true)
 
 	go func() {
-		waitNextMicros := uint64(100 * 1000)
+		waitNextMicros := MinDeadLine
 		for running.Load() {
 			//Listen
 			s, err := l.Listen(waitNextMicros, timeNowMicros())

@@ -176,7 +176,7 @@ func (c *Connection) Flush(stream *Stream, nowMicros uint64) (raw int, data int,
 
 	// Respect pacing
 	if c.nextWriteTime > nowMicros {
-		slog.Debug("repecting pacing: %v", slog.Uint64("nowMicros", nowMicros))
+		slog.Debug("repecting pacing", slog.Uint64("nowMicros", nowMicros), slog.Uint64("nextWriteTime", c.nextWriteTime))
 		if ack != nil {
 			return c.writeAck(stream, ack, nowMicros)
 		}
@@ -225,7 +225,7 @@ func (c *Connection) Flush(stream *Stream, nowMicros uint64) (raw int, data int,
 		case ack != nil:
 			return c.writeAck(stream, ack, nowMicros)
 		default:
-			return 0, 0, 100 * 1000, nil // need to wait, go to next connection
+			return 0, 0, MinDeadLine, nil // need to wait, go to next connection
 		}
 
 	}
@@ -246,7 +246,7 @@ func (c *Connection) Flush(stream *Stream, nowMicros uint64) (raw int, data int,
 			return 0, 0, 0, err
 		}
 		if raw != len(encData) {
-			return 0, 0, 0, fmt.Errorf("could not send all data. This should not happen.")
+			return 0, 0, 0, fmt.Errorf("could not send all data. This should not happen")
 		}
 
 		packetLen := len(splitData)
@@ -259,7 +259,7 @@ func (c *Connection) Flush(stream *Stream, nowMicros uint64) (raw int, data int,
 		return c.writeAck(stream, ack, nowMicros)
 
 	default:
-		return 0, 0, 100 * 1000, nil // need to wait, go to next stream
+		return 0, 0, MinDeadLine, nil // need to wait, go to next stream
 	}
 }
 
@@ -276,5 +276,5 @@ func (c *Connection) writeAck(stream *Stream, ack *Ack, nowMicros uint64) (raw i
 	if raw != len(encData) {
 		return 0, 0, 0, fmt.Errorf("could not send all data. This should not happen.")
 	}
-	return raw, 0, 100 * 1000, nil
+	return raw, 0, MinDeadLine, nil
 }

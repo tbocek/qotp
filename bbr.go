@@ -1,7 +1,7 @@
 package tomtp
 
 import (
-	"math"
+	"log/slog"
 )
 
 type BBRState int
@@ -11,28 +11,26 @@ const (
 	BBRStateNormal
 )
 
+type Sample struct {
+	sample     uint64
+	timeMicros uint64
+}
+
 type BBR struct {
 	// Core state
-	state                BBRState // Current state (Startup or Normal)
-	rttMin               uint64   // Current minimum RTT estimate
-	rttMinDecayFactorPct uint64   // How quickly old minimums fade (smaller = more aggressive)
-	bwMax                uint64   // Current maximum bandwidth estimate
-	bwMaxDecayFactorPct  uint64   // How quickly old maximums fade (smaller = more aggressive)
-	bwInc                uint64
-	bwDec                uint64
-	lastProbeTime        uint64 // When we last probed for more bandwidth (microseconds)
-	pacingGain           uint64 // Current pacing gain (100 = 1.0x, 277 = 2.77x)
+	state         BBRState  // Current state (Startup or Normal)
+	rttSamples    [5]Sample // Keep 5 lowest RTT samples (rtt=0 means empty)
+	bwMax         uint64
+	bwDec         uint64
+	lastProbeTime uint64 // When we last probed for more bandwidth (microseconds)
+	pacingGain    uint64 // Current pacing gain (100 = 1.0x, 277 = 2.77x)
 }
 
 // NewBBR creates a new BBR instance with default values
 func NewBBR() BBR {
 	return BBR{
-		state:                BBRStateStartup,
-		rttMin:               math.MaxUint64,
-		rttMinDecayFactorPct: 95, // More aggressive: 0.9, Less aggressive: 0.99
-		bwMax:                0,
-		bwMaxDecayFactorPct:  95,  // More aggressive: 0.9, Less aggressive: 0.99
-		pacingGain:           277, // BBR's startup gain of 2.77x (https://github.com/google/bbr/blob/master/Documentation/startup/gain/analysis/bbr_startup_gain.pdf)
+		state:      BBRStateStartup,
+		pacingGain: 277, // BBR's startup gain of 2.77x (https://github.com/google/bbr/blob/master/Documentation/startup/gain/analysis/bbr_startup_gain.pdf)
 	}
 }
 
@@ -40,59 +38,86 @@ func (c *Connection) UpdateBBR(rttMeasurement uint64, bytesAcked uint64, nowMicr
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// 1. Update min RTT measurements
-	if c.rttMin == math.MaxUint64 {
-		c.rttMin = rttMeasurement
-	} else {
-		// Decay the minimum (allows it to rise if network conditions change)
-		c.rttMin = (c.rttMin * c.rttMinDecayFactorPct) / 100
-	}
-	if rttMeasurement > 0 && rttMeasurement < c.rttMin { // Ignore values more than 10x the min
-		c.rttMin = rttMeasurement
+	// 1. Update RTT samples - keep 5 lowest
+	if rttMeasurement == 0 {
+		//no measurement, cannot update BBR
+		slog.Warn("cannot update BBR, rtt is 0")
+		return
 	}
 
-	// 2. Update bandwidth estimate
-	if c.bwMax > 0 {
-		// Decay max bandwidth estimate
-		c.bwMax = (c.bwMax * c.bwMaxDecayFactorPct) / 100
+	if bytesAcked == 0 {
+		//should never happen as also an empty packet has header bytes
+		slog.Error("cannot ack 0 bytes")
+		return
 	}
-	if rttMeasurement > 0 && bytesAcked > 0 {
-		instantBw := bytesAcked * 1000000 / rttMeasurement
-		if c.bwMax == 0 || c.bwMax < instantBw { //this includes the decay -> more aggressive
-			c.bwMax = instantBw
-			c.bwInc++
-			c.bwDec = 0
-		} else {
-			c.bwInc = 0
-			c.bwDec++
+
+	replaceIdx := -1
+	maxIdx := 0
+	for i := 0; i < len(c.BBR.rttSamples); i++ {
+		// Remove if older than 10 seconds
+		if c.BBR.rttSamples[i].sample > 0 && nowMicros-c.BBR.rttSamples[i].timeMicros >= 10*1000000 {
+			c.BBR.rttSamples[i].sample = 0
+		}
+
+		// Track first empty slot
+		if replaceIdx == -1 && c.BBR.rttSamples[i].sample == 0 {
+			replaceIdx = i
+		}
+
+		// Track highest RTT slot
+		if c.BBR.rttSamples[i].sample > c.BBR.rttSamples[maxIdx].sample {
+			maxIdx = i
 		}
 	}
 
-	// 3. State-specific behavior
+	// Use empty slot if available, otherwise replace highest if new is lower
+	if replaceIdx >= 0 {
+		c.BBR.rttSamples[replaceIdx] = Sample{sample: rttMeasurement, timeMicros: nowMicros}
+	} else if rttMeasurement < c.BBR.rttSamples[maxIdx].sample {
+		c.BBR.rttSamples[maxIdx] = Sample{sample: rttMeasurement, timeMicros: nowMicros}
+	}
+
+	rttMin := rttMeasurement // Start with current measurement
+	for i := 0; i < len(c.BBR.rttSamples); i++ {
+		// Track lowest RTT value
+		if c.BBR.rttSamples[i].sample > 0 && c.BBR.rttSamples[i].sample < rttMin {
+			rttMin = c.BBR.rttSamples[i].sample
+		}
+	}
+
+	// 2. Update bwInc/bwDec based on whether we found a new max
+	instantBw := bytesAcked * 1000000 / rttMin
+	if instantBw > c.BBR.bwMax {
+		c.BBR.bwMax = instantBw
+		c.BBR.bwDec = 0
+	} else {
+		c.BBR.bwDec++
+	}
+
+	// 3. Initialize on first measurement
+	if c.BBR.lastProbeTime == 0 {
+		c.BBR.lastProbeTime = nowMicros
+	}
+
+	// 4. State-specific behavior
 	switch c.BBR.state {
 	case BBRStateStartup:
-		// Only exit startup on packet loss or significant RTT increase
-		if c.bwDec >= 3 || (c.RTT.srtt/c.rttMin >= 2) {
-			c.BBR.state = BBRStateNormal //if the bandwidth did not increase for the 3rd time, slow start is over the next time
-			c.BBR.pacingGain = 100       // Switch to 1.0x gain
+		if c.BBR.bwDec >= 3 {
+			c.BBR.state = BBRStateNormal
+			c.BBR.pacingGain = 100
 		}
 	case BBRStateNormal:
-		// Adjust pacing gain based on conditions
-		rttRatioPct := (c.RTT.srtt * 100) / c.BBR.rttMin
+		rttRatioPct := (c.RTT.srtt * 100) / rttMin
 
 		if rttRatioPct > 150 {
-			// RTT is inflated, reduce pacing to drain queue
-			c.BBR.pacingGain = 75 // 0.75x
+			c.BBR.pacingGain = 75
 		} else if rttRatioPct > 125 {
-			// Slight RTT inflation, be conservative
-			c.BBR.pacingGain = 90 // 0.9x
-		} else if nowMicros-c.BBR.lastProbeTime > c.BBR.rttMin*8 {
-			// Periodically probe for more bandwidth every 8 RTTs
-			c.BBR.pacingGain = 125 // 1.25x probe
+			c.BBR.pacingGain = 90
+		} else if nowMicros-c.BBR.lastProbeTime > rttMin*8 {
+			c.BBR.pacingGain = 125
 			c.BBR.lastProbeTime = nowMicros
 		} else {
-			// Normal operation
-			c.BBR.pacingGain = 100 // 1.0x
+			c.BBR.pacingGain = 100
 		}
 	}
 }
@@ -103,15 +128,13 @@ func (c *Connection) OnDuplicateAck() {
 
 	// For pacing-based BBR, duplicate ACKs indicate mild congestion
 	// We respond by slightly reducing our bandwidth estimate and pacing gain
-
-	c.BBR.bwMax = c.BBR.bwMax * 97 / 100 // Reduce bandwidth estimate by 3%
+	c.BBR.bwMax = c.BBR.bwMax * 98 / 100 // Reduce bandwidth estimate by 2%
 	c.BBR.pacingGain = 90                // Reduce pacing to 0.9x
 
 	// Don't necessarily need to change state - dup ACKs are less severe than loss
 	// But if we're in startup, this is a sign to exit
 	if c.BBR.state == BBRStateStartup {
 		c.BBR.state = BBRStateNormal
-		c.BBR.pacingGain = 90 // Start normal state conservatively
 	}
 }
 
@@ -130,14 +153,17 @@ func (c *Connection) GetPacingInterval(packetSize uint64) uint64 {
 
 	if c.BBR.bwMax == 0 {
 		// For post-handshake: spread 10 packets over measured RTT
-		return c.RTT.srtt / 10
+		if c.RTT.srtt > 0 {
+			return c.RTT.srtt / 10
+		}
+		return 10000 // 10ms default
 	}
 
 	// Apply pacing gain to bandwidth
 	effectiveRate := (c.BBR.bwMax * c.BBR.pacingGain) / 100
 
 	if effectiveRate == 0 {
-		return 1000 // 1ms fallback only for truly broken state
+		return 10000 // 10ms fallback only for truly broken state
 	}
 
 	// Calculate inter-packet interval in microseconds

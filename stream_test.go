@@ -437,7 +437,7 @@ func TestBBR(t *testing.T) {
 		_, err = streamA.conn.listener.Flush(0)
 		assert.Nil(t, err)
 	}
-	assert.Equal(t, 10, connPair.nrOutgoingPacketsSender())
+	assert.Equal(t, 11, connPair.nrOutgoingPacketsSender())
 }
 
 func TestBBR2(t *testing.T) {
