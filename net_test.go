@@ -43,14 +43,13 @@ type packetData struct {
 	readyAt    uint64
 }
 
-var (
-	bandwidth = 10000 // 10KB/s
-)
-
 // NewConnPair creates a pair of connected NetworkConn implementations
 func NewConnPair(addr1 string, addr2 string) *ConnPair {
 	conn1 := newPairedConn(addr1)
 	conn2 := newPairedConn(addr2)
+
+	conn1.bandwidth = 10000 // 10KB/s
+	conn2.bandwidth = 10000 // 10KB/s
 
 	// Connect the two connections
 	conn1.partner = conn2
@@ -196,6 +195,10 @@ func (p *PairedConn) AppendData(addr string, raw []byte, readyAt uint64) error {
 	// Append the packet to partner's read queue
 	p.partner.readQueue = append(p.partner.readQueue, packet)
 
+	if noSpecificMicros() {
+		specificMicros = readyAt
+	}
+
 	return nil
 }
 
@@ -319,7 +322,7 @@ func TestWriteAndReadUDP(t *testing.T) {
 
 	// Read on receiver side
 	buffer := make([]byte, 100)
-	n, _, err = receiver.ReadFromUDPAddrPort(buffer, 0, 0)
+	n, _, err = receiver.ReadFromUDPAddrPort(buffer, 0, 8800)
 	assert.NoError(t, err)
 	assert.Equal(t, len(testData), n)
 	assert.Equal(t, testData, buffer[:n])

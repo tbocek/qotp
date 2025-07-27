@@ -46,30 +46,6 @@ func setDF(conn *net.UDPConn) error {
 	return nil
 }
 
-func debugPrvKey(name string, prvKey *ecdh.PrivateKey) slog.Attr {
-	formatBytes := func(b []byte) string {
-		if len(b) <= 10 {
-			return fmt.Sprintf("%v", b)
-		}
-		return fmt.Sprintf("%v...", b[:10])
-	}
-
-	var pubKeyStr string
-	var prvKeyArr []byte
-	if prvKey != nil {
-		prvKeyArr = prvKey.Bytes()
-		pubKeyStr = formatBytes(prvKey.PublicKey().Bytes())
-	} else {
-		pubKeyStr = "nil"
-		prvKeyArr = []byte{}
-	}
-
-	return slog.Group("keys-"+name,
-		slog.String("prvKey", formatBytes(prvKeyArr)),
-		slog.String("pubKey", pubKeyStr),
-	)
-}
-
 func debugGoroutineID() slog.Attr {
 	buf := make([]byte, 64)
 	n := runtime.Stack(buf, false)
@@ -188,8 +164,12 @@ func generateTwoKeys() (*ecdh.PrivateKey, *ecdh.PrivateKey, error) {
 
 var specificMicros uint64 = math.MaxUint64
 
+func noSpecificMicros() bool {
+	return specificMicros == math.MaxUint64
+}
+
 func timeNowMicros() uint64 {
-	if specificMicros == math.MaxUint64 {
+	if noSpecificMicros() {
 		return uint64(time.Now().UnixMicro())
 	}
 	return specificMicros
