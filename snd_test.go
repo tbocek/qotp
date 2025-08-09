@@ -61,7 +61,7 @@ func TestReadyToSend(t *testing.T) {
 	rangePair := stream.dataInFlightMap.Min()
 	assert.NotNil(rangePair)
 	assert.Equal(uint16(5), rangePair.key.length())
-	assert.Equal(nowMillis2, rangePair.value.beforeSendMicros)
+	assert.Equal(nowMillis2, rangePair.value.beforeSendNano)
 
 	sb.ReadyToSend(1, &Overhead{debug: 10}, nowMillis2)
 

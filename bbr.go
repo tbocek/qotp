@@ -2,6 +2,7 @@ package tomtp
 
 import (
 	"log/slog"
+	"math"
 )
 
 type BBRState int
@@ -11,35 +12,33 @@ const (
 	BBRStateNormal
 )
 
-type Sample struct {
-	sample     uint64
-	timeMicros uint64
-}
-
 type BBR struct {
 	// Core state
-	state         BBRState  // Current state (Startup or Normal)
-	rttSamples    [5]Sample // Keep 5 lowest RTT samples (rtt=0 means empty)
-	bwMax         uint64
-	bwDec         uint64
-	lastProbeTime uint64 // When we last probed for more bandwidth (microseconds)
-	pacingGain    uint64 // Current pacing gain (100 = 1.0x, 277 = 2.77x)
+	state          BBRState // Current state (Startup or Normal)
+	rttMinNano     uint64   // Keep lowest RTT samples (rtt=maxuint64 means empty)
+	rttMinTimeNano uint64   // When we observed the lowest RTT sample
+	bwMax          uint64   // Bytes per second
+	bwDec          uint64
+	lastProbeTime  uint64 // When we last probed for more bandwidth (nanoeconds)
+	pacingGain     uint64 // Current pacing gain (100 = 1.0x, 277 = 2.77x)
 }
 
 // NewBBR creates a new BBR instance with default values
 func NewBBR() BBR {
 	return BBR{
-		state:      BBRStateStartup,
-		pacingGain: 277, // BBR's startup gain of 2.77x (https://github.com/google/bbr/blob/master/Documentation/startup/gain/analysis/bbr_startup_gain.pdf)
+		state:          BBRStateStartup,
+		pacingGain:     277, // BBR's startup gain of 2.77x (https://github.com/google/bbr/blob/master/Documentation/startup/gain/analysis/bbr_startup_gain.pdf)
+		rttMinNano:     math.MaxUint64,
+		rttMinTimeNano: math.MaxUint64,
 	}
 }
 
-func (c *Connection) UpdateBBR(rttMeasurement uint64, bytesAcked uint64, nowMicros uint64) {
+func (c *Connection) UpdateBBR(rttMeasurementNano uint64, bytesAcked uint64, nowNano uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// 1. Update RTT samples - keep 5 lowest
-	if rttMeasurement == 0 {
+	// 1. Update RTT samples - keep current
+	if rttMeasurementNano == 0 {
 		//no measurement, cannot update BBR
 		slog.Warn("cannot update BBR, rtt is 0")
 		return
@@ -51,42 +50,14 @@ func (c *Connection) UpdateBBR(rttMeasurement uint64, bytesAcked uint64, nowMicr
 		return
 	}
 
-	replaceIdx := -1
-	maxIdx := 0
-	for i := 0; i < len(c.BBR.rttSamples); i++ {
-		// Remove if older than 10 seconds
-		if c.BBR.rttSamples[i].sample > 0 && nowMicros-c.BBR.rttSamples[i].timeMicros >= 10*1000000 {
-			c.BBR.rttSamples[i].sample = 0
-		}
-
-		// Track first empty slot
-		if replaceIdx == -1 && c.BBR.rttSamples[i].sample == 0 {
-			replaceIdx = i
-		}
-
-		// Track highest RTT slot
-		if c.BBR.rttSamples[i].sample > c.BBR.rttSamples[maxIdx].sample {
-			maxIdx = i
-		}
-	}
-
-	// Use empty slot if available, otherwise replace highest if new is lower
-	if replaceIdx >= 0 {
-		c.BBR.rttSamples[replaceIdx] = Sample{sample: rttMeasurement, timeMicros: nowMicros}
-	} else if rttMeasurement < c.BBR.rttSamples[maxIdx].sample {
-		c.BBR.rttSamples[maxIdx] = Sample{sample: rttMeasurement, timeMicros: nowMicros}
-	}
-
-	rttMin := rttMeasurement // Start with current measurement
-	for i := 0; i < len(c.BBR.rttSamples); i++ {
-		// Track lowest RTT value
-		if c.BBR.rttSamples[i].sample > 0 && c.BBR.rttSamples[i].sample < rttMin {
-			rttMin = c.BBR.rttSamples[i].sample
-		}
+	if nowNano-c.BBR.rttMinTimeNano >= 10*secondNano || // Current sample is too old or
+		rttMeasurementNano < c.BBR.rttMinNano { // Or we have a better sample
+		c.BBR.rttMinNano = rttMeasurementNano
+		c.BBR.rttMinTimeNano = nowNano
 	}
 
 	// 2. Update bwInc/bwDec based on whether we found a new max
-	instantBw := bytesAcked * 1000000 / rttMin
+	instantBw := (bytesAcked * 1000 * 1000) / (c.BBR.rttMinNano / 1000)
 	if instantBw > c.BBR.bwMax {
 		c.BBR.bwMax = instantBw
 		c.BBR.bwDec = 0
@@ -96,7 +67,7 @@ func (c *Connection) UpdateBBR(rttMeasurement uint64, bytesAcked uint64, nowMicr
 
 	// 3. Initialize on first measurement
 	if c.BBR.lastProbeTime == 0 {
-		c.BBR.lastProbeTime = nowMicros
+		c.BBR.lastProbeTime = nowNano
 	}
 
 	// 4. State-specific behavior
@@ -107,15 +78,15 @@ func (c *Connection) UpdateBBR(rttMeasurement uint64, bytesAcked uint64, nowMicr
 			c.BBR.pacingGain = 100
 		}
 	case BBRStateNormal:
-		rttRatioPct := (c.RTT.srtt * 100) / rttMin
+		rttRatioPct := (c.RTT.srtt * 100) / c.BBR.rttMinNano
 
 		if rttRatioPct > 150 {
 			c.BBR.pacingGain = 75
 		} else if rttRatioPct > 125 {
 			c.BBR.pacingGain = 90
-		} else if nowMicros-c.BBR.lastProbeTime > rttMin*8 {
+		} else if nowNano-c.BBR.lastProbeTime > c.BBR.rttMinNano*8 {
 			c.BBR.pacingGain = 125
-			c.BBR.lastProbeTime = nowMicros
+			c.BBR.lastProbeTime = nowNano
 		} else {
 			c.BBR.pacingGain = 100
 		}
@@ -166,10 +137,10 @@ func (c *Connection) GetPacingInterval(packetSize uint64) uint64 {
 		return 10000 // 10ms fallback only for truly broken state
 	}
 
-	// Calculate inter-packet interval in microseconds
+	// Calculate inter-packet interval in nanoseconds
 	// packetSize is in bytes, effectiveRate is in bytes/second
-	// interval = (packetSize / effectiveRate) * 1,000,000 microseconds/second
-	intervalMicros := (packetSize * 1000000) / effectiveRate
+	// interval = (packetSize / effectiveRate) * 1,000,000 nanoseconds/second
+	intervalNano := (packetSize * 1000 * 1000 * 1000) / effectiveRate
 
-	return intervalMicros
+	return intervalNano
 }

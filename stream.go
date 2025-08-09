@@ -41,7 +41,7 @@ func (s *Stream) Read() (readData []byte, err error) {
 		return nil, ErrStreamClosed
 	}
 
-	_, data := s.conn.rbRcv.RemoveOldestInOrder(s.streamId)
+	_, data := s.conn.rcvBuf.RemoveOldestInOrder(s.streamId)
 	if data == nil {
 		return nil, nil
 	}
@@ -63,8 +63,8 @@ func (s *Stream) Write(writeData []byte) (remainingWriteData []byte, err error) 
 		return writeData, nil
 	}
 
-	slog.Debug("Write", debugGoroutineID(), s.debug(), slog.String("b...", string(writeData[:min(10, len(writeData))])))
-	n, status := s.conn.rbSnd.Insert(s.streamId, writeData)
+	slog.Debug("Write", debugGoroutineID(), s.debug(), slog.String("b…", string(writeData[:min(16, len(writeData))])))
+	n, status := s.conn.sndBuf.Insert(s.streamId, writeData)
 	if status != InsertStatusOk {
 		slog.Debug("Status Nok", debugGoroutineID(), s.debug(), slog.Any("status", status))
 	} else {
@@ -88,15 +88,18 @@ func (s *Stream) Close() {
 
 func (s *Stream) debug() slog.Attr {
 	if s.conn == nil {
-		return slog.Any("s.conn", "is null")
+		return slog.String("net", "s.conn is null")
 	} else if s.conn.listener == nil {
-		return slog.Any("s.conn.listener", "is null")
+		return slog.String("net", "s.conn.listener is null")
+	} else if s.conn.listener.localConn == nil {
+		return slog.String("net", "s.conn.listener.localConn is null")
 	}
-	return s.conn.listener.debug(s.conn.remoteAddr)
+	
+	return slog.String("net", s.conn.listener.localConn.LocalAddrString())
 }
 
 func (s *Stream) currentOffset() uint64 {
-	sb := s.conn.rbSnd.streams[s.streamId]
+	sb := s.conn.sndBuf.streams[s.streamId]
 	if sb == nil {
 		return 0
 	}

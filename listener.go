@@ -10,13 +10,12 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
-	"strconv"
-	"strings"
+
 	"sync"
 	"sync/atomic"
 )
 
-const MinDeadLine uint64 = 100 * 1000
+const MinDeadLine uint64 = 100 * msNano
 
 type Listener struct {
 	// this is the port we are listening to
@@ -188,34 +187,47 @@ func (l *Listener) Close() error {
 	return l.localConn.Close()
 }
 
-func (l *Listener) Listen(timeoutMicros uint64, nowMicros uint64) (s *Stream, err error) {
-	buffer, remoteAddr, err := l.readUDP(timeoutMicros, nowMicros)
-	if err != nil {
-		return nil, err
-	}
+func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err error) {
+	data := make([]byte, startMtu)
+	n, remoteAddr, err := l.localConn.ReadFromUDPAddrPort(data, timeoutNano, nowNano)
 
-	if buffer == nil || len(buffer) == 0 {
+	if err != nil {
+		var netErr net.Error
+		ok := errors.As(err, &netErr)
+
+		if ok && netErr.Timeout() {
+			slog.Debug("Listen/Timeout")
+			return nil, nil // Timeout is normal, return no dataToSend/error
+		} else {
+			slog.Error("Listen/Error", slog.Any("error", err))
+			return nil, err
+		}
+	}
+	if n == 0 {
+		slog.Debug("Listen/NoData")
 		return nil, nil
-	}
-	slog.Debug("RcvUDP", debugGoroutineID(), l.debug(remoteAddr), slog.Any("read len", len(buffer)))
+	}	
+	
+	slog.Debug("Listen/Data", debugGoroutineID(), l.debug(), slog.Any("len(data)", n), slog.Uint64("now:ms", nowNano/msNano))
 
-	conn, m, err := l.decode(buffer, remoteAddr)
+	conn, m, err := l.decode(data[:n], remoteAddr)
 	if err != nil {
 		return nil, err
 	}
 
-	s, err = conn.decode(m.PayloadRaw, len(buffer), nowMicros)
+	s, err = conn.decode(m.PayloadRaw, n, nowNano)
 	if err != nil {
 		return nil, err
 	}
 
+	//Set state
 	if !conn.state.isHandshakeComplete {
 		if conn.state.isSender {
-			if m.MsgType == InitHandshakeR0MsgType || m.MsgType == InitWithCryptoR0MsgType {
+			if m.MsgType == InitRcv || m.MsgType == InitCryptoRcv {
 				conn.state.isHandshakeComplete = true
 			}
 		} else {
-			if m.MsgType == DataMsgType || m.MsgType == Data0MsgType {
+			if m.MsgType == Data || m.MsgType == DataRot {
 				conn.state.isHandshakeComplete = true
 			}
 		}
@@ -224,7 +236,7 @@ func (l *Listener) Listen(timeoutMicros uint64, nowMicros uint64) (s *Stream, er
 	return s, nil
 }
 
-func (l *Listener) Flush(nowMicros uint64) (waitNextMicros uint64, err error) {
+func (l *Listener) Flush(nowNano uint64) (waitNextNano uint64, err error) {
 	minPacing := MinDeadLine
 	startConnection := l.stateConn
 	firstIterationConn := true
@@ -272,7 +284,7 @@ func (l *Listener) Flush(nowMicros uint64) (waitNextMicros uint64, err error) {
 				break
 			}
 
-			_, data, pacingMicros, err := l.stateConn.value.Flush(l.stateConn.Value().stateStream.Value(), nowMicros)
+			_, data, pacingNano, err := l.stateConn.value.Flush(l.stateConn.Value().stateStream.Value(), nowNano)
 			if err != nil {
 				l.stateConn.Value().cleanup2(l.stateConn.Value().connId)
 				return 0, err
@@ -282,8 +294,8 @@ func (l *Listener) Flush(nowMicros uint64) (waitNextMicros uint64, err error) {
 				l.stateConn.value.cleanup(l.stateConn.Value().stateStream.Value().streamId)
 			}
 
-			if pacingMicros < minPacing {
-				minPacing = pacingMicros
+			if pacingNano < minPacing {
+				minPacing = pacingNano
 			}
 
 			if data > 0 {
@@ -352,8 +364,8 @@ func (l *Listener) newConn(
 			withCrypto: withCrypto,
 		},
 		mtu:        startMtu,
-		rbSnd:      NewSendBuffer(rcvBufferCapacity),
-		rbRcv:      NewReceiveBuffer(rcvBufferCapacity),
+		sndBuf:      NewSendBuffer(sndBufferCapacity),
+		rcvBuf:      NewReceiveBuffer(rcvBufferCapacity),
 		BBR:        NewBBR(),
 		rcvWndSize: 0, //initially 0, will be sent to us in the 1st handshake
 	}
@@ -363,41 +375,15 @@ func (l *Listener) newConn(
 	return conn, nil
 }
 
-func (l *Listener) readUDP(timeoutMicros uint64, nowMicros uint64) ([]byte, netip.AddrPort, error) {
-	buffer := make([]byte, maxMtu)
-
-	numRead, remoteAddr, err := l.localConn.ReadFromUDPAddrPort(buffer, timeoutMicros, nowMicros)
-
-	if err != nil {
-		var netErr net.Error
-		ok := errors.As(err, &netErr)
-
-		if ok && netErr.Timeout() {
-			slog.Debug("readUDP - net.Timeout")
-			return nil, netip.AddrPort{}, nil // Timeout is normal, return no dataToSend/error
-		} else {
-			slog.Error("readUDP - error during read", slog.Any("error", err))
-			return nil, netip.AddrPort{}, err
-		}
-	}
-	if numRead == 0 {
-		//slog.Debug("readUDP - no dataAvailable")
-		return nil, remoteAddr, nil
-	}
-
-	slog.Debug("readUDP - dataAvailable")
-	return buffer[:numRead], remoteAddr, nil
-}
-
 func (l *Listener) Loop(callback func(s *Stream)) func() {
 	running := new(atomic.Bool)
 	running.Store(true)
 
 	go func() {
-		waitNextMicros := MinDeadLine
+		waitNextNano := MinDeadLine
 		for running.Load() {
 			//Listen
-			s, err := l.Listen(waitNextMicros, timeNowMicros())
+			s, err := l.Listen(waitNextNano, timeNowNano())
 			if err != nil {
 				slog.Error("Error in loop listen", slog.Any("error", err))
 			}
@@ -406,7 +392,7 @@ func (l *Listener) Loop(callback func(s *Stream)) func() {
 			}
 
 			//Flush
-			waitNextMicros, err = l.Flush(timeNowMicros())
+			waitNextNano, err = l.Flush(timeNowNano())
 
 			if err != nil {
 				slog.Error("Error in loop flush", slog.Any("error", err))
@@ -419,15 +405,8 @@ func (l *Listener) Loop(callback func(s *Stream)) func() {
 	}
 }
 
-func (l *Listener) debug(addr netip.AddrPort) slog.Attr {
-	if l.localConn == nil {
-		return slog.String("net", "nil->"+addr.String())
-	}
-
-	localAddrString := l.localConn.LocalAddrString()
-	lastColonIndex := strings.LastIndex(localAddrString, ":")
-
-	return slog.String("net", strconv.Itoa(int(addr.Port()))+"->"+localAddrString[lastColonIndex+1:])
+func (l *Listener) debug() slog.Attr {
+	return slog.String("net", l.localConn.LocalAddrString())
 }
 
 func (l *Listener) ForceClose(c *Connection) {

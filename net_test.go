@@ -3,11 +3,17 @@ package tomtp
 import (
 	"errors"
 	"fmt"
-	"github.com/stretchr/testify/assert"
+	"log/slog"
 	"net/netip"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
+
+func init() {
+	specificNano = 0
+}
 
 // ConnPair represents a pair of connected NetworkConn implementations
 type ConnPair struct {
@@ -30,17 +36,17 @@ type PairedConn struct {
 	readQueue   []packetData
 	readQueueMu sync.Mutex
 
-	latencyMicros uint64 // One-way latency in microseconds
-	bandwidth     uint64 // Bandwidth in bits per second (0 = unlimited)
+	latencyNano uint64 // One-way latency in nanoseconds
+	bandwidth   uint64 // Bandwidth in bits per second (0 = unlimited)
 
 	closed bool
 }
 
 // packetData represents a UDP packet
 type packetData struct {
-	data       []byte
-	remoteAddr string
-	readyAt    uint64
+	data            []byte
+	remoteAddr      string
+	packetDelayNano uint64
 }
 
 // NewConnPair creates a pair of connected NetworkConn implementations
@@ -61,8 +67,8 @@ func NewConnPair(addr1 string, addr2 string) *ConnPair {
 	}
 }
 
-func (c *ConnPair) senderRawToRecipient(addr string, raw []byte, readyAt uint64) (err error) {
-	return c.Conn1.AppendData(addr, raw, readyAt)
+func (c *ConnPair) senderRawToRecipient(addr string, raw []byte, nowNano uint64) (err error) {
+	return c.Conn1.AppendData(addr, raw, nowNano)
 }
 
 func (c *ConnPair) senderToRecipient(sequence ...int) (n int, err error) {
@@ -77,8 +83,8 @@ func (c *ConnPair) recipientToSenderAll() (n int, err error) {
 	return c.Conn2.CopyData(len(c.Conn2.writeQueue))
 }
 
-func (c *ConnPair) recipientRawToSender(addr string, raw []byte, readyAt uint64) (err error) {
-	return c.Conn2.AppendData(addr, raw, readyAt)
+func (c *ConnPair) recipientRawToSender(addr string, raw []byte, nowNano uint64) (err error) {
+	return c.Conn2.AppendData(addr, raw, nowNano)
 }
 
 func (c *ConnPair) recipientToSender(sequence ...int) (n int, err error) {
@@ -111,7 +117,7 @@ func newPairedConn(localAddr string) *PairedConn {
 }
 
 // ReadFromUDPAddrPort reads data from the read queue
-func (p *PairedConn) ReadFromUDPAddrPort(buf []byte, timeoutMicros uint64, nowMicros uint64) (int, netip.AddrPort, error) {
+func (p *PairedConn) ReadFromUDPAddrPort(buf []byte, timeoutNano uint64, nowNano uint64) (int, netip.AddrPort, error) {
 	if p.isClosed() {
 		return 0, netip.AddrPort{}, errors.New("connection closed")
 	}
@@ -126,10 +132,6 @@ func (p *PairedConn) ReadFromUDPAddrPort(buf []byte, timeoutMicros uint64, nowMi
 	}
 
 	packet := p.readQueue[0]
-	if packet.readyAt > nowMicros+timeoutMicros {
-		return 0, netip.AddrPort{}, nil
-	}
-
 	p.readQueue = p.readQueue[1:]
 	n := copy(buf, packet.data)
 	return n, netip.AddrPort{}, nil
@@ -141,7 +143,7 @@ func (p *PairedConn) TimeoutReadNow() error {
 }
 
 // WriteToUDPAddrPort writes data to the partner connection
-func (p *PairedConn) WriteToUDPAddrPort(data []byte, remoteAddr netip.AddrPort, nowMicros uint64) (int, error) {
+func (p *PairedConn) WriteToUDPAddrPort(data []byte, remoteAddr netip.AddrPort, nowNano uint64) (int, error) {
 	if p.isClosed() {
 		return 0, errors.New("connection closed")
 	}
@@ -152,28 +154,29 @@ func (p *PairedConn) WriteToUDPAddrPort(data []byte, remoteAddr netip.AddrPort, 
 
 	// Calculate transmission time based on bandwidth
 	// bandwidth is in bits per second, data is in bytes
-	transmissionMicros := uint64(0)
+	transmissionNano := uint64(0)
 	if p.bandwidth > 0 {
-		bits := uint64(len(data)) * 8
-		transmissionMicros = (bits * 1_000_000) / p.bandwidth
+		transmissionNano = (uint64(len(data)) * secondNano) / p.bandwidth
 	}
 
-	// Add to local write queue with the current timestamp
-	readyAt := nowMicros + p.latencyMicros + transmissionMicros
-	specificMicros += readyAt
+	slog.Debug("Time/Prepare",
+		slog.Int("len(data)", len(data)),
+		slog.Uint64("bandwidth:B/s", p.bandwidth),
+		slog.Uint64("latency:ms", p.latencyNano/msNano),
+		slog.Uint64("tx-time:ms", transmissionNano/msNano))
 
 	p.writeQueueMu.Lock()
 	p.writeQueue = append(p.writeQueue, packetData{
-		data:       dataCopy,
-		remoteAddr: remoteAddr.String(),
-		readyAt:    readyAt,
+		data:            dataCopy,
+		remoteAddr:      remoteAddr.String(),
+		packetDelayNano: p.latencyNano + transmissionNano,
 	})
 	p.writeQueueMu.Unlock()
 
 	return n, nil
 }
 
-func (p *PairedConn) AppendData(addr string, raw []byte, readyAt uint64) error {
+func (p *PairedConn) AppendData(addr string, data []byte, nowNano uint64) error {
 	if p.isClosed() {
 		return errors.New("connection closed")
 	}
@@ -181,11 +184,22 @@ func (p *PairedConn) AppendData(addr string, raw []byte, readyAt uint64) error {
 		return errors.New("no partner connection or partner closed")
 	}
 
+	transmissionNano := uint64(0)
+	if p.bandwidth > 0 {
+		transmissionNano = (uint64(len(data)) * secondNano) / p.bandwidth
+	}
+	specificNano = nowNano + p.latencyNano + transmissionNano
+	slog.Debug("Time/Warp/Auto",
+		slog.Int("len(data)", len(data)),
+		slog.Uint64("+:ms", (p.latencyNano+transmissionNano)/msNano),
+		slog.Uint64("before:ms", nowNano/msNano),
+		slog.Uint64("after:ms", specificNano/msNano))
+
 	// Create a new packetData with the raw bytes
 	packet := packetData{
-		data:       raw,
-		remoteAddr: addr,
-		readyAt:    readyAt,
+		data:            data,
+		remoteAddr:      addr,
+		packetDelayNano: p.latencyNano + transmissionNano,
 	}
 
 	// Lock partner's read queue to ensure atomicity when appending
@@ -194,10 +208,6 @@ func (p *PairedConn) AppendData(addr string, raw []byte, readyAt uint64) error {
 
 	// Append the packet to partner's read queue
 	p.partner.readQueue = append(p.partner.readQueue, packet)
-
-	if noSpecificMicros() {
-		specificMicros = readyAt
-	}
 
 	return nil
 }
@@ -240,6 +250,12 @@ func (p *PairedConn) CopyData(sequence ...int) (int, error) {
 			packets := p.writeQueue[pos : pos+absCount]
 			for _, pkt := range packets {
 				totalBytes += len(pkt.data)
+				slog.Debug("Time/Warp/Auto",
+					slog.Int("len(data)", len(pkt.data)),
+					slog.Uint64("+:ms", pkt.packetDelayNano/msNano),
+					slog.Uint64("before:ms", specificNano/msNano),
+					slog.Uint64("after:ms", (specificNano+pkt.packetDelayNano)/msNano))
+				specificNano += pkt.packetDelayNano
 			}
 
 			p.partner.readQueueMu.Lock()
@@ -270,11 +286,11 @@ func (p *PairedConn) Close() error {
 
 // LocalAddr returns the local address
 func (p *PairedConn) LocalAddrString() string {
-	// Format the address as local<->remote
+	// Format the address as local→remote
 	if p.partner != nil {
-		return p.localAddr + "<->" + p.partner.localAddr
+		return p.localAddr + "→" + p.partner.localAddr
 	}
-	return p.localAddr
+	return p.localAddr + "→?"
 }
 
 // Helper method to check if connection is closed
@@ -322,7 +338,7 @@ func TestWriteAndReadUDP(t *testing.T) {
 
 	// Read on receiver side
 	buffer := make([]byte, 100)
-	n, _, err = receiver.ReadFromUDPAddrPort(buffer, 0, 8800)
+	n, _, err = receiver.ReadFromUDPAddrPort(buffer, 0, 1100000)
 	assert.NoError(t, err)
 	assert.Equal(t, len(testData), n)
 	assert.Equal(t, testData, buffer[:n])
@@ -348,7 +364,7 @@ func TestWriteAndReadUDPBidirectional(t *testing.T) {
 
 	// Endpoint 2 reads from Endpoint 1
 	buffer := make([]byte, 100)
-	n2, _, err := endpoint2.ReadFromUDPAddrPort(buffer, 0, 0)
+	n2, _, err := endpoint2.ReadFromUDPAddrPort(buffer, 0, specificNano)
 	assert.NoError(t, err)
 	assert.Equal(t, len(dataFromEndpoint1), n2)
 	assert.Equal(t, dataFromEndpoint1, buffer[:n2])
@@ -363,7 +379,7 @@ func TestWriteAndReadUDPBidirectional(t *testing.T) {
 
 	// Endpoint 1 reads response from Endpoint 2
 	buffer = make([]byte, 100)
-	n4, _, err := endpoint1.ReadFromUDPAddrPort(buffer, 0, 0)
+	n4, _, err := endpoint1.ReadFromUDPAddrPort(buffer, 0, specificNano)
 	assert.NoError(t, err)
 	assert.Equal(t, len(dataFromEndpoint2), n4)
 	assert.Equal(t, dataFromEndpoint2, buffer[:n4])
@@ -441,7 +457,7 @@ func TestMultipleWrites(t *testing.T) {
 	// Read and verify all messages in order
 	buffer := make([]byte, 100)
 	for _, expectedMsg := range messages {
-		n, _, err := receiver.ReadFromUDPAddrPort(buffer, 0, 0)
+		n, _, err := receiver.ReadFromUDPAddrPort(buffer, 0, specificNano)
 		assert.NoError(t, err)
 		assert.Equal(t, len(expectedMsg), n)
 		assert.Equal(t, expectedMsg, buffer[:n])
@@ -484,13 +500,13 @@ func TestWriteAndReadUDPWithDrop(t *testing.T) {
 
 	// Read on receiver side - should only receive packet 1
 	buffer := make([]byte, 100)
-	n, _, err := receiver.ReadFromUDPAddrPort(buffer, 0, 0)
+	n, _, err := receiver.ReadFromUDPAddrPort(buffer, 0, specificNano)
 	assert.NoError(t, err)
 	assert.Equal(t, len(testData1), n)
 	assert.Equal(t, testData1, buffer[:n])
 
 	// Verify that packet 2 was not received (no more data in the queue)
-	n, _, err = receiver.ReadFromUDPAddrPort(buffer, 0, 0)
+	n, _, err = receiver.ReadFromUDPAddrPort(buffer, 0, specificNano)
 	assert.NoError(t, err) // Should return no error but zero bytes
 	assert.Equal(t, 0, n)
 }

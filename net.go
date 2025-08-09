@@ -8,9 +8,9 @@ import (
 )
 
 type NetworkConn interface {
-	ReadFromUDPAddrPort(p []byte, timeoutMicros uint64, nowMicros uint64) (n int, remoteAddr netip.AddrPort, err error)
+	ReadFromUDPAddrPort(p []byte, timeoutNano uint64, nowNano uint64) (n int, remoteAddr netip.AddrPort, err error)
 	TimeoutReadNow() error
-	WriteToUDPAddrPort(p []byte, remoteAddr netip.AddrPort, nowMicros uint64) (n int, err error)
+	WriteToUDPAddrPort(p []byte, remoteAddr netip.AddrPort, nowNano uint64) (n int, err error)
 	Close() error
 	LocalAddrString() string
 }
@@ -27,13 +27,13 @@ func NewUDPNetworkConn(conn *net.UDPConn) NetworkConn {
 	}
 }
 
-func (c *UDPNetworkConn) ReadFromUDPAddrPort(p []byte, timeoutMicros uint64, nowMicros uint64) (int, netip.AddrPort, error) {
+func (c *UDPNetworkConn) ReadFromUDPAddrPort(p []byte, timeoutNano uint64, nowNano uint64) (int, netip.AddrPort, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	deadline := time.Time{}
-	if timeoutMicros > 0 {
-		deadline = time.UnixMicro(int64(nowMicros + timeoutMicros))
+	if timeoutNano > 0 {
+		deadline = time.UnixMicro(int64(nowNano + timeoutNano))
 	}
 	err := c.conn.SetReadDeadline(deadline)
 	if err != nil {

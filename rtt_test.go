@@ -124,7 +124,7 @@ func TestRTOCalculationDefault(t *testing.T) {
 	conn := Connection{RTT: *rtt}
 
 	// For new connection with no RTT measurements
-	rto := conn.rtoMicros()
+	rto := conn.rtoNano()
 	expectedRTO := uint64(200 * 1000) // Default of 200ms
 
 	assert.Equal(t, expectedRTO, rto, "Default RTO should be 200ms")
@@ -138,7 +138,7 @@ func TestRTOCalculationStandardNetwork(t *testing.T) {
 	}
 	conn := Connection{RTT: *rtt}
 
-	rto := conn.rtoMicros()
+	rto := conn.rtoNano()
 	// 100ms + 4 * 25ms = 200ms
 	expectedRTO := uint64(200 * 1000)
 
@@ -153,7 +153,7 @@ func TestRTOCalculationHighLatency(t *testing.T) {
 	}
 	conn := Connection{RTT: *rtt}
 
-	rto := conn.rtoMicros()
+	rto := conn.rtoNano()
 	// 500ms + 4 * 100ms = 900ms
 	expectedRTO := uint64(900 * 1000)
 
@@ -168,7 +168,7 @@ func TestRTOCalculationVeryHighLatency(t *testing.T) {
 	}
 	conn := Connection{RTT: *rtt}
 
-	rto := conn.rtoMicros()
+	rto := conn.rtoNano()
 	// 1500ms + 4 * 200ms = 2300ms, capped at 2000ms
 	expectedRTO := uint64(2000 * 1000)
 
@@ -183,7 +183,7 @@ func TestRTOCalculationExtremeLatency(t *testing.T) {
 	}
 	conn := Connection{RTT: *rtt}
 
-	rto := conn.rtoMicros()
+	rto := conn.rtoNano()
 	// Should be capped at maximum
 	expectedRTO := uint64(2000 * 1000) // 2s maximum
 

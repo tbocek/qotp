@@ -13,16 +13,16 @@ const (
 )
 
 type RcvBuffer struct {
-	segments                   *skipList[packetKey, *Data]
+	segments                   *skipList[packetKey, *RcvData]
 	nextInOrderOffsetToWaitFor uint64 // Next expected offset
 }
 
-type Data struct {
+type RcvData struct {
 	data    []byte
 	isClose bool
 }
 
-func (d *Data) less(other *Data) bool {
+func (d *RcvData) less(other *RcvData) bool {
 	if len(d.data) < len(other.data) {
 		return true
 	}
@@ -45,7 +45,7 @@ type ReceiveBuffer struct {
 
 func NewRcvBuffer() *RcvBuffer {
 	return &RcvBuffer{
-		segments: newSortedHashMap[packetKey, *Data](func(a, b packetKey, c, d *Data) bool {
+		segments: newSortedHashMap[packetKey, *RcvData](func(a, b packetKey, c, d *RcvData) bool {
 			if a.less(b) {
 				return true
 			}
@@ -103,7 +103,7 @@ func (rb *ReceiveBuffer) Insert(streamId uint32, offset uint64, decodedData []by
 		key = createPacketKey(offset, uint16(65535))
 	}
 
-	stream.segments.Put(key, &Data{
+	stream.segments.Put(key, &RcvData{
 		data:    decodedData,
 		isClose: isClose,
 	})
@@ -113,7 +113,7 @@ func (rb *ReceiveBuffer) Insert(streamId uint32, offset uint64, decodedData []by
 	return RcvInsertOk
 }
 
-func (rb *ReceiveBuffer) RemoveOldestInOrder(streamId uint32) (offset uint64, data *Data) {
+func (rb *ReceiveBuffer) RemoveOldestInOrder(streamId uint32) (offset uint64, data *RcvData) {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 

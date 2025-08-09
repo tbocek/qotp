@@ -51,18 +51,20 @@ func createPacketKey(offset uint64, length uint16) packetKey {
 }
 
 type MetaData struct {
-	beforeSendMicros uint64
-	sentNr           int
-	msgType          MsgType //we may know this only after running encryption
-	offset           uint64
+	beforeSendNano         uint64
+	sentNr                 int
+	msgType                MsgType //we may know this only after running encryption
+	offset                 uint64
+	expectedRtoBackoffNano uint64
+	actualRtoNano          uint64
 }
 
 func (r *MetaData) less(other *MetaData) bool {
-	return r.beforeSendMicros < other.beforeSendMicros
+	return r.beforeSendNano < other.beforeSendNano
 }
 
 func (r *MetaData) eq(other *MetaData) bool {
-	return r.beforeSendMicros == other.beforeSendMicros
+	return r.beforeSendNano == other.beforeSendNano
 }
 
 // StreamBuffer represents a single stream's dataToSend and metadata
@@ -90,7 +92,7 @@ type SendBuffer struct {
 	lastReadToSendStream       uint32                   //for round-robin, we continue where we left
 	lastReadToRetransmitStream uint32
 	capacity                   int //len(dataToSend) of all streams cannot become larger than capacity
-	totalSize                  int //len(dataToSend) of all streams
+	size                       int //len(dataToSend) of all streams
 	mu                         *sync.Mutex
 }
 
@@ -126,7 +128,7 @@ func (sb *SendBuffer) Insert(streamId uint32, data []byte) (inserted int, status
 	defer sb.mu.Unlock()
 
 	// Calculate how much dataToSend we can insert
-	remainingCapacitySnd := sb.capacity - sb.totalSize
+	remainingCapacitySnd := sb.capacity - sb.size
 	if remainingCapacitySnd <= 0 {
 		return 0, InsertStatusSndFull
 	}
@@ -145,7 +147,7 @@ func (sb *SendBuffer) Insert(streamId uint32, data []byte) (inserted int, status
 	// Store chunk
 	stream.dataToSend = append(stream.dataToSend, chunk...)
 	stream.unsentOffset = stream.unsentOffset + uint64(inserted)
-	sb.totalSize += inserted
+	sb.size += inserted
 
 	// Update remaining dataToSend
 	remainingData = remainingData[inserted:]
@@ -153,7 +155,7 @@ func (sb *SendBuffer) Insert(streamId uint32, data []byte) (inserted int, status
 }
 
 // ReadyToSend gets data from dataToSend and creates an entry in dataInFlightMap
-func (sb *SendBuffer) ReadyToSend(streamId uint32, overhead *Overhead, nowMicros uint64) (splitData []byte, m *MetaData) {
+func (sb *SendBuffer) ReadyToSend(streamId uint32, overhead *Overhead, nowNano uint64) (splitData []byte, m *MetaData) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 
@@ -186,7 +188,7 @@ func (sb *SendBuffer) ReadyToSend(streamId uint32, overhead *Overhead, nowMicros
 			splitData = stream.dataToSend[offset : offset+uint64(length)]
 
 			// Track range
-			m = &MetaData{beforeSendMicros: nowMicros, sentNr: 1, msgType: -1, offset: stream.sentOffset} //we do not know the msg type yet
+			m = &MetaData{beforeSendNano: nowNano, sentNr: 1, msgType: -1, offset: stream.sentOffset} //we do not know the msg type yet
 			stream.dataInFlightMap.Put(key, m)
 
 			// Update tracking
@@ -203,7 +205,7 @@ func (sb *SendBuffer) ReadyToSend(streamId uint32, overhead *Overhead, nowMicros
 }
 
 // ReadyToRetransmit finds expired dataInFlightMap that need to be resent
-func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, rtoMicros uint64, nowMicros uint64) (data []byte, m *MetaData, err error) {
+func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, expectedRtoNano uint64, nowNano uint64) (data []byte, m *MetaData, err error) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 
@@ -220,12 +222,13 @@ func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, rto
 	dataInFlight := stream.dataInFlightMap.Min()
 	if dataInFlight != nil {
 		rtoData := dataInFlight.value
-		currentRto, err := backoff(rtoMicros, rtoData.sentNr)
+		expectedRtoBackoffNano, err := backoff(expectedRtoNano, rtoData.sentNr)
 		if err != nil {
 			return nil, nil, err
 		}
+		actualRtoNano := nowNano - rtoData.beforeSendNano
 
-		if nowMicros-rtoData.beforeSendMicros > currentRto {
+		if actualRtoNano > expectedRtoBackoffNano {
 			// Extract offset and length from key
 			rangeOffset := dataInFlight.key.offset()
 			rangeLen := dataInFlight.key.length()
@@ -242,7 +245,12 @@ func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, rto
 				// Remove old range
 				stream.dataInFlightMap.Remove(dataInFlight.key)
 				// Same MTU - resend entire range
-				m := &MetaData{beforeSendMicros: nowMicros, sentNr: rtoData.sentNr + 1, msgType: rtoData.msgType, offset: rangeOffset}
+				m := &MetaData{beforeSendNano: nowNano,
+					sentNr:                 rtoData.sentNr + 1,
+					msgType:                rtoData.msgType,
+					offset:                 rangeOffset,
+					expectedRtoBackoffNano: expectedRtoBackoffNano,
+					actualRtoNano:          actualRtoNano}
 				stream.dataInFlightMap.Put(dataInFlight.key, m)
 				return data, m, nil
 			} else {
@@ -255,9 +263,17 @@ func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, rto
 
 				// Remove old range
 				stream.dataInFlightMap.Remove(dataInFlight.key)
-				mLeft := &MetaData{beforeSendMicros: nowMicros, sentNr: rtoData.sentNr + 1, msgType: rtoData.msgType, offset: rangeOffset}
+				mLeft := &MetaData{beforeSendNano: nowNano,
+					sentNr:  rtoData.sentNr + 1,
+					msgType: rtoData.msgType,
+					offset:  rangeOffset, expectedRtoBackoffNano: expectedRtoBackoffNano, actualRtoNano: actualRtoNano}
 				stream.dataInFlightMap.Put(leftKey, mLeft)
-				mRight := &MetaData{beforeSendMicros: rtoData.beforeSendMicros, sentNr: rtoData.sentNr, msgType: rtoData.msgType, offset: remainingOffset}
+				mRight := &MetaData{beforeSendNano: rtoData.beforeSendNano,
+					sentNr:                 rtoData.sentNr,
+					msgType:                rtoData.msgType,
+					offset:                 remainingOffset,
+					expectedRtoBackoffNano: rtoData.expectedRtoBackoffNano,
+					actualRtoNano:          rtoData.actualRtoNano}
 				stream.dataInFlightMap.Put(rightKey, mRight)
 
 				return data[:maxData], mLeft, nil
@@ -269,7 +285,7 @@ func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, rto
 }
 
 // AcknowledgeRange handles acknowledgment of dataToSend
-func (sb *SendBuffer) AcknowledgeRange(ack *Ack) (status AckStatus, sentTimeMicros uint64) {
+func (sb *SendBuffer) AcknowledgeRange(ack *Ack) (status AckStatus, sentTimeNano uint64) {
 	sb.mu.Lock()
 
 	stream := sb.streams[ack.streamId]
@@ -287,7 +303,7 @@ func (sb *SendBuffer) AcknowledgeRange(ack *Ack) (status AckStatus, sentTimeMicr
 		return AckDup, 0
 	}
 
-	sentTimeMicros = rangePair.value.beforeSendMicros
+	sentTimeNano = rangePair.value.beforeSendNano
 
 	// If this range starts at our bias point, we can Remove dataToSend
 	if ack.offset == stream.bias {
@@ -296,15 +312,15 @@ func (sb *SendBuffer) AcknowledgeRange(ack *Ack) (status AckStatus, sentTimeMicr
 		if nextRange == nil {
 			// No gap, safe to Remove all dataToSend
 			stream.dataToSend = stream.dataToSend[stream.sentOffset-stream.bias:]
-			sb.totalSize -= int(stream.sentOffset - stream.bias)
+			sb.size -= int(stream.sentOffset - stream.bias)
 			stream.bias += stream.sentOffset - stream.bias
 		} else {
 			nextOffset := nextRange.key.offset()
 			stream.dataToSend = stream.dataToSend[nextOffset-stream.bias:]
 			stream.bias += nextOffset
-			sb.totalSize -= int(nextOffset)
+			sb.size -= int(nextOffset)
 		}
 	}
 	sb.mu.Unlock()
-	return AckStatusOk, sentTimeMicros
+	return AckStatusOk, sentTimeNano
 }

@@ -162,15 +162,25 @@ func generateTwoKeys() (*ecdh.PrivateKey, *ecdh.PrivateKey, error) {
 	return prvKey1, prvKey2, nil
 }
 
-var specificMicros uint64 = math.MaxUint64
+var specificNano uint64 = math.MaxUint64
 
-func noSpecificMicros() bool {
-	return specificMicros == math.MaxUint64
-}
-
-func timeNowMicros() uint64 {
-	if noSpecificMicros() {
-		return uint64(time.Now().UnixMicro())
+func setTime(nowNano uint64) {
+	if nowNano <= specificNano {
+		slog.Warn("Time/Warp/Fail", 
+			slog.Uint64("before:ms", specificNano/msNano), 
+			slog.Uint64("after:ms", nowNano/msNano))	
+		return
 	}
-	return specificMicros
+	slog.Debug("Time/Warp/Manual", 
+		slog.Uint64("+:ms", (nowNano - specificNano)/msNano), 
+		slog.Uint64("before:ms", specificNano/msNano), 
+		slog.Uint64("after:ms", nowNano/msNano))
+	specificNano = nowNano
+	}
+
+func timeNowNano() uint64 {
+	if specificNano == math.MaxUint64 {
+		return uint64(time.Now().UnixNano())
+	}
+	return specificNano
 }
