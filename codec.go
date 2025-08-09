@@ -1,6 +1,7 @@
 package tomtp
 
 import (
+	"crypto/ecdh"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -68,8 +69,8 @@ func (o *Overhead) CalcMaxData() (overhead uint16) {
 func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgType) (dataEnc []byte, err error) {
 	// Create payload early for cases that need it
 	var dataProto []byte
-	
-	slog.Debug("Encode", debugGoroutineID(), s.debug(), slog.Uint64("offset", offset), slog.Int("len(data)", len(origData)))
+
+	slog.Debug("Encode", debugGoroutineID(), s.debug(), slog.Uint64("offset", offset), slog.Int("len(data)", len(origData)), slog.String("b…", string(origData[:min(16, len(origData))])))
 
 	// Special case: InitHandshakeS0 doesn't need payload
 	if msgType == InitSnd {
@@ -78,10 +79,10 @@ func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.conn.keys.prvKeyEpSnd,
 			s.conn.keys.prvKeyEpSndRoll,
 		)
-		slog.Debug("Encode/InitSnd", 
-			debugGoroutineID(), 
-			s.debug(), 
-			slog.Int("len(dataEnc)", len(dataEnc)), 
+		slog.Debug("Encode/InitSnd",
+			debugGoroutineID(),
+			s.debug(),
+			slog.Int("len(dataEnc)", len(dataEnc)),
 			slog.Uint64("snCrypto", s.conn.snCrypto))
 		s.conn.snCrypto++
 		return dataEnc, nil
@@ -111,11 +112,11 @@ func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgTyp
 		if err != nil {
 			return nil, err
 		}
-		slog.Debug("Encode/InitCryptoSnd", 
-			debugGoroutineID(), 
-			s.debug(), 
-			slog.Int("len(dataProto)", len(dataProto)), 
-			slog.Int("len(dataEnc)", len(dataEnc)), 
+		slog.Debug("Encode/InitCryptoSnd",
+			debugGoroutineID(),
+			s.debug(),
+			slog.Int("len(dataProto)", len(dataProto)),
+			slog.Int("len(dataEnc)", len(dataEnc)),
 			slog.Uint64("snCrypto", s.conn.snCrypto))
 	case InitCryptoRcv:
 		dataEnc, err = EncodeInitCryptoRcv(
@@ -129,11 +130,11 @@ func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgTyp
 		if err != nil {
 			return nil, err
 		}
-		slog.Debug("Encode/InitCryptoRcv", 
-			debugGoroutineID(), 
-			s.debug(), 
-			slog.Int("len(dataProto)", len(dataProto)), 
-			slog.Int("len(dataEnc)", len(dataEnc)), 
+		slog.Debug("Encode/InitCryptoRcv",
+			debugGoroutineID(),
+			s.debug(),
+			slog.Int("len(dataProto)", len(dataProto)),
+			slog.Int("len(dataEnc)", len(dataEnc)),
 			slog.Uint64("snCrypto", s.conn.snCrypto))
 	case InitRcv:
 		dataEnc, err = EncodeInitRcv(
@@ -147,11 +148,11 @@ func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgTyp
 		if err != nil {
 			return nil, err
 		}
-		slog.Debug("Encode/InitRcv", 
-			debugGoroutineID(), 
-			s.debug(), 
-			slog.Int("len(dataProto)", len(dataProto)), 
-			slog.Int("len(dataEnc)", len(dataEnc)), 
+		slog.Debug("Encode/InitRcv",
+			debugGoroutineID(),
+			s.debug(),
+			slog.Int("len(dataProto)", len(dataProto)),
+			slog.Int("len(dataEnc)", len(dataEnc)),
 			slog.Uint64("snCrypto", s.conn.snCrypto))
 	case DataRot:
 		dataEnc, err = EncodeDataRot(
@@ -164,11 +165,11 @@ func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgTyp
 		if err != nil {
 			return nil, err
 		}
-		slog.Debug("Encode/DataRot", 
-			debugGoroutineID(), 
-			s.debug(), 
-			slog.Int("len(payRaw)", len(dataProto)), 
-			slog.Int("len(dataEnc)", len(dataEnc)), 
+		slog.Debug("Encode/DataRot",
+			debugGoroutineID(),
+			s.debug(),
+			slog.Int("len(payRaw)", len(dataProto)),
+			slog.Int("len(dataEnc)", len(dataEnc)),
 			slog.Uint64("snCrypto", s.conn.snCrypto))
 	case Data:
 		dataEnc, err = EncodeData(
@@ -182,16 +183,16 @@ func (s *Stream) encode(origData []byte, offset uint64, ack *Ack, msgType MsgTyp
 		if err != nil {
 			return nil, err
 		}
-		slog.Debug("Encode/Data", 
-			debugGoroutineID(), 
-			s.debug(), 
-			slog.Int("len(payRaw)", len(dataProto)), 
-			slog.Int("len(dataEnc)", len(dataEnc)), 
+		slog.Debug("Encode/Data",
+			debugGoroutineID(),
+			s.debug(),
+			slog.Int("len(payRaw)", len(dataProto)),
+			slog.Int("len(dataEnc)", len(dataEnc)),
 			slog.Uint64("snCrypto", s.conn.snCrypto))
 	default:
 		return nil, fmt.Errorf("unknown message type: %v", msgType)
 	}
-	
+
 	//update state ofter encode of packet
 	s.conn.snCrypto++
 	return dataEnc, nil
@@ -202,15 +203,28 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to decode header: %w", err)
 	}
-	
-	slog.Debug("Decode", debugGoroutineID(), l.debug(), slog.Int("len(data)", len(buffer)))
+	slog.Debug("Decode", debugGoroutineID(), l.debug(), slog.Int("len(data)", len(buffer)), slog.Any("msgType", msgType))
 
 	switch msgType {
 	case InitSnd:
-		slog.Debug("DecodeInitHandshakeS0", debugGoroutineID(), l.debug())
-		prvKeyEpRcv, prvKeyEpRcvRoll, err := generateTwoKeys()
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to generate keys: %w", err)
+		//we might have received this a multiple times due to retransmission in the first packet
+		//however the other side send us this, so we are expected to drop the old keys
+		connPair := l.connMap.Get(origConnId)
+		var conn *Connection
+		if connPair != nil && connPair.value != nil {
+			conn = connPair.value
+		}
+		
+		var prvKeyEpRcv *ecdh.PrivateKey
+		var prvKeyEpRcvRoll *ecdh.PrivateKey
+		if conn == nil {
+			prvKeyEpRcv, prvKeyEpRcvRoll, err = generateTwoKeys()
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to generate keys: %w", err)
+			}
+		} else {
+			prvKeyEpRcv = conn.keys.prvKeyEpSnd
+			prvKeyEpRcvRoll = conn.keys.prvKeyEpSndRoll
 		}
 
 		// Decode S0 message
@@ -219,26 +233,35 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 			return nil, nil, fmt.Errorf("failed to decode InitHandshakeS0: %w", err)
 		}
 
-		// Create new connection
-		conn, err := l.newConn(
-			remoteAddr,
-			prvKeyEpRcv,
-			prvKeyEpRcvRoll,
-			pubKeyIdSnd,
-			pubKeyEpSnd,
-			pubKeyEpSndRoll,
-			false, false)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create connection: %w", err)
+		// We need to reuse the connection and just replace the keys in case of duplicates. Otherwise
+		// we will have the situtaion that we already inserted 1 package in our buffer, delivered it to the user
+		// and here we would initialize from scratch, which results that the duplicate data will be
+		// sent to the user
+		if conn == nil {
+			conn, err = l.newConn(
+				remoteAddr,
+				prvKeyEpRcv,
+				prvKeyEpRcvRoll,
+				pubKeyIdSnd,
+				pubKeyEpSnd,
+				pubKeyEpSndRoll,
+				false, false)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to create connection: %w", err)
+			}
+			//this is tricky: we need to store the first message on the receiver side twice, once under the old id, once under the new id
+			//in case of duplicate, we need to find the right connection, and if we already store it under the new, then duplciate data
+			// will arrive. That also means, we need to remove the old id on the first data packet
+			l.connMap.Put(origConnId, conn)
 		}
-
+		
 		conn.sharedSecret = message.SharedSecret
+		slog.Debug("Decode/InitSnd", debugGoroutineID(), l.debug())
 		return conn, message, nil
 	case InitRcv:
-		slog.Debug("DecodeInitHandshakeR0", debugGoroutineID(), l.debug())
 		conn := l.connMap.Get(origConnId).value
 		if conn == nil {
-			return nil, nil, errors.New("connection not found for InitHandshakeR0MsgType")
+			return nil, nil, errors.New("connection not found for InitRcv")
 		}
 		l.connMap.Remove(origConnId) // only sender ep pub key connId no longer needed, we now have a proper connId
 
@@ -247,7 +270,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 			buffer,
 			conn.keys.prvKeyEpSnd)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to decode InitHandshakeR0: %w", err)
+			return nil, nil, fmt.Errorf("failed to decode InitRcv: %w", err)
 		}
 
 		conn.connId = Uint64(conn.keys.prvKeyEpSnd.PublicKey().Bytes()) ^ Uint64(pubKeyEpRcv.Bytes())
@@ -257,12 +280,27 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		conn.keys.pubKeyEpRcvRoll = pubKeyEpRcvRoll
 		conn.sharedSecret = message.SharedSecret
 
+		slog.Debug("Decode/InitRcv", debugGoroutineID(), l.debug())
 		return conn, message, nil
 	case InitCryptoSnd:
-		slog.Debug("Decode/InitCryptoSnd", debugGoroutineID(), l.debug())
-		prvKeyEpRcv, prvKeyEpRcvRoll, err := generateTwoKeys()
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to generate keys: %w", err)
+		//we might have received this a multiple times due to retransmission in the first packet
+		//however the other side send us this, so we are expected to drop the old keys
+		connPair := l.connMap.Get(origConnId)
+		var conn *Connection
+		if connPair != nil && connPair.value != nil {
+			conn = connPair.value
+		}
+		
+		var prvKeyEpRcv *ecdh.PrivateKey
+		var prvKeyEpRcvRoll *ecdh.PrivateKey
+		if conn == nil {
+			prvKeyEpRcv, prvKeyEpRcvRoll, err = generateTwoKeys()
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to generate keys: %w", err)
+			}
+		} else {
+			prvKeyEpRcv = conn.keys.prvKeyEpSnd
+			prvKeyEpRcvRoll = conn.keys.prvKeyEpSndRoll
 		}
 
 		// Decode crypto S0 message
@@ -274,23 +312,32 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 			return nil, nil, fmt.Errorf("failed to decode InitWithCryptoS0: %w", err)
 		}
 
-		// Create new connection
-		conn, err := l.newConn(
-			remoteAddr,
-			prvKeyEpRcv,
-			prvKeyEpRcvRoll,
-			pubKeyIdSnd,
-			pubKeyEpSnd,
-			pubKeyEpSndRoll,
-			false, true)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create connection: %w", err)
+		// We need to reuse the connection and just replace the keys in case of duplicates. Otherwise
+		// we will have the situtaion that we already inserted 1 package in our buffer, delivered it to the user
+		// and here we would initialize from scratch, which results that the duplicate data will be
+		// sent to the user
+		if conn == nil {
+			conn, err = l.newConn(
+				remoteAddr,
+				prvKeyEpRcv,
+				prvKeyEpRcvRoll,
+				pubKeyIdSnd,
+				pubKeyEpSnd,
+				pubKeyEpSndRoll,
+				false, true)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to create connection: %w", err)
+			}
+			//this is tricky: we need to store the first message on the receiver side twice, once under the old id, once under the new id
+			//in case of duplicate, we need to find the right connection, and if we already store it under the new, then duplciate data
+			// will arrive. That also means, we need to remove the old id on the first data packet
+			l.connMap.Put(origConnId, conn)
 		}
 
 		conn.sharedSecret = message.SharedSecret
+		slog.Debug("Decode/InitCryptoSnd", debugGoroutineID(), l.debug())
 		return conn, message, nil
 	case InitCryptoRcv:
-		slog.Debug("DecodeInitWithCryptoR0", debugGoroutineID(), l.debug())
 		connP := l.connMap.Get(origConnId)
 		if connP == nil {
 			return nil, nil, errors.New("connection not found for InitWithCryptoR0")
@@ -309,19 +356,18 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		conn.keys.pubKeyEpRcv = pubKeyEpRcv
 		conn.keys.pubKeyEpRcvRoll = pubKeyEpRcvRoll
 		conn.sharedSecret = message.SharedSecret
-		conn.sharedSecret = message.SharedSecret
 
+		slog.Debug("Decode/InitCryptoRcv", debugGoroutineID(), l.debug())
 		return conn, message, nil
 	case DataRot:
 		conn := l.connMap.Get(origConnId).value
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for Data0")
 		}
-
-		slog.Debug("DecodeData0",
-			debugGoroutineID(),
-			l.debug(),
-			slog.Int("len(buffer)", len(buffer)))
+		
+		//only needs to be done right after the handshake
+		firstConnId := Uint64(conn.keys.pubKeyEpRcv.Bytes())
+		l.connMap.Remove(firstConnId)
 
 		//rollover - TODO delete(l.connMap, origConnId)
 
@@ -333,6 +379,11 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 
 		conn.keys.pubKeyEpRcvRoll = pubKeyEpRoll
 		conn.sharedSecret = message.SharedSecret
+
+		slog.Debug("Decode/DataRot",
+			debugGoroutineID(),
+			l.debug(),
+			slog.Int("len(buffer)", len(buffer)))
 		return conn, message, nil
 	case Data:
 		conP := l.connMap.Get(origConnId)
@@ -340,17 +391,21 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 			return nil, nil, errors.New("connection not found for DataMessage")
 		}
 		conn := conP.value
-
-		slog.Debug("DecodeDataMessage",
-			debugGoroutineID(),
-			l.debug(),
-			slog.Int("len(buffer)", len(buffer)))
+		
+		//only needs to be done right after the handshake
+		firstConnId := Uint64(conn.keys.pubKeyEpRcv.Bytes())
+		l.connMap.Remove(firstConnId)
 
 		// Decode Data message
 		message, err := DecodeData(buffer, conn.state.isSender, conn.sharedSecret)
 		if err != nil {
 			return nil, nil, err
 		}
+
+		slog.Debug("Decode/Data",
+			debugGoroutineID(),
+			l.debug(),
+			slog.Int("len(buffer)", len(buffer)))
 		return conn, message, nil
 	default:
 		return nil, nil, fmt.Errorf("unknown message type: %v", msgType)

@@ -1,6 +1,7 @@
 package tomtp
 
 import (
+	"log/slog"
 	"sync"
 )
 
@@ -91,11 +92,13 @@ func (rb *ReceiveBuffer) Insert(streamId uint32, offset uint64, decodedData []by
 		rb.ackList = append(rb.ackList, &Ack{streamId: streamId, offset: offset, len: uint16(dataLen)})
 	}
 
-	if offset+uint64(dataLen) < stream.nextInOrderOffsetToWaitFor {
+	if offset+uint64(dataLen) <= stream.nextInOrderOffsetToWaitFor {
+		slog.Debug("Rcv/Duplicate/WithUser", slog.Uint64("offset", offset), slog.Int("len(data)", dataLen))
 		return RcvInsertDuplicate
 	}
 
 	if stream.segments.Contains(key) {
+		slog.Debug("Rcv/Duplicate/InMap", slog.Uint64("offset", offset), slog.Int("len(data)", dataLen))
 		return RcvInsertDuplicate
 	}
 

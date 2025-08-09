@@ -200,7 +200,7 @@ func (c *Connection) Flush(stream *Stream, nowNano uint64) (raw int, data int, p
 		return c.writeAck(stream, ack, nowNano)
 	}
 	//Respect rwnd
-	if c.dataInFlight + startMtu > c.rcvBuf.capacity - c.rcvBuf.size {
+	if c.dataInFlight + startMtu > int(c.rcvWndSize) {
 		slog.Debug("Flush/Rwnd/Rcv",
 			debugGoroutineID(),
 			stream.debug(),
@@ -285,7 +285,6 @@ func (c *Connection) Flush(stream *Stream, nowNano uint64) (raw int, data int, p
 	if ack == nil {
 		return 0, 0, MinDeadLine, nil
 	}
-	slog.Debug("Flush/Ack", debugGoroutineID(), stream.debug())
 	return c.writeAck(stream, ack, nowNano)
 }
 
@@ -294,7 +293,7 @@ func (c *Connection) writeAck(stream *Stream, ack *Ack, nowNano uint64) (raw int
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	slog.Debug("UpdateSnd/Acks", debugGoroutineID(), slog.Any("len(dataToSend)", len(encData)))
+	slog.Debug("Flush/Ack", debugGoroutineID(), stream.debug())
 	raw, err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowNano)
 	if err != nil {
 		return 0, 0, 0, err

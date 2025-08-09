@@ -3,11 +3,12 @@ package tomtp
 import (
 	"crypto/ecdh"
 	"errors"
-	"github.com/stretchr/testify/assert"
 	"net/netip"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func createTwoStreams(
@@ -187,7 +188,6 @@ func TestTwoStreamFirstMessageTimeout(t *testing.T) {
 
 	_, err = connPair.recipientToSender(1)
 	assert.Nil(t, err)
-
 	_, err = connA.listener.Listen(0, specificNano)
 	assert.Nil(t, err)
 	//streamA2 = connA.Stream(1)
@@ -198,11 +198,12 @@ func TestTwoStreamFirstMessageTimeout(t *testing.T) {
 	assert.Nil(t, err)
 	_, err = connA.listener.Flush(specificNano)
 	assert.Nil(t, err)
-
-	_, err = connPair.senderToRecipient(1)
+	_, err = connPair.senderToRecipient(2)
 	assert.Nil(t, err)
 
+	//twice, as we receive a duplicate packet
 	streamB2, err := listenerB.Listen(0, specificNano)
+	streamB2, err = listenerB.Listen(0, specificNano)
 	assert.Nil(t, err)
 	assert.True(t, streamB2.state == StreamStateOpen)
 	b2, err := streamB2.Read()

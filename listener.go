@@ -206,8 +206,8 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 	if n == 0 {
 		slog.Debug("Listen/NoData")
 		return nil, nil
-	}	
-	
+	}
+
 	slog.Debug("Listen/Data", debugGoroutineID(), l.debug(), slog.Any("len(data)", n), slog.Uint64("now:ms", nowNano/msNano))
 
 	conn, m, err := l.decode(data[:n], remoteAddr)
@@ -364,14 +364,13 @@ func (l *Listener) newConn(
 			withCrypto: withCrypto,
 		},
 		mtu:        startMtu,
-		sndBuf:      NewSendBuffer(sndBufferCapacity),
-		rcvBuf:      NewReceiveBuffer(rcvBufferCapacity),
+		sndBuf:     NewSendBuffer(sndBufferCapacity),
+		rcvBuf:     NewReceiveBuffer(rcvBufferCapacity),
 		BBR:        NewBBR(),
-		rcvWndSize: 0, //initially 0, will be sent to us in the 1st handshake
+		rcvWndSize: rcvBufferCapacity, //initially our capacity, correct value will be sent to us in the 1st handshake
 	}
-
+	
 	l.connMap.Put(connId, conn)
-
 	return conn, nil
 }
 
