@@ -2,7 +2,6 @@ package tomtp
 
 import (
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/netip"
 	"sync"
@@ -238,8 +237,8 @@ func (p *PairedConn) CopyData(sequence ...int) (int, error) {
 		available := len(p.writeQueue) - pos
 		absCount := count
 		if count < 0 {
-			fmt.Printf("Dropping %d packets from %s\n", absCount, p.localAddr)
 			absCount = -count
+			slog.Debug("Net/Drop", slog.Int("#pckts", absCount), slog.String("net",p.localAddr + "→" + p.partner.localAddr))
 		}
 		if absCount > available {
 			absCount = available
@@ -471,8 +470,8 @@ func TestLocalAddrString(t *testing.T) {
 	conn2 := connPair.Conn2
 
 	// Check local addresses
-	assert.Equal(t, "addr1<->addr2", conn1.LocalAddrString())
-	assert.Equal(t, "addr2<->addr1", conn2.LocalAddrString())
+	assert.Equal(t, "addr1→addr2", conn1.LocalAddrString())
+	assert.Equal(t, "addr2→addr1", conn2.LocalAddrString())
 }
 
 func TestWriteAndReadUDPWithDrop(t *testing.T) {

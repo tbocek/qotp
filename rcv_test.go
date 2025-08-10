@@ -9,12 +9,12 @@ import (
 func TestReceiveBuffer_SingleSegment(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 
-	status := rb.Insert(1, 0, []byte("data"), false)
+	status := rb.Insert(1, 0, []byte("data"))
 	assert.Equal(t, RcvInsertOk, status)
 
 	offset, data := rb.RemoveOldestInOrder(1)
 	assert.Equal(t, uint64(0), offset)
-	assert.Equal(t, []byte("data"), data.data)
+	assert.Equal(t, []byte("data"), data)
 
 	// Verify empty after reading
 	_, data = rb.RemoveOldestInOrder(1)
@@ -24,30 +24,30 @@ func TestReceiveBuffer_SingleSegment(t *testing.T) {
 func TestReceiveBuffer_DuplicateSegment(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 
-	status := rb.Insert(1, 0, []byte("data"), false)
+	status := rb.Insert(1, 0, []byte("data"))
 	assert.Equal(t, RcvInsertOk, status)
 
-	status = rb.Insert(1, 0, []byte("data"), false)
+	status = rb.Insert(1, 0, []byte("data"))
 	assert.Equal(t, RcvInsertDuplicate, status)
 
 	offset, data := rb.RemoveOldestInOrder(1)
 	assert.Equal(t, uint64(0), offset)
-	assert.Equal(t, []byte("data"), data.data)
+	assert.Equal(t, []byte("data"), data)
 }
 
 func TestReceiveBuffer_GapBetweenSegments(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 
-	status := rb.Insert(1, 10, []byte("later"), false)
+	status := rb.Insert(1, 10, []byte("later"))
 	assert.Equal(t, RcvInsertOk, status)
 
-	status = rb.Insert(1, 0, []byte("early"), false)
+	status = rb.Insert(1, 0, []byte("early"))
 	assert.Equal(t, RcvInsertOk, status)
 
 	// Should get early segment first
 	offset, data := rb.RemoveOldestInOrder(1)
 	assert.Equal(t, uint64(0), offset)
-	assert.Equal(t, []byte("early"), data.data)
+	assert.Equal(t, []byte("early"), data)
 
 	// Then later segment
 	offset, data = rb.RemoveOldestInOrder(1)
@@ -59,49 +59,49 @@ func TestReceiveBuffer_MultipleStreams(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 
 	// Insert segments from different streams
-	status := rb.Insert(1, 0, []byte("stream1-first"), false)
+	status := rb.Insert(1, 0, []byte("stream1-first"))
 	assert.Equal(t, RcvInsertOk, status)
 
-	status = rb.Insert(2, 0, []byte("stream2-first"), false)
+	status = rb.Insert(2, 0, []byte("stream2-first"))
 	assert.Equal(t, RcvInsertOk, status)
 
-	status = rb.Insert(1, 13, []byte("stream1-second"), false)
+	status = rb.Insert(1, 13, []byte("stream1-second"))
 	assert.Equal(t, RcvInsertOk, status)
 
 	// Read from stream 1
 	offset, data := rb.RemoveOldestInOrder(1)
 	assert.Equal(t, uint64(0), offset)
-	assert.Equal(t, []byte("stream1-first"), data.data)
+	assert.Equal(t, []byte("stream1-first"), data)
 
 	// Read from stream 2
 	offset, data = rb.RemoveOldestInOrder(2)
 	assert.Equal(t, uint64(0), offset)
-	assert.Equal(t, []byte("stream2-first"), data.data)
+	assert.Equal(t, []byte("stream2-first"), data)
 
 	// Read second segment from stream 1
 	offset, data = rb.RemoveOldestInOrder(1)
 	assert.Equal(t, uint64(13), offset)
-	assert.Equal(t, []byte("stream1-second"), data.data)
+	assert.Equal(t, []byte("stream1-second"), data)
 }
 
 func TestReceiveBuffer_BufferFullExact(t *testing.T) {
 	rb := NewReceiveBuffer(4)
 
-	status := rb.Insert(1, 0, []byte("data"), false)
+	status := rb.Insert(1, 0, []byte("data"))
 	assert.Equal(t, RcvInsertOk, status)
 
-	status = rb.Insert(1, 4, []byte("more"), false)
+	status = rb.Insert(1, 4, []byte("more"))
 	assert.Equal(t, RcvInsertBufferFull, status)
 
 	offset, data := rb.RemoveOldestInOrder(1)
 	assert.Equal(t, uint64(0), offset)
-	assert.Equal(t, []byte("data"), data.data)
+	assert.Equal(t, []byte("data"), data)
 }
 
 func TestReceiveBuffer_RemoveWithHigherOffset(t *testing.T) {
 	rb := NewReceiveBuffer(4)
 
-	status := rb.Insert(1, 0, []byte("12345"), false)
+	status := rb.Insert(1, 0, []byte("12345"))
 	assert.Equal(t, RcvInsertBufferFull, status)
 
 	offset, data := rb.RemoveOldestInOrder(1)
@@ -112,12 +112,12 @@ func TestReceiveBuffer_RemoveWithHigherOffset(t *testing.T) {
 func TestReceiveBuffer_RemoveWithHigherOffset_EmptyAfterLast(t *testing.T) {
 	rb := NewReceiveBuffer(4)
 
-	status := rb.Insert(1, 0, []byte("1"), false)
+	status := rb.Insert(1, 0, []byte("1"))
 	assert.Equal(t, RcvInsertOk, status)
 
 	offset, data := rb.RemoveOldestInOrder(1)
 	assert.Equal(t, uint64(0), offset)
-	assert.Equal(t, []byte("1"), data.data)
+	assert.Equal(t, []byte("1"), data)
 
 	// Should be empty after reading
 	_, data = rb.RemoveOldestInOrder(1)

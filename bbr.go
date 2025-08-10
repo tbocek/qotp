@@ -57,7 +57,7 @@ func (c *Connection) UpdateBBR(rttMeasurementNano uint64, bytesAcked uint64, now
 	}
 
 	// 2. Update bwInc/bwDec based on whether we found a new max
-	instantBw := (bytesAcked * 1000 * 1000) / (c.BBR.rttMinNano / 1000)
+	instantBw := (bytesAcked * 1_000_000) / (c.BBR.rttMinNano / 1000)
 	if instantBw > c.BBR.bwMax {
 		c.BBR.bwMax = instantBw
 		c.BBR.bwDec = 0
@@ -127,20 +127,20 @@ func (c *Connection) GetPacingInterval(packetSize uint64) uint64 {
 		if c.RTT.srtt > 0 {
 			return c.RTT.srtt / 10
 		}
-		return 10000 // 10ms default
+		return 10 * msNano // 10ms default
 	}
 
 	// Apply pacing gain to bandwidth
 	effectiveRate := (c.BBR.bwMax * c.BBR.pacingGain) / 100
 
-	if effectiveRate == 0 {
-		return 10000 // 10ms fallback only for truly broken state
+	if effectiveRate < 1000 {
+		return 10 * msNano // 10ms fallback only for truly broken state
 	}
 
 	// Calculate inter-packet interval in nanoseconds
 	// packetSize is in bytes, effectiveRate is in bytes/second
 	// interval = (packetSize / effectiveRate) * 1,000,000 nanoseconds/second
-	intervalNano := (packetSize * 1000 * 1000 * 1000) / effectiveRate
+	intervalNano := (packetSize * 1_000_000_000) / effectiveRate
 
 	return intervalNano
 }

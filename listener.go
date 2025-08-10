@@ -405,6 +405,9 @@ func (l *Listener) Loop(callback func(s *Stream)) func() {
 }
 
 func (l *Listener) debug() slog.Attr {
+	if l.localConn == nil {
+		return slog.String("net", "n/a")
+	}
 	return slog.String("net", l.localConn.LocalAddrString())
 }
 

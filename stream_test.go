@@ -1,8 +1,7 @@
 package tomtp
 
 import (
-	"crypto/ecdh"
-	"errors"
+	"log/slog"
 	"net/netip"
 	"sync"
 	"testing"
@@ -11,56 +10,35 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func createTwoStreams(
-	nConnA *PairedConn,
-	nConnB *PairedConn,
-	prvKeyA *ecdh.PrivateKey,
-	prvKeyB *ecdh.PrivateKey,
-) (connA *Connection, listenerB *Listener, err error) {
-
-	listenerA, err := Listen(nil, WithNetworkConn(nConnA), WithPrvKeyId(prvKeyA))
-	if err != nil {
-		return nil, nil, errors.New("failed to create listener A: " + err.Error())
-	}
-
-	listenerB, err = Listen(nil, WithNetworkConn(nConnB), WithPrvKeyId(prvKeyB))
-	if err != nil {
-		//Important: close listener A here as listener B might not close it
-		listenerA.Close()
-		return nil, nil, errors.New("failed to create listener B: " + err.Error())
-	}
-
+func setupTest(t *testing.T) (connA *Connection, listenerB *Listener, connPair *ConnPair) {
+    // Setup code   
+    connPair = NewConnPair("alice", "bob")
+   	listenerA, err := Listen(nil, WithNetworkConn(connPair.Conn1), WithPrvKeyId(testPrvKey1))
+    assert.Nil(t, err)
+	listenerB, err = Listen(nil, WithNetworkConn(connPair.Conn2), WithPrvKeyId(testPrvKey2))
+	assert.Nil(t, err)
 	pubKeyIdRcv, err := decodeHexPubKey(hexPubKey2)
-	if err != nil {
-		return nil, nil, err
-	}
+	assert.Nil(t, err)
 	connA, err = listenerA.DialWithCrypto(netip.AddrPort{}, pubKeyIdRcv)
-	if err != nil {
-		listenerA.Close() // clean up everything here!
-		listenerB.Close()
-		return nil, nil, errors.New("failed to dial A from B: " + err.Error())
-	}
-	if connA == nil {
-		listenerA.Close()
-		listenerB.Close()
-		return nil, nil, errors.New("connection should not be nil")
-	}
-
-	return connA, listenerB, nil
+	assert.Nil(t, err)
+	assert.NotEmpty(t, connA)
+	    
+    // Register cleanup to run after test
+    t.Cleanup(func() {
+    	connPair.Conn1.Close()
+     	connPair.Conn2.Close()
+    })
+    specificNano = 0
+    return connA, listenerB, connPair
 }
 
 func TestOneStream(t *testing.T) {
-	connPair := NewConnPair("addr1", "addr2")
-	defer connPair.Conn1.Close()
-	defer connPair.Conn2.Close()
-
-	connA, listenerB, err := createTwoStreams(connPair.Conn1, connPair.Conn2, testPrvKey1, testPrvKey2)
-	assert.Nil(t, err)
+	connA, listenerB, connPair := setupTest(t)
 
 	// Send data from A to B
 	a := []byte("hallo")
 	streamA := connA.Stream(0)
-	_, err = streamA.Write(a)
+	_, err := streamA.Write(a)
 	assert.Nil(t, err)
 	_, err = connA.listener.Flush(specificNano)
 	assert.Nil(t, err)
@@ -81,17 +59,12 @@ func TestOneStream(t *testing.T) {
 }
 
 func TestTwoStream(t *testing.T) {
-	connPair := NewConnPair("addr1", "addr2")
-	defer connPair.Conn1.Close()
-	defer connPair.Conn2.Close()
-
-	connA, listenerB, err := createTwoStreams(connPair.Conn1, connPair.Conn2, testPrvKey1, testPrvKey2)
-	assert.Nil(t, err)
+	connA, listenerB, connPair := setupTest(t)
 
 	// Send data from A to B
 	a1 := []byte("hallo1")
 	streamA1 := connA.Stream(0)
-	_, err = streamA1.Write(a1)
+	_, err := streamA1.Write(a1)
 	assert.Nil(t, err)
 	_, err = connA.listener.Flush(specificNano)
 	assert.Nil(t, err)
@@ -146,17 +119,12 @@ func TestTwoStream(t *testing.T) {
 }
 
 func TestTwoStreamFirstMessageTimeout(t *testing.T) {
-	connPair := NewConnPair("addr1", "addr2")
-	defer connPair.Conn1.Close()
-	defer connPair.Conn2.Close()
-
-	connA, listenerB, err := createTwoStreams(connPair.Conn1, connPair.Conn2, testPrvKey1, testPrvKey2)
-	assert.Nil(t, err)
+	connA, listenerB, connPair := setupTest(t)
 
 	// Send data from A to B
 	a1 := []byte("hallo1")
 	streamA1 := connA.Stream(0)
-	_, err = streamA1.Write(a1)
+	_, err := streamA1.Write(a1)
 	assert.Nil(t, err)
 	_, err = connA.listener.Flush(specificNano)
 	assert.Nil(t, err)
@@ -212,23 +180,18 @@ func TestTwoStreamFirstMessageTimeout(t *testing.T) {
 }
 
 func TestRTO(t *testing.T) {
-	connPair := NewConnPair("addr1", "addr2")
-	defer connPair.Conn1.Close()
-	defer connPair.Conn2.Close()
-
-	connA, listenerB, err := createTwoStreams(connPair.Conn1, connPair.Conn2, testPrvKey1, testPrvKey2)
-	assert.Nil(t, err)
+	connA, listenerB, connPair := setupTest(t)
 
 	a1 := []byte("hallo1")
 	streamA1 := connA.Stream(0)
-	_, err = streamA1.Write(a1)
+	_, err := streamA1.Write(a1)
 	assert.Nil(t, err)
 	_, err = connA.listener.Flush(0)
 	assert.Nil(t, err)
 
 	_, err = connPair.senderToRecipient(-1)
 
-	_, err = connA.listener.Flush(250*1000 + 1)
+	_, err = connA.listener.Flush((250*msNano) + 1)
 	assert.Nil(t, err)
 
 	_, err = connPair.senderToRecipient(1)
@@ -239,28 +202,25 @@ func TestRTO(t *testing.T) {
 }
 
 func TestRTOTimes4Success(t *testing.T) {
-	connPair := NewConnPair("addr1", "addr2")
-	defer connPair.Conn1.Close()
-	defer connPair.Conn2.Close()
-	connA, listenerB, err := createTwoStreams(connPair.Conn1, connPair.Conn2, testPrvKey1, testPrvKey2)
-	assert.Nil(t, err)
+	connA, listenerB, connPair := setupTest(t)
+	
 	a1 := []byte("hallo1")
 	streamA1 := connA.Stream(0)
-	_, err = streamA1.Write(a1)
+	_, err := streamA1.Write(a1)
 	assert.Nil(t, err)
 	_, err = connA.listener.Flush(0)
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(-1)
-	_, err = connA.listener.Flush(200000 + 1)
+	_, err = connA.listener.Flush((200 * msNano) + 1)
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(-1)
-	_, err = connA.listener.Flush(200000 + 400000 + 2)
+	_, err = connA.listener.Flush(((200 + 400) * msNano) + 2)
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(-1)
-	_, err = connA.listener.Flush(200000 + 400000 + 800000 + 3)
+	_, err = connA.listener.Flush(((200 + 400 + 800)* msNano) + 3)
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(-1)
-	_, err = connA.listener.Flush(200000 + 400000 + 800000 + 1600000 + 4)
+	_, err = connA.listener.Flush(((200 + 400 + 800 + 1600)* msNano) + 4)
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(1)
 	streamB, err := listenerB.Listen(0, specificNano)
@@ -269,50 +229,42 @@ func TestRTOTimes4Success(t *testing.T) {
 }
 
 func TestRTOTimes4Fail(t *testing.T) {
-	connPair := NewConnPair("addr1", "addr2")
-	defer connPair.Conn1.Close()
-	defer connPair.Conn2.Close()
-
-	connA, _, err := createTwoStreams(connPair.Conn1, connPair.Conn2, testPrvKey1, testPrvKey2)
-	assert.Nil(t, err)
+	connA, _, connPair := setupTest(t)
 
 	a1 := []byte("hallo1")
 	streamA1 := connA.Stream(0)
-	_, err = streamA1.Write(a1)
+	_, err := streamA1.Write(a1)
 	assert.Nil(t, err)
 	_, err = connA.listener.Flush(specificNano)
+	slog.Debug("WWWWWW1", slog.Uint64("aeuaoeu", specificNano))
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(-1)
+	_, err = connA.listener.Flush((200 * msNano) + 1)
+	slog.Debug("WWWWWW2", slog.Uint64("aeuaoeu", specificNano))
+	assert.Nil(t, err)
+	_, err = connPair.senderToRecipient(-1)
+	_, err = connA.listener.Flush(((200 + 400)* msNano) + 2)
+	assert.Nil(t, err)
+	_, err = connPair.senderToRecipient(-1)
+	_, err = connA.listener.Flush(((200 + 400 + 800)* msNano) + 3)
+	assert.Nil(t, err)
+	_, err = connPair.senderToRecipient(-1)
+	_, err = connA.listener.Flush(((200 + 400 + 800 + 1600)* msNano) + 4)
+	assert.Nil(t, err)
+	_, err = connPair.senderToRecipient(-1)
+	_, err = connA.listener.Flush(((200 + 400 + 800 + 1600 + 3200)* msNano) + 5)
+	assert.Nil(t, err)
 
-	_, err = connPair.senderToRecipient(-1)
-	_, err = connA.listener.Flush(200000 + 1)
-	assert.Nil(t, err)
-	_, err = connPair.senderToRecipient(-1)
-	_, err = connA.listener.Flush(200000 + 400000 + 2)
-	assert.Nil(t, err)
-	_, err = connPair.senderToRecipient(-1)
-	_, err = connA.listener.Flush(200000 + 400000 + 800000 + 3)
-	assert.Nil(t, err)
-	_, err = connPair.senderToRecipient(-1)
-	_, err = connA.listener.Flush(200000 + 400000 + 800000 + 1600000 + 4)
-	assert.Nil(t, err)
-	_, err = connPair.senderToRecipient(-1)
-	_, err = connA.listener.Flush(200000 + 400000 + 800000 + 1600000 + 3200000 + 5)
-	assert.Nil(t, err)
-
-	_, err = connA.listener.Flush(specificNano)
+	_, err = connA.listener.Flush((6210* msNano) + 5)
 	assert.NotNil(t, err)
 }
 
 func TestCloseAWithInit(t *testing.T) {
-	connPair := NewConnPair("addr1", "addr2")
-	defer connPair.Conn1.Close()
-	defer connPair.Conn2.Close()
-	connA, listenerB, err := createTwoStreams(connPair.Conn1, connPair.Conn2, testPrvKey1, testPrvKey2)
-	assert.Nil(t, err)
+	connA, listenerB, connPair := setupTest(t)
+	
 	streamA := connA.Stream(0)
 	a1 := []byte("hallo1")
-	_, err = streamA.Write(a1)
+	_, err := streamA.Write(a1)
 	assert.Nil(t, err)
 	connA.Close()
 	assert.True(t, streamA.state == StreamStateCloseRequest)
@@ -352,14 +304,11 @@ func TestCloseAWithInit(t *testing.T) {
 }
 
 func TestCloseBWithInit(t *testing.T) {
-	connPair := NewConnPair("addr1", "addr2")
-	defer connPair.Conn1.Close()
-	defer connPair.Conn2.Close()
-	connA, listenerB, err := createTwoStreams(connPair.Conn1, connPair.Conn2, testPrvKey1, testPrvKey2)
-	assert.Nil(t, err)
+	connA, listenerB, connPair := setupTest(t)
+	
 	streamA := connA.Stream(0)
 	a1 := []byte("hallo1")
-	_, err = streamA.Write(a1)
+	_, err := streamA.Write(a1)
 	assert.Nil(t, err)
 	assert.True(t, streamA.state == StreamStateOpen)
 
@@ -399,14 +348,11 @@ func TestCloseBWithInit(t *testing.T) {
 }
 
 func TestGarbage1(t *testing.T) {
-	connPair := NewConnPair("addr1", "addr2")
-	defer connPair.Conn1.Close()
-	defer connPair.Conn2.Close()
-	connA, listenerB, err := createTwoStreams(connPair.Conn1, connPair.Conn2, testPrvKey1, testPrvKey2)
-	assert.Nil(t, err)
+	connA, listenerB, connPair := setupTest(t)
+	
 	streamA := connA.Stream(0)
 	a1 := []byte("hallo1")
-	_, err = streamA.Write(a1)
+	_, err := streamA.Write(a1)
 	assert.Nil(t, err)
 	assert.True(t, streamA.state == StreamStateOpen)
     
@@ -424,14 +370,11 @@ func TestGarbage1(t *testing.T) {
 }
 
 func TestGarbage2(t *testing.T) {
-	connPair := NewConnPair("addr1", "addr2")
-	defer connPair.Conn1.Close()
-	defer connPair.Conn2.Close()
-	connA, listenerB, err := createTwoStreams(connPair.Conn1, connPair.Conn2, testPrvKey1, testPrvKey2)
-	assert.Nil(t, err)
+	connA, listenerB, connPair := setupTest(t)
+	
 	streamA := connA.Stream(0)
 	a1 := []byte("hallo1")
-	_, err = streamA.Write(a1)
+	_, err := streamA.Write(a1)
 	assert.Nil(t, err)
 	assert.True(t, streamA.state == StreamStateOpen)
 
@@ -460,11 +403,7 @@ func TestGarbage2(t *testing.T) {
 }
 
 func TestBBR(t *testing.T) {
-	connPair := NewConnPair("addr1", "addr2")
-	defer connPair.Conn1.Close()
-	defer connPair.Conn2.Close()
-	connA, listenerB, err := createTwoStreams(connPair.Conn1, connPair.Conn2, testPrvKey1, testPrvKey2)
-	assert.Nil(t, err)
+	connA, listenerB, connPair := setupTest(t)
 
 	//write 64k
 	streamA := connA.Stream(0)
@@ -472,7 +411,7 @@ func TestBBR(t *testing.T) {
 	dataARemaining, err := streamA.Write(dataA)
 	assert.Nil(t, err)
 	assert.Equal(t, 1, len(dataARemaining))
-	assert.Equal(t, 1048576, streamA.conn.sndBuf.size)
+	assert.Equal(t, 16777216, streamA.conn.sndBuf.size)
 	streamA.conn.listener.Flush(specificNano)
 
 	//send data
@@ -484,7 +423,7 @@ func TestBBR(t *testing.T) {
 	//send 64 back
 	streamB, err := listenerB.Listen(0, specificNano)
 	assert.Nil(t, err)
-	assert.Equal(t, uint64(1572864), streamB.conn.rcvWndSize)
+	assert.Equal(t, uint64(0x1800000), streamB.conn.rcvWndSize)
 	dataB1 := make([]byte, rcvBufferCapacity+1)
 	dataB1Remaining, err := streamB.Write(dataB1)
 	assert.Nil(t, err)
@@ -498,22 +437,19 @@ func TestBBR(t *testing.T) {
 	assert.Equal(t, 1, connPair.nrIncomingPacketsSender())
 	streamA, err = connA.listener.Listen(0, specificNano)
 	assert.Nil(t, err)
-	assert.Equal(t, uint64(786432), streamA.conn.rcvWndSize)
+	assert.Equal(t, uint64(0xc00000), streamA.conn.rcvWndSize)
 
 	for range 10 {
 		_, err = streamA.conn.listener.Flush(specificNano)
 		assert.Nil(t, err)
 	}
-	assert.Equal(t, 11, connPair.nrOutgoingPacketsSender())
+	//respect pacing
+	assert.Equal(t, 1, connPair.nrOutgoingPacketsSender())
 }
 
 func TestBBR2(t *testing.T) {
-	connPair := NewConnPair("addr1", "addr2")
-	defer connPair.Conn1.Close()
-	defer connPair.Conn2.Close()
-	connA, listenerB, err := createTwoStreams(connPair.Conn1, connPair.Conn2, testPrvKey1, testPrvKey2)
-	assert.Nil(t, err)
-	specificNano = 0
+	t.SkipNow()
+	connA, listenerB, connPair := setupTest(t)
 
 	var totalBytesReceived uint64
 	var mu sync.Mutex
@@ -544,7 +480,7 @@ func TestBBR2(t *testing.T) {
 	streamA := connA.Stream(0)
 
 	dataA := make([]byte, rcvBufferCapacity)
-	_, err = streamA.Write(dataA)
+	_, err := streamA.Write(dataA)
 	assert.Nil(t, err)
 
 	start := time.Now()

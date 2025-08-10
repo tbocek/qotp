@@ -235,7 +235,7 @@ func TestEndToEndCodec(t *testing.T) {
 
 			if size > 0 {
 				_, rb := s.conn.rcvBuf.RemoveOldestInOrder(s.streamId)
-				assert.Equal(t, testData, rb.data, fmt.Sprintf("Data mismatch for Size %d", size))
+				assert.Equal(t, testData, rb, fmt.Sprintf("Data mismatch for Size %d", size))
 			}
 		}
 	}
@@ -301,7 +301,7 @@ func TestFullHandshakeFlow(t *testing.T) {
 	require.NoError(t, err)
 	_, rb := s.conn.rcvBuf.RemoveOldestInOrder(s.streamId)
 	require.Equal(t, InitRcv, m.MsgType)
-	require.Equal(t, testData, rb.data)
+	require.Equal(t, testData, rb)
 
 	// Test Data message flow after handshake
 	connId := binary.LittleEndian.Uint64(prvIdAlice.PublicKey().Bytes()) ^ binary.LittleEndian.Uint64(prvIdBob.PublicKey().Bytes())
@@ -332,7 +332,7 @@ func TestFullHandshakeFlow(t *testing.T) {
 	s, err = c.decode(msg.PayloadRaw, 0, 0)
 	require.NoError(t, err)
 	_, rb = s.conn.rcvBuf.RemoveOldestInOrder(s.streamId)
-	require.Equal(t, dataMsg, rb.data)
+	require.Equal(t, dataMsg, rb)
 }
 
 // Test msgType() function

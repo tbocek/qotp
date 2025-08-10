@@ -22,11 +22,11 @@ func TestUpdateBBR_InvalidInputs(t *testing.T) {
 	conn := newTestConnection()
 
 	// Test zero RTT measurement
-	conn.UpdateBBR(0, 1000, 1000000000)
+	conn.UpdateBBR(0, 1_000, 1_000_000_000)
 	assert.Equal(t, uint64(0), conn.BBR.bwMax, "Bandwidth should not update with zero RTT")
 
 	// Test zero bytes acked
-	conn.UpdateBBR(100000000, 0, 1000000000)
+	conn.UpdateBBR(100_000_000, 0, 1_000_000_000)
 	assert.Equal(t, uint64(0), conn.BBR.bwMax, "Bandwidth should not update with zero bytes")
 }
 
@@ -233,7 +233,7 @@ func TestGetPacingInterval_NoBandwidth(t *testing.T) {
 
 	// Test with no SRTT
 	interval := conn.GetPacingInterval(1000)
-	assert.Equal(t, uint64(10000), interval, "Should return 10ms default when no SRTT")
+	assert.Equal(t, uint64(10 * msNano), interval, "Should return 10ms default when no SRTT")
 
 	// Test with SRTT but no bandwidth
 	conn.RTT.srtt = 100000000 // 100ms in nanoseconds
@@ -270,7 +270,7 @@ func TestGetPacingInterval_EdgeCases(t *testing.T) {
 	conn.BBR.bwMax = 10000
 	conn.BBR.pacingGain = 0 // Would make effective rate 0
 	interval := conn.GetPacingInterval(1000)
-	assert.Equal(t, uint64(10000), interval, "Should return 10ms fallback")
+	assert.Equal(t, uint64(10 * msNano), interval, "Should return 10ms fallback")
 
 	// Test with very small packet
 	conn.BBR.pacingGain = 100

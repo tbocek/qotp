@@ -129,8 +129,11 @@ func (c *Connection) decode(decryptedData []byte, rawLen int, nowNano uint64) (s
 		}
 	}
 
-	if len(payloadData) > 0 || p.IsClose {
-		c.rcvBuf.Insert(s.streamId, p.StreamOffset, payloadData, p.IsClose)
+	if len(payloadData) > 0 {
+		c.rcvBuf.Insert(s.streamId, p.StreamOffset, payloadData)
+	}
+	if p.IsClose {
+		c.rcvBuf.CloseAt(s.streamId, p.StreamOffset)
 	}
 
 	return s, nil
@@ -187,18 +190,6 @@ func (c *Connection) Flush(stream *Stream, nowNano uint64) (raw int, data int, p
 		}
 		return c.writeAck(stream, ack, nowNano)
 	}
-	//Respect cwnd
-	if c.dataInFlight+startMtu > c.sndBuf.capacity - c.sndBuf.size {
-		slog.Debug("Flush/Cwnd/Snd",
-			debugGoroutineID(),
-			stream.debug(),
-			slog.Int("dataInFlight", c.dataInFlight+startMtu ),
-			slog.Int("size(snd-buf)", c.sndBuf.capacity - c.sndBuf.size))
-		if ack == nil {
-			return 0, 0, MinDeadLine, nil
-		}
-		return c.writeAck(stream, ack, nowNano)
-	}
 	//Respect rwnd
 	if c.dataInFlight + startMtu > int(c.rcvWndSize) {
 		slog.Debug("Flush/Rwnd/Rcv",
@@ -228,11 +219,6 @@ func (c *Connection) Flush(stream *Stream, nowNano uint64) (raw int, data int, p
 	//during handshake, if we have something to retransmit, it will always be the first packet
 	//otherwise go ahead
 	if m != nil && splitData != nil {
-		slog.Debug("Flush/Retransmit",
-			debugGoroutineID(),
-			stream.debug(),
-			slog.Uint64("expetedRto:ms", m.expectedRtoBackoffNano/msNano),
-			slog.Any("acutualRto:ms", m.actualRtoNano/msNano))
 		c.OnPacketLoss()
 		encData, err := stream.encode(splitData, m.offset, ack, m.msgType)
 		if err != nil {
@@ -251,6 +237,15 @@ func (c *Connection) Flush(stream *Stream, nowNano uint64) (raw int, data int, p
 		packetLen := len(splitData)
 		pacingNano = c.GetPacingInterval(uint64(packetLen))
 		c.nextWriteTime = nowNano + pacingNano
+		
+		slog.Debug("Flush/Retransmit",
+			debugGoroutineID(),
+			stream.debug(),
+			slog.Uint64("expetedRto:ms", m.expectedRtoBackoffNano/msNano),
+			slog.Uint64("acutualRto:ms", m.actualRtoNano/msNano),
+			slog.Uint64("nextWriteTime:ms", c.nextWriteTime/msNano),
+			slog.Uint64("nextWriteTime:ns", c.nextWriteTime))
+		
 		return raw, packetLen, pacingNano, nil
 	}
 

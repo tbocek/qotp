@@ -41,14 +41,10 @@ func (s *Stream) Read() (readData []byte, err error) {
 		return nil, ErrStreamClosed
 	}
 
-	_, data := s.conn.rcvBuf.RemoveOldestInOrder(s.streamId)
-	if data == nil {
-		return nil, nil
-	}
-
-	readData = data.data
-	s.conn.updateState(s, data.isClose)
-	return readData, nil
+	offset, data := s.conn.rcvBuf.RemoveOldestInOrder(s.streamId)
+	closeOffset := s.conn.rcvBuf.GetOffsetClosedAt(s.streamId)
+	s.conn.updateState(s, closeOffset != nil && *closeOffset == offset)
+	return data, nil
 }
 
 func (s *Stream) Write(writeData []byte) (remainingWriteData []byte, err error) {
