@@ -169,49 +169,48 @@ func (c *Connection) cleanup2(connId uint64) {
 	c.listener.connMap.Remove(c.connId)
 }
 
-func (c *Connection) Flush(stream *Stream, nowNano uint64) (raw int, data int, pacingNano uint64, err error) {
+func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacingNano uint64, err error) {
 	//update state for receiver
-	if stream.state == StreamStateCloseReceived {
-		stream.state = StreamStateClosed
-	}
-
 	ack := c.rcvBuf.GetSndAck()
+
+	// If close requested, do not send any data, just send ack
+	if s.state == StreamStateCloseReceived {
+		s.state = StreamStateClosed
+		slog.Debug(" Flush/Close", debugGId(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
+		if ack == nil {
+			return 0, 0, MinDeadLine, nil
+		}
+		return c.writeAck(s, ack, nowNano)
+	}
 
 	// Respect pacing
 	if c.nextWriteTime > nowNano {
-		slog.Debug("Flush/Pacing",
-			debugGoroutineID(),
-			stream.debug(),
-			slog.Uint64("nowNano:ms", nowNano/msNano),
-			slog.Uint64("nextWriteTime:ms", c.nextWriteTime/msNano),
-			slog.Uint64("waitTime:ms", (c.nextWriteTime-nowNano)/msNano))
+		slog.Debug(" Flush/Pacing", debugGId(), s.debug(), c.debug(),
+			slog.Uint64("waitTime:ms", (c.nextWriteTime-nowNano)/msNano),
+			slog.Bool("ack?", ack != nil))
 		if ack == nil {
 			return 0, 0, MinDeadLine, nil
 		}
-		return c.writeAck(stream, ack, nowNano)
+		return c.writeAck(s, ack, nowNano)
 	}
 	//Respect rwnd
-	if c.dataInFlight + startMtu > int(c.rcvWndSize) {
-		slog.Debug("Flush/Rwnd/Rcv",
-			debugGoroutineID(),
-			stream.debug(),
-			slog.Int("dataInFlight", c.dataInFlight+startMtu ),
-			slog.Int("size(rcv-buf)", c.rcvBuf.capacity - c.rcvBuf.size))
+	if c.dataInFlight+startMtu > int(c.rcvWndSize) {
+		slog.Debug(" Flush/Rwnd/Rcv", debugGId(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
 		if ack == nil {
 			return 0, 0, MinDeadLine, nil
 		}
-		return c.writeAck(stream, ack, nowNano)
+		return c.writeAck(s, ack, nowNano)
 	}
 
 	overhead := &Overhead{
-		msgType:    stream.msgType(),
+		msgType:    s.msgType(),
 		ack:        ack,
 		dataOffset: 0,
 		currentMtu: startMtu,
 	}
 
 	// Retransmission case
-	splitData, m, err := c.sndBuf.ReadyToRetransmit(stream.streamId, overhead, c.rtoNano(), nowNano)
+	splitData, m, err := c.sndBuf.ReadyToRetransmit(s.streamId, overhead, c.rtoNano(), nowNano)
 	if err != nil {
 		return 0, 0, 0, err
 	}
@@ -220,7 +219,9 @@ func (c *Connection) Flush(stream *Stream, nowNano uint64) (raw int, data int, p
 	//otherwise go ahead
 	if m != nil && splitData != nil {
 		c.OnPacketLoss()
-		encData, err := stream.encode(splitData, m.offset, ack, m.msgType)
+		slog.Debug(" Flush/Retransmit", debugGId(), s.debug(), m.debug(), c.debug())
+
+		encData, err := s.encode(splitData, m.offset, ack, m.msgType)
 		if err != nil {
 			return 0, 0, 0, err
 		}
@@ -236,29 +237,21 @@ func (c *Connection) Flush(stream *Stream, nowNano uint64) (raw int, data int, p
 
 		packetLen := len(splitData)
 		pacingNano = c.GetPacingInterval(uint64(packetLen))
+		
 		c.nextWriteTime = nowNano + pacingNano
-		
-		slog.Debug("Flush/Retransmit",
-			debugGoroutineID(),
-			stream.debug(),
-			slog.Uint64("expetedRto:ms", m.expectedRtoBackoffNano/msNano),
-			slog.Uint64("acutualRto:ms", m.actualRtoNano/msNano),
-			slog.Uint64("nextWriteTime:ms", c.nextWriteTime/msNano),
-			slog.Uint64("nextWriteTime:ns", c.nextWriteTime))
-		
 		return raw, packetLen, pacingNano, nil
 	}
 
 	//next check if we can send packets, during handshake we can only send 1 packet
 	if !c.state.isHandshakeComplete && !c.state.isFirstPacketProduced || c.state.isHandshakeComplete {
-		splitData, m = c.sndBuf.ReadyToSend(stream.streamId, overhead, nowNano)
+		splitData, m = c.sndBuf.ReadyToSend(s.streamId, overhead, nowNano)
 		if m != nil && splitData != nil {
-			slog.Debug("Flush/Send", debugGoroutineID(), stream.debug())
-			encData, err := stream.encode(splitData, m.offset, ack, stream.msgType())
+			slog.Debug(" Flush/Send", debugGId(), s.debug(), m.debug(), c.debug())
+			encData, err := s.encode(splitData, m.offset, ack, s.msgType())
 			if err != nil {
 				return 0, 0, 0, err
 			}
-			m.msgType = stream.msgType()
+			m.msgType = s.msgType()
 			c.state.isFirstPacketProduced = true
 
 			raw, err := c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowNano)
@@ -280,7 +273,8 @@ func (c *Connection) Flush(stream *Stream, nowNano uint64) (raw int, data int, p
 	if ack == nil {
 		return 0, 0, MinDeadLine, nil
 	}
-	return c.writeAck(stream, ack, nowNano)
+	slog.Debug(" Flush/Ack", debugGId(), s.debug(), m.debug(), c.debug())
+	return c.writeAck(s, ack, nowNano)
 }
 
 func (c *Connection) writeAck(stream *Stream, ack *Ack, nowNano uint64) (raw int, data int, pacingNano uint64, err error) {
@@ -288,7 +282,6 @@ func (c *Connection) writeAck(stream *Stream, ack *Ack, nowNano uint64) (raw int
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	slog.Debug("Flush/Ack", debugGoroutineID(), stream.debug())
 	raw, err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowNano)
 	if err != nil {
 		return 0, 0, 0, err
@@ -298,3 +291,13 @@ func (c *Connection) writeAck(stream *Stream, ack *Ack, nowNano uint64) (raw int
 	}
 	return raw, 0, MinDeadLine, nil
 }
+
+func (c *Connection) debug() slog.Attr {
+	return slog.Group("connection",
+		slog.Uint64("nextWrt:ms", c.nextWriteTime/msNano),
+		//slog.Uint64("nextWrt:ns", c.nextWriteTime),
+		slog.Int("inFlight", c.dataInFlight+startMtu),
+		slog.Int("rcvBuf", c.rcvBuf.capacity-c.rcvBuf.size),
+		slog.Uint64("rcvWnd", c.rcvWndSize))
+}
+

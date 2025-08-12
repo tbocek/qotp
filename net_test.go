@@ -66,10 +66,6 @@ func NewConnPair(addr1 string, addr2 string) *ConnPair {
 	}
 }
 
-func (c *ConnPair) senderRawToRecipient(addr string, raw []byte, nowNano uint64) (err error) {
-	return c.Conn1.AppendData(addr, raw, nowNano)
-}
-
 func (c *ConnPair) senderToRecipient(sequence ...int) (n int, err error) {
 	return c.Conn1.CopyData(sequence...)
 }
@@ -80,10 +76,6 @@ func (c *ConnPair) senderToRecipientAll() (n int, err error) {
 
 func (c *ConnPair) recipientToSenderAll() (n int, err error) {
 	return c.Conn2.CopyData(len(c.Conn2.writeQueue))
-}
-
-func (c *ConnPair) recipientRawToSender(addr string, raw []byte, nowNano uint64) (err error) {
-	return c.Conn2.AppendData(addr, raw, nowNano)
 }
 
 func (c *ConnPair) recipientToSender(sequence ...int) (n int, err error) {
@@ -129,10 +121,13 @@ func (p *PairedConn) ReadFromUDPAddrPort(buf []byte, timeoutNano uint64, nowNano
 	if len(p.readQueue) == 0 {
 		return 0, netip.AddrPort{}, nil
 	}
-
+	
 	packet := p.readQueue[0]
 	p.readQueue = p.readQueue[1:]
 	n := copy(buf, packet.data)
+	
+	slog.Debug("    ReadUDP",slog.Int("len(data)", len(buf)))
+	
 	return n, netip.AddrPort{}, nil
 }
 
@@ -158,7 +153,7 @@ func (p *PairedConn) WriteToUDPAddrPort(data []byte, remoteAddr netip.AddrPort, 
 		transmissionNano = (uint64(len(data)) * secondNano) / p.bandwidth
 	}
 
-	slog.Debug("Time/Prepare",
+	slog.Debug("    WriteUDP",
 		slog.Int("len(data)", len(data)),
 		slog.Uint64("bandwidth:B/s", p.bandwidth),
 		slog.Uint64("latency:ms", p.latencyNano/msNano),
@@ -173,42 +168,6 @@ func (p *PairedConn) WriteToUDPAddrPort(data []byte, remoteAddr netip.AddrPort, 
 	p.writeQueueMu.Unlock()
 
 	return n, nil
-}
-
-func (p *PairedConn) AppendData(addr string, data []byte, nowNano uint64) error {
-	if p.isClosed() {
-		return errors.New("connection closed")
-	}
-	if p.partner == nil || p.partner.isClosed() {
-		return errors.New("no partner connection or partner closed")
-	}
-
-	transmissionNano := uint64(0)
-	if p.bandwidth > 0 {
-		transmissionNano = (uint64(len(data)) * secondNano) / p.bandwidth
-	}
-	specificNano = nowNano + p.latencyNano + transmissionNano
-	slog.Debug("Time/Warp/Auto",
-		slog.Int("len(data)", len(data)),
-		slog.Uint64("+:ms", (p.latencyNano+transmissionNano)/msNano),
-		slog.Uint64("before:ms", nowNano/msNano),
-		slog.Uint64("after:ms", specificNano/msNano))
-
-	// Create a new packetData with the raw bytes
-	packet := packetData{
-		data:            data,
-		remoteAddr:      addr,
-		packetDelayNano: p.latencyNano + transmissionNano,
-	}
-
-	// Lock partner's read queue to ensure atomicity when appending
-	p.partner.readQueueMu.Lock()
-	defer p.partner.readQueueMu.Unlock()
-
-	// Append the packet to partner's read queue
-	p.partner.readQueue = append(p.partner.readQueue, packet)
-
-	return nil
 }
 
 func (p *PairedConn) CopyData(sequence ...int) (int, error) {

@@ -15,8 +15,6 @@ import (
 	"sync/atomic"
 )
 
-const MinDeadLine uint64 = 100 * msNano
-
 type Listener struct {
 	// this is the port we are listening to
 	localConn NetworkConn
@@ -163,14 +161,13 @@ func Listen(listenAddr *net.UDPAddr, options ...ListenFunc) (*Listener, error) {
 	slog.Info(
 		"Listen",
 		slog.Any("listenAddr", lOpts.localConn.LocalAddrString()),
-		slog.String("privKeyId", "0x"+hex.EncodeToString(l.prvKeyId.Bytes()[:3])+"…"),
 		slog.String("pubKeyId", "0x"+hex.EncodeToString(l.prvKeyId.PublicKey().Bytes()[:3])+"…"))
 
 	return l, nil
 }
 
 func (l *Listener) Close() error {
-	slog.Debug("ListenerClose", debugGoroutineID())
+	slog.Debug("ListenerClose", debugGId())
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -196,19 +193,19 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 		ok := errors.As(err, &netErr)
 
 		if ok && netErr.Timeout() {
-			slog.Debug("Listen/Timeout")
+			slog.Debug("   Listen/Timeout")
 			return nil, nil // Timeout is normal, return no dataToSend/error
 		} else {
-			slog.Error("Listen/Error", slog.Any("error", err))
+			slog.Error("   Listen/Error", slog.Any("error", err))
 			return nil, err
 		}
 	}
 	if n == 0 {
-		slog.Debug("Listen/NoData")
+		slog.Debug("   Listen/NoData")
 		return nil, nil
 	}
 
-	slog.Debug("Listen/Data", debugGoroutineID(), l.debug(), slog.Any("len(data)", n), slog.Uint64("now:ms", nowNano/msNano))
+	slog.Debug("   Listen/Data", debugGId(), l.debug(), slog.Any("len(data)", n), slog.Uint64("now:ms", nowNano/msNano))
 
 	conn, m, err := l.decode(data[:n], remoteAddr)
 	if err != nil {

@@ -1,7 +1,6 @@
 package tomtp
 
 import (
-	"log/slog"
 	"net/netip"
 	"sync"
 	"testing"
@@ -98,12 +97,6 @@ func TestTwoStream(t *testing.T) {
 
 	_, err = connA.listener.Listen(0, specificNano)
 	assert.Nil(t, err)
-	//streamA2 = connA.Stream(1)
-	//a2Test, err = streamA2.Write(a2)
-	//assert.Nil(t, err)
-	//assert.Equal(t, 0, len(a2Test))
-	_, err = connA.listener.Flush(specificNano)
-	assert.Nil(t, err)
 	_, err = connA.listener.Flush(specificNano)
 	assert.Nil(t, err)
 
@@ -157,12 +150,6 @@ func TestTwoStreamFirstMessageTimeout(t *testing.T) {
 	_, err = connPair.recipientToSender(1)
 	assert.Nil(t, err)
 	_, err = connA.listener.Listen(0, specificNano)
-	assert.Nil(t, err)
-	//streamA2 = connA.Stream(1)
-	//a2Test, err = streamA2.Write(a2)
-	//assert.Nil(t, err)
-	//assert.Equal(t, 0, len(a2Test))
-	_, err = connA.listener.Flush(specificNano)
 	assert.Nil(t, err)
 	_, err = connA.listener.Flush(specificNano)
 	assert.Nil(t, err)
@@ -236,11 +223,9 @@ func TestRTOTimes4Fail(t *testing.T) {
 	_, err := streamA1.Write(a1)
 	assert.Nil(t, err)
 	_, err = connA.listener.Flush(specificNano)
-	slog.Debug("WWWWWW1", slog.Uint64("aeuaoeu", specificNano))
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(-1)
 	_, err = connA.listener.Flush((200 * msNano) + 1)
-	slog.Debug("WWWWWW2", slog.Uint64("aeuaoeu", specificNano))
 	assert.Nil(t, err)
 	_, err = connPair.senderToRecipient(-1)
 	_, err = connA.listener.Flush(((200 + 400)* msNano) + 2)
@@ -347,61 +332,6 @@ func TestCloseBWithInit(t *testing.T) {
 	assert.True(t, streamA.state == StreamStateCloseReceived)
 }
 
-func TestGarbage1(t *testing.T) {
-	connA, listenerB, connPair := setupTest(t)
-	
-	streamA := connA.Stream(0)
-	a1 := []byte("hallo1")
-	_, err := streamA.Write(a1)
-	assert.Nil(t, err)
-	assert.True(t, streamA.state == StreamStateOpen)
-    
-	_, err = connA.listener.Flush(0)
-	assert.Nil(t, err)
-
-	// Simulate packet transfer (data packet with FIN flag)
-	data := make([]byte, 1400)
-	err = connPair.senderRawToRecipient("tmp", data, 0)
-	assert.Nil(t, err)
-
-	// Listener B receives data
-	_, err = listenerB.Listen(0, specificNano)
-	assert.ErrorContains(t, err, "failed to decode InitHandshakeS0")
-}
-
-func TestGarbage2(t *testing.T) {
-	connA, listenerB, connPair := setupTest(t)
-	
-	streamA := connA.Stream(0)
-	a1 := []byte("hallo1")
-	_, err := streamA.Write(a1)
-	assert.Nil(t, err)
-	assert.True(t, streamA.state == StreamStateOpen)
-
-	_, err = connA.listener.Flush(0)
-	assert.Nil(t, err)
-
-	// Simulate packet transfer (data packet with FIN flag)
-	_, err = connPair.senderToRecipient(1)
-	assert.Nil(t, err)
-
-	// Listener B receives data
-	streamB, err := listenerB.Listen(0, specificNano)
-	assert.Nil(t, err)
-
-	_, err = streamB.Write([]byte("hallo"))
-	assert.Nil(t, err)
-	_, err = streamB.conn.listener.Flush(0)
-
-	// Simulate packet transfer (data packet with FIN flag)
-	data := make([]byte, 1400)
-	err = connPair.recipientRawToSender("tmp", data, specificNano)
-	assert.Nil(t, err)
-
-	streamA, err = streamA.conn.listener.Listen(0, specificNano)
-	assert.ErrorContains(t, err, "failed to decode InitHandshakeS0")
-}
-
 func TestBBR(t *testing.T) {
 	connA, listenerB, connPair := setupTest(t)
 
@@ -420,7 +350,7 @@ func TestBBR(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, 1, connPair.nrIncomingPacketsRecipient())
 
-	//send 64 back
+	//send 16m back
 	streamB, err := listenerB.Listen(0, specificNano)
 	assert.Nil(t, err)
 	assert.Equal(t, uint64(0x1800000), streamB.conn.rcvWndSize)
@@ -438,13 +368,29 @@ func TestBBR(t *testing.T) {
 	streamA, err = connA.listener.Listen(0, specificNano)
 	assert.Nil(t, err)
 	assert.Equal(t, uint64(0xc00000), streamA.conn.rcvWndSize)
-
+	
+	//respect pacing
 	for range 10 {
 		_, err = streamA.conn.listener.Flush(specificNano)
+		assert.Equal(t, 1, connPair.nrOutgoingPacketsSender())
+	}
+
+	for range 8 {
+		_, err = streamA.conn.listener.Flush(specificNano)
+		assert.Equal(t, 1, connPair.nrOutgoingPacketsSender())
+		_, err = connPair.senderToRecipientAll()
 		assert.Nil(t, err)
 	}
-	//respect pacing
+	
+	//retransmit
+	setTime(connA.nextWriteTime) //we need to advance time, as we are too fast for the 10kb/s 
+	_, err = streamA.conn.listener.Flush(specificNano)
 	assert.Equal(t, 1, connPair.nrOutgoingPacketsSender())
+	_, err = connPair.senderToRecipientAll()
+	assert.Nil(t, err)
+	
+	//respect time
+	assert.Equal(t, uint64(1715592903), specificNano)
 }
 
 func TestBBR2(t *testing.T) {

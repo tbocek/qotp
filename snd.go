@@ -2,6 +2,7 @@ package tomtp
 
 import (
 	"errors"
+	"log/slog"
 	"sync"
 )
 
@@ -32,7 +33,7 @@ func (p packetKey) length() uint16 {
 }
 
 func (p packetKey) less(other packetKey) bool {
-	for i := 0; i < 10; i++ {
+	for i := range len(p) {
 		if p[i] < other[i] {
 			return true
 		}
@@ -50,7 +51,7 @@ func createPacketKey(offset uint64, length uint16) packetKey {
 	return p
 }
 
-type MetaData struct {
+type SendInfo struct {
 	beforeSendNano         uint64
 	sentNr                 int
 	msgType                MsgType //we may know this only after running encryption
@@ -59,13 +60,23 @@ type MetaData struct {
 	actualRtoNano          uint64
 }
 
-func (r *MetaData) less(other *MetaData) bool {
-	return r.beforeSendNano < other.beforeSendNano
+func (s *SendInfo) less(other *SendInfo) bool {
+	return s.beforeSendNano < other.beforeSendNano
 }
 
-func (r *MetaData) eq(other *MetaData) bool {
-	return r.beforeSendNano == other.beforeSendNano
+func (s *SendInfo) eq(other *SendInfo) bool {
+	return s.beforeSendNano == other.beforeSendNano
 }
+
+func (s *SendInfo) debug() slog.Attr {
+	if s == nil {
+		return slog.String("meta", "n/a")
+	}
+	return slog.Group("meta",
+		slog.Uint64("expRto:ms", s.expectedRtoBackoffNano/msNano),
+		slog.Uint64("actRto:ms", s.actualRtoNano/msNano))
+}
+
 
 // StreamBuffer represents a single stream's dataToSend and metadata
 type StreamBuffer struct {
@@ -84,7 +95,7 @@ type StreamBuffer struct {
 	// If MTU changes for inflight packets and need to be resent. The range is split. Example:
 	// offset: 500, len/mtu: 50 -> 1 range: 500/50,time
 	// retransmit with mtu:20 -> 3 dataInFlightMap: 500/20,time; 520/20,time; 540/10,time
-	dataInFlightMap *skipList[packetKey, *MetaData]
+	dataInFlightMap *skipList[packetKey, *SendInfo]
 }
 
 type SendBuffer struct {
@@ -99,7 +110,7 @@ type SendBuffer struct {
 func NewStreamBuffer() *StreamBuffer {
 	return &StreamBuffer{
 		dataToSend: []byte{},
-		dataInFlightMap: newSortedHashMap[packetKey, *MetaData](func(a, b packetKey, c, d *MetaData) bool {
+		dataInFlightMap: newSortedHashMap[packetKey, *SendInfo](func(a, b packetKey, c, d *SendInfo) bool {
 			if c.eq(d) {
 				return a.less(b)
 			}
@@ -155,7 +166,7 @@ func (sb *SendBuffer) Insert(streamId uint32, data []byte) (inserted int, status
 }
 
 // ReadyToSend gets data from dataToSend and creates an entry in dataInFlightMap
-func (sb *SendBuffer) ReadyToSend(streamId uint32, overhead *Overhead, nowNano uint64) (splitData []byte, m *MetaData) {
+func (sb *SendBuffer) ReadyToSend(streamId uint32, overhead *Overhead, nowNano uint64) (splitData []byte, m *SendInfo) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 
@@ -188,7 +199,7 @@ func (sb *SendBuffer) ReadyToSend(streamId uint32, overhead *Overhead, nowNano u
 			splitData = stream.dataToSend[offset : offset+uint64(length)]
 
 			// Track range
-			m = &MetaData{beforeSendNano: nowNano, sentNr: 1, msgType: -1, offset: stream.sentOffset} //we do not know the msg type yet
+			m = &SendInfo{beforeSendNano: nowNano, sentNr: 1, msgType: -1, offset: stream.sentOffset} //we do not know the msg type yet
 			stream.dataInFlightMap.Put(key, m)
 
 			// Update tracking
@@ -205,7 +216,7 @@ func (sb *SendBuffer) ReadyToSend(streamId uint32, overhead *Overhead, nowNano u
 }
 
 // ReadyToRetransmit finds expired dataInFlightMap that need to be resent
-func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, expectedRtoNano uint64, nowNano uint64) (data []byte, m *MetaData, err error) {
+func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, expectedRtoNano uint64, nowNano uint64) (data []byte, m *SendInfo, err error) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 
@@ -242,10 +253,15 @@ func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, exp
 
 			sb.lastReadToRetransmitStream = streamId
 			if rangeLen <= maxData {
+				if rangeLen < maxData {
+					slog.Debug("Resend/Partial", slog.Uint64("free-space", uint64(maxData - rangeLen)))
+				} else {
+					slog.Debug("Resend/Full")
+				}
 				// Remove old range
 				stream.dataInFlightMap.Remove(dataInFlight.key)
 				// Same MTU - resend entire range
-				m := &MetaData{beforeSendNano: nowNano,
+				m := &SendInfo{beforeSendNano: nowNano,
 					sentNr:                 rtoData.sentNr + 1,
 					msgType:                rtoData.msgType,
 					offset:                 rangeOffset,
@@ -263,12 +279,12 @@ func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, exp
 
 				// Remove old range
 				stream.dataInFlightMap.Remove(dataInFlight.key)
-				mLeft := &MetaData{beforeSendNano: nowNano,
+				mLeft := &SendInfo{beforeSendNano: nowNano,
 					sentNr:  rtoData.sentNr + 1,
 					msgType: rtoData.msgType,
 					offset:  rangeOffset, expectedRtoBackoffNano: expectedRtoBackoffNano, actualRtoNano: actualRtoNano}
 				stream.dataInFlightMap.Put(leftKey, mLeft)
-				mRight := &MetaData{beforeSendNano: rtoData.beforeSendNano,
+				mRight := &SendInfo{beforeSendNano: rtoData.beforeSendNano,
 					sentNr:                 rtoData.sentNr,
 					msgType:                rtoData.msgType,
 					offset:                 remainingOffset,
@@ -276,6 +292,7 @@ func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, exp
 					actualRtoNano:          rtoData.actualRtoNano}
 				stream.dataInFlightMap.Put(rightKey, mRight)
 
+				slog.Debug("Resend/Split", slog.Uint64("send", uint64(maxData)), slog.Uint64("remain", uint64(remainingLen)))
 				return data[:maxData], mLeft, nil
 			}
 		}

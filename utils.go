@@ -46,7 +46,7 @@ func setDF(conn *net.UDPConn) error {
 	return nil
 }
 
-func debugGoroutineID() slog.Attr {
+func debugGId() slog.Attr {
 	buf := make([]byte, 64)
 	n := runtime.Stack(buf, false)
 	buf = buf[:n]
@@ -183,4 +183,18 @@ func timeNowNano() uint64 {
 		return uint64(time.Now().UnixNano())
 	}
 	return specificNano
+}
+
+func debug(msg string, keysAndValues ...any) {
+	if len(keysAndValues)%2 != 0 {
+		panic("debug requires even number of arguments (key-value pairs)")
+	}
+	
+	attrs := make([]any, 0, len(keysAndValues)/2)
+	for i := 0; i < len(keysAndValues); i += 2 {
+		key := keysAndValues[i].(string)
+		value := keysAndValues[i+1]
+		attrs = append(attrs, slog.Any(key, value))
+	}
+	slog.Debug(msg, attrs...)
 }

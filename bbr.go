@@ -37,6 +37,7 @@ func (c *Connection) UpdateBBR(rttMeasurementNano uint64, bytesAcked uint64, now
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+
 	// 1. Update RTT samples - keep current
 	if rttMeasurementNano == 0 {
 		//no measurement, cannot update BBR
@@ -113,6 +114,15 @@ func (c *Connection) OnPacketLoss() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	slog.Debug("PaketLoss", 
+		slog.Uint64("bwMax", c.BBR.bwMax), 
+		slog.Uint64("newBwMax", c.BBR.bwMax * 95 / 100), 
+		slog.Uint64("gain", c.BBR.pacingGain), 
+		slog.Uint64("newGain", 100),
+		slog.Any("state", c.BBR.state),
+		slog.Any("newState", BBRStateNormal),
+	)
+	
 	c.BBR.bwMax = c.BBR.bwMax * 95 / 100 // Reduce by 5%
 	c.BBR.pacingGain = 100               // Reset to 1.0x
 	c.BBR.state = BBRStateNormal
@@ -133,10 +143,10 @@ func (c *Connection) GetPacingInterval(packetSize uint64) uint64 {
 	// Apply pacing gain to bandwidth
 	effectiveRate := (c.BBR.bwMax * c.BBR.pacingGain) / 100
 
-	if effectiveRate < 1000 {
+	if effectiveRate == 0 {
 		return 10 * msNano // 10ms fallback only for truly broken state
 	}
-
+	
 	// Calculate inter-packet interval in nanoseconds
 	// packetSize is in bytes, effectiveRate is in bytes/second
 	// interval = (packetSize / effectiveRate) * 1,000,000 nanoseconds/second

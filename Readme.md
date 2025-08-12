@@ -286,10 +286,10 @@ The TomTP payload packet begins with a header byte containing several control bi
 
 * Bit 0 is the "S/R" flag which distinguishes between sender and receiver roles.
 * Bits 1-2: 
-  * 0: No ACK/Data with 24bit,
-  * 1: No ACK/Data with 48bit,
-  * 2: ACK with 24bit/Data with 24bit, 
-  * 3: ACK with 48bit/Data with 48bit,
+  * 00: No ACK/Data with 24bit,
+  * 01: No ACK/Data with 48bit,
+  * 10: ACK with 24bit/Data with 24bit, 
+  * 11: ACK with 48bit/Data with 48bit,
 * Bits 3-7: Receiver window size: 1024 << (bits - 1), 31 is not used for rcv, but means CLOSE. Max receiver size is 512GB
 
 If ACK bit is present then:
