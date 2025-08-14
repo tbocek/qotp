@@ -195,6 +195,9 @@ func (m *skipList[K, V]) Min() *shmPair[K, V] {
 	defer m.mu.RUnlock()
 
 	// The first node after the head at the base level is the minimum
+	if m.head.next[0] != nil && isNil(m.head.next[0].value) {
+		return nil
+	}
 	return m.head.next[0]
 }
 
@@ -284,6 +287,9 @@ func (n *shmPair[K, V]) Next() *shmPair[K, V] {
 	}
 
 	// The next node in the base level is the successor
+	if n.next[0] != nil && isNil(n.next[0].value) {
+		return nil
+	}
 	return n.next[0]
 }
 
@@ -314,16 +320,9 @@ func (n *shmPair[K, V]) Value() V {
 	return n.value
 }
 
-// Assume isNil function exists elsewhere if needed by Put, e.g.:
-// func isNil(v any) bool {
-// 	if v == nil {
-// 		return true
-// 	}
-// 	// Optional: Check for typed nil interfaces/pointers if V can be interface{} or *T
-// 	// rv := reflect.ValueOf(v)
-// 	// switch rv.Kind() {
-// 	// case reflect.Ptr, reflect.Map, reflect.Array, reflect.Chan, reflect.Slice, reflect.Interface, reflect.Func:
-// 	// 	return rv.IsNil()
-// 	// }
-// 	return false
-// }
+func (n *shmPair[K, V]) isEmpty() bool {
+	if n == nil || n.m == nil || (isNil(n.value) && isNil(n.key)) {
+		return true
+	}
+	return false
+}

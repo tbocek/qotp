@@ -51,7 +51,7 @@ type Connection struct {
 
 	// Connection state
 	state         ConnectionState
-	stateStream   *shmPair[uint32, *Stream]
+	currentStream   *shmPair[uint32, *Stream]
 	nextWriteTime uint64
 
 	// Crypto and performance
@@ -152,8 +152,8 @@ func (c *Connection) updateState(s *Stream, isClose bool) {
 
 // We need to check if we remove the current state, if yes, then move the state to the next stream
 func (c *Connection) cleanup(streamId uint32) {
-	if c.stateStream != nil && streamId == c.stateStream.key {
-		c.stateStream = c.stateStream.Next()
+	if c.currentStream != nil && streamId == c.currentStream.key {
+		c.currentStream = c.currentStream.Next()
 	}
 	s := c.streams.Remove(streamId)
 
@@ -163,8 +163,8 @@ func (c *Connection) cleanup(streamId uint32) {
 }
 
 func (c *Connection) cleanup2(connId uint64) {
-	if connId == c.listener.stateConn.key {
-		c.listener.stateConn = c.listener.stateConn.Next()
+	if connId == c.listener.currentConnection.key {
+		c.listener.currentConnection = c.listener.currentConnection.Next()
 	}
 	c.listener.connMap.Remove(c.connId)
 }

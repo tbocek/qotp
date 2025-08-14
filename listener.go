@@ -17,12 +17,12 @@ import (
 
 type Listener struct {
 	// this is the port we are listening to
-	localConn NetworkConn
-	prvKeyId  *ecdh.PrivateKey               //never nil
-	connMap   *skipList[uint64, *Connection] // here we store the connection to remote peers, we can have up to
-	stateConn *shmPair[uint64, *Connection]
-	closed    bool
-	mu        sync.Mutex
+	localConn         NetworkConn
+	prvKeyId          *ecdh.PrivateKey               //never nil
+	connMap           *skipList[uint64, *Connection] // here we store the connection to remote peers, we can have up to
+	currentConnection *shmPair[uint64, *Connection]
+	closed            bool
+	mu                sync.Mutex
 }
 
 type ListenOption struct {
@@ -233,75 +233,116 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 	return s, nil
 }
 
-func (l *Listener) Flush(nowNano uint64) (waitNextNano uint64, err error) {
-	minPacing := MinDeadLine
-	startConnection := l.stateConn
-	firstIterationConn := true
-
+// Flush sends pending data for all connections using round-robin
+func (l *Listener) Flush(nowNano uint64) (minPacing uint64, err error) {
+	minPacing = MinDeadLine
+	
+	if l.currentConnection == nil || l.currentConnection.isEmpty() {
+		l.currentConnection = l.connMap.Min()
+	}
+	// If no connections, return immediately
+	if l.currentConnection == nil || l.currentConnection.isEmpty() {
+		return minPacing, nil
+	}
+	// Remember where we started
+	startConn := l.currentConnection
+	
+	// Process each connection once
 	for {
-		if !firstIterationConn && l.stateConn == startConnection {
-			//we made the full round, we have nothing more to write, return minPacing
+		// Process streams for current connection
+		debug("flush1")
+		pacing, err := l.flushConnectionStreams(nowNano)
+		if err != nil {
+			return 0, err
+		}
+
+		if pacing < minPacing {
+			minPacing = pacing
+		}
+
+		// If we sent data, return immediately for responsiveness
+		if pacing == 0 {
+			return 0, nil
+		}
+		
+		// Move to next connection
+		l.currentConnection = l.currentConnection.Next()
+		if l.currentConnection == nil || l.currentConnection.isEmpty() {
+			debug("flush2")
+			// Wrap around to beginning
+			l.currentConnection = l.connMap.Min()
+			if l.currentConnection == nil || l.currentConnection.isEmpty(){
+				return minPacing, nil
+			}
+		}
+		
+		// Check if we've completed a full round
+		if l.currentConnection == startConn {
 			return minPacing, nil
-		}
-		firstIterationConn = false
-
-		if l.stateConn == nil {
-			l.stateConn = l.connMap.Min()
-		} else {
-			l.stateConn = l.stateConn.Next()
-			if l.stateConn == nil {
-				continue
-			}
-		}
-		if l.stateConn == nil {
-			//no connections
-			return minPacing, nil
-		}
-
-		startStream := l.stateConn.Value().stateStream
-
-		firstIterationStream := true
-		for {
-			if l.stateConn == nil || (!firstIterationStream && l.stateConn.Value().stateStream == startStream) {
-				//we made the full round, go to next connection
-				break
-			}
-			firstIterationStream = false
-
-			if l.stateConn.Value().stateStream == nil {
-				l.stateConn.Value().stateStream = l.stateConn.Value().streams.Min()
-			} else {
-				l.stateConn.Value().stateStream = l.stateConn.Value().stateStream.Next()
-				if l.stateConn.Value().stateStream == nil {
-					continue
-				}
-			}
-			if l.stateConn.Value().stateStream == nil {
-				//no streams, go to next connection
-				break
-			}
-
-			_, data, pacingNano, err := l.stateConn.value.Flush(l.stateConn.Value().stateStream.Value(), nowNano)
-			if err != nil {
-				l.stateConn.Value().cleanup2(l.stateConn.Value().connId)
-				return 0, err
-			}
-
-			if l.stateConn.Value().stateStream.Value().state == StreamStateClosed {
-				l.stateConn.value.cleanup(l.stateConn.Value().stateStream.Value().streamId)
-			}
-
-			if pacingNano < minPacing {
-				minPacing = pacingNano
-			}
-
-			if data > 0 {
-				//we do not return minpacing, as we may have more to write
-				return 0, nil
-			}
 		}
 	}
 }
+
+// flushConnectionStreams processes all streams for the current connection
+func (l *Listener) flushConnectionStreams(nowNano uint64) (uint64, error) {
+	conn := l.currentConnection.Value()
+	minPacing := MinDeadLine
+	
+	debug("flushX", "conn", conn, "l.currentConnection", l.currentConnection)
+	
+	// Initialize stream pointer if needed
+	if conn.currentStream == nil || conn.currentStream.isEmpty() {
+		conn.currentStream = conn.streams.Min()
+	}
+	if conn.currentStream == nil || conn.currentStream.isEmpty() {
+		return minPacing, nil
+	}
+	
+	startStream := conn.currentStream
+	// Process each stream once
+	for {
+		stream := conn.currentStream.Value()
+		
+		// Flush the current stream
+		_, dataSent, pacingNano, err := conn.Flush(stream, nowNano)
+		if err != nil {
+			conn.cleanup2(conn.connId)
+			return 0, err
+		}
+
+		// Clean up closed streams
+		if stream.state == StreamStateClosed {
+			conn.cleanup(stream.streamId)
+		}
+
+		if pacingNano < minPacing {
+			minPacing = pacingNano
+		}
+
+		// If we sent data, return immediately
+		if dataSent > 0 {
+			return 0, nil
+		}
+		
+		// Move to next stream
+		conn.currentStream = conn.currentStream.Next()
+		if conn.currentStream == nil || conn.currentStream.isEmpty() {
+			// Wrap around to beginning
+			conn.currentStream = conn.streams.Min()
+			if conn.currentStream == nil || conn.currentStream.isEmpty() {
+				return minPacing, nil
+			}
+		}
+		
+		// Check if we've completed a full round
+		if conn.currentStream == startStream {
+			break
+		}
+	}
+
+	return minPacing, nil
+}
+
 
 func newStreamHashMap() *skipList[uint32, *Stream] {
 	return newSortedHashMap[uint32, *Stream](func(a, b uint32, c, d *Stream) bool {
@@ -366,7 +407,7 @@ func (l *Listener) newConn(
 		BBR:        NewBBR(),
 		rcvWndSize: rcvBufferCapacity, //initially our capacity, correct value will be sent to us in the 1st handshake
 	}
-	
+
 	l.connMap.Put(connId, conn)
 	return conn, nil
 }
