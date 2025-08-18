@@ -33,7 +33,7 @@ type Connection struct {
 
 	// Core components
 	listener *Listener
-	streams  *skipList[uint32, *Stream]
+	streams  *SortedMap[*uint32, *Stream]
 
 	// Cryptographic keys
 	keys ConnectionKeys
@@ -51,7 +51,7 @@ type Connection struct {
 
 	// Connection state
 	state         ConnectionState
-	currentStream   *shmPair[uint32, *Stream]
+	currentStream *uint32
 	nextWriteTime uint64
 
 	// Crypto and performance
@@ -76,9 +76,10 @@ func (c *Connection) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	for node := c.streams.Min(); node != nil; node = node.Next() {
-		if node.value != nil {
-			node.value.Close()
+	for k, _ := c.streams.Min(); c.streams.HasNext(k); k, _ = c.streams.Next(k) {
+		v := c.streams.Get(k)
+		if v != nil {
+			v.Close()
 		}
 	}
 }
@@ -87,8 +88,9 @@ func (c *Connection) Stream(streamId uint32) (s *Stream) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if node := c.streams.Get(streamId); node != nil && node.value != nil {
-		return node.value
+	k, v := c.streams.Next(&streamId)
+	if k!= nil && v!=nil {
+		return v
 	}
 
 	s = &Stream{
@@ -97,7 +99,7 @@ func (c *Connection) Stream(streamId uint32) (s *Stream) {
 		mu:       sync.Mutex{},
 		state:    StreamStateOpen,
 	}
-	c.streams.Put(streamId, s)
+	c.streams.Put(&streamId, s)
 	return s
 }
 
@@ -152,21 +154,21 @@ func (c *Connection) updateState(s *Stream, isClose bool) {
 
 // We need to check if we remove the current state, if yes, then move the state to the next stream
 func (c *Connection) cleanup(streamId uint32) {
-	if c.currentStream != nil && streamId == c.currentStream.key {
-		c.currentStream = c.currentStream.Next()
+	if c.currentStream != nil && streamId == *c.currentStream {
+		c.currentStream, _ = c.streams.Next(&streamId)
 	}
-	s := c.streams.Remove(streamId)
+	v := c.streams.Remove(&streamId)
 
-	if s != nil && c.streams.Size() == 0 {
-		c.cleanup2(s.value.conn.connId)
+	if v != nil && c.streams.Size() == 0 {
+		c.cleanup2(v.conn.connId)
 	}
 }
 
 func (c *Connection) cleanup2(connId uint64) {
-	if connId == c.listener.currentConnection.key {
-		c.listener.currentConnection = c.listener.currentConnection.Next()
+	if c.listener.currentConnection != nil && connId == *c.listener.currentConnection {
+		c.listener.currentConnection, _ = c.listener.connMap.Next(&connId)
 	}
-	c.listener.connMap.Remove(c.connId)
+	c.listener.connMap.Remove(&c.connId)
 }
 
 func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacingNano uint64, err error) {

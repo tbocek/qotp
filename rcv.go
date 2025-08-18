@@ -1,7 +1,6 @@
 package tomtp
 
 import (
-	"bytes"
 	"log/slog"
 	"sync"
 )
@@ -15,13 +14,13 @@ const (
 )
 
 type RcvBuffer struct {
-	segments                   *skipList[packetKey, []byte]
+	segments                   *SortedMap[*packetKey, []byte]
 	nextInOrderOffsetToWaitFor uint64 // Next expected offset
 	closeAtOffset              *uint64
 }
 
 type RcvBufferAck struct {
-	segments                   *skipList[packetKey, *Ack]
+	segments                   *SortedMap[*packetKey, *Ack]
 	nextInOrderOffsetToWaitFor uint64 // Next expected offset
 }
 
@@ -34,14 +33,41 @@ type ReceiveBuffer struct {
 	mu         *sync.Mutex
 }
 
+type packetKey [10]byte
+
+func (p packetKey) offset() uint64 {
+	return Uint64(p[:8])
+}
+
+func (p packetKey) length() uint16 {
+	return Uint16(p[8:])
+}
+
+func (p packetKey) less(other packetKey) bool {
+	for i := range len(p) {
+		if p[i] < other[i] {
+			return true
+		}
+		if p[i] > other[i] {
+			return false
+		}
+	}
+	return false
+}
+
+func createPacketKey(offset uint64, length uint16) *packetKey {
+	var p *packetKey
+	PutUint64(p[:8], offset)
+	PutUint16(p[8:], length)
+	return p
+}
+
+
 func NewRcvBuffer() *RcvBuffer {
 	return &RcvBuffer{
-		segments: newSortedHashMap[packetKey, []byte](func(a, b packetKey, c, d []byte) bool {
-			if a.less(b) {
+		segments: NewSortedMap[*packetKey, []byte](func(a, b *packetKey) bool {
+			if a.less(*b) {
 				return true
-			}
-			if a == b {
-				return bytes.Compare(c, d) < 0
 			}
 			return false
 		}),
@@ -87,12 +113,12 @@ func (rb *ReceiveBuffer) Insert(streamId uint32, offset uint64, decodedData []by
 		return RcvInsertDuplicate
 	}
 
-	if stream.segments.Contains(key) {
+	if stream.segments.Contains(&key) {
 		slog.Debug("Rcv/Duplicate/InMap", slog.Uint64("offset", offset), slog.Int("len(data)", dataLen))
 		return RcvInsertDuplicate
 	}
 
-	stream.segments.Put(key, decodedData)
+	stream.segments.Put(&key, decodedData)
 	rb.size += dataLen
 
 	return RcvInsertOk
@@ -137,27 +163,25 @@ func (rb *ReceiveBuffer) RemoveOldestInOrder(streamId uint32) (offset uint64, da
 	}
 
 	// Check if there is any dataToSend at all
-	oldest := stream.segments.Min()
-	if oldest == nil {
+	oldestKey, oldestValue := stream.segments.Min()
+	if oldestKey == nil {
 		return 0, nil
 	}
 
-	if oldest.key.offset() == stream.nextInOrderOffsetToWaitFor {
-		stream.segments.Remove(oldest.key)
-		rb.size -= int(oldest.key.length())
+	if oldestKey.offset() == stream.nextInOrderOffsetToWaitFor {
+		stream.segments.Remove(oldestKey)
+		rb.size -= int(oldestKey.length())
 
-		segmentVal := oldest.value
-		segmentKey := oldest.key
-		off := segmentKey.offset()
+		off := oldestKey.offset()
 		if off < stream.nextInOrderOffsetToWaitFor {
-			diff := stream.nextInOrderOffsetToWaitFor - segmentKey.offset()
-			segmentVal = segmentVal[diff:]
+			diff := stream.nextInOrderOffsetToWaitFor - oldestKey.offset()
+			oldestValue = oldestValue[diff:]
 			off = stream.nextInOrderOffsetToWaitFor
 		}
 
-		stream.nextInOrderOffsetToWaitFor = off + uint64(len(segmentVal))
-		return oldest.key.offset(), segmentVal
-	} else if oldest.key.offset() > stream.nextInOrderOffsetToWaitFor {
+		stream.nextInOrderOffsetToWaitFor = off + uint64(len(oldestValue))
+		return oldestKey.offset(), oldestValue
+	} else if oldestKey.offset() > stream.nextInOrderOffsetToWaitFor {
 		// Out of order; wait until segment offset available, signal that
 		return 0, nil
 	} else {

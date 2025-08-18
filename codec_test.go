@@ -205,7 +205,7 @@ func TestEndToEndCodec(t *testing.T) {
 			streams:  newStreamHashMap(),
 		}
 		connId := binary.LittleEndian.Uint64(prvEpAlice.PublicKey().Bytes())
-		lAlice.connMap.Put(connId, connAlice)
+		lAlice.connMap.Put(&connId, connAlice)
 		connAlice.connId = connId
 
 		streamAlice := &Stream{conn: connAlice}
@@ -272,7 +272,7 @@ func TestFullHandshakeFlow(t *testing.T) {
 		rcvBuf:    NewReceiveBuffer(1000),
 		streams:  newStreamHashMap(),
 	}
-	lAlice.connMap.Put(connAlice.connId, connAlice)
+	lAlice.connMap.Put(&connAlice.connId, connAlice)
 
 	streamAlice := &Stream{conn: connAlice}
 
@@ -311,11 +311,11 @@ func TestFullHandshakeFlow(t *testing.T) {
 	connAlice.keys.pubKeyIdRcv = prvIdBob.PublicKey()
 	connAlice.keys.pubKeyEpRcv = prvEpBob.PublicKey()
 	connAlice.sharedSecret = seed1[:]
-	lAlice.connMap.Put(connId, connAlice)
+	lAlice.connMap.Put(&connId, connAlice)
 
 	connBob.state.isHandshakeComplete = true
 	connBob.sharedSecret = seed1[:]
-	lBob.connMap.Put(connId, connBob)
+	lBob.connMap.Put(&connId, connBob)
 
 	// Alice sends Data message
 	dataMsg := []byte("data message")
