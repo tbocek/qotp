@@ -67,6 +67,7 @@ func TestTwoStream(t *testing.T) {
 	assert.Nil(t, err)
 	_, err = connA.listener.Flush(specificNano)
 	assert.Nil(t, err)
+	
 	// we send one packet
 	_, err = connPair.senderToRecipient(1)
 	assert.Nil(t, err)

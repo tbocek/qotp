@@ -646,3 +646,76 @@ func (suite *NestedIteratorTestSuite) TestSimpleCycleExample() {
 	suite.Equal("s1", stream.id)
 	suite.True(cycleComplete) // Cycle is now complete!
 }
+
+func (suite *NestedIteratorTestSuite) TestTwoItemCycle() {
+	// Create a simple map with only one connection having two streams
+	simpleMap := NewLinkedMap[string, *ConnectionTest]()
+	
+	// c1 with only s1, s2
+	c1 := &ConnectionTest{
+		id:      "c1",
+		streams: NewLinkedMap[string, *StreamTest](),
+	}
+	c1.streams.Put("s1", &StreamTest{id: "s1"})
+	c1.streams.Put("s2", &StreamTest{id: "s2"})
+	
+	simpleMap.Put("c1", c1)
+	
+	// Test 1: Input c1/s1, should give c1/s2
+	suite.T().Log("=== Test 1: Start from c1/s1 ===")
+	iter1 := NewNestedIterator(
+		simpleMap,
+		func(conn *ConnectionTest) *LinkedMap[string, *StreamTest] {
+			return conn.streams
+		},
+		"c1",
+		"s1",
+	)
+	
+	// Should return c1/s2
+	conn, stream, cycleComplete := iter1.Next()
+	suite.NotNil(conn, "Should return connection")
+	suite.NotNil(stream, "Should return stream")
+	suite.Equal("c1", conn.id, "Should return c1")
+	suite.Equal("s2", stream.id, "Should return s2")
+	suite.False(cycleComplete, "Should not be cycle complete yet")
+	suite.T().Logf("Got: %s/%s (cycleComplete=%t)", conn.id, stream.id, cycleComplete)
+	
+	// Next call should complete the cycle by returning c1/s1
+	conn, stream, cycleComplete = iter1.Next()
+	suite.NotNil(conn, "Should return start item when cycle completes")
+	suite.NotNil(stream, "Should return start item when cycle completes")
+	suite.Equal("c1", conn.id, "Should return to start connection")
+	suite.Equal("s1", stream.id, "Should return to start stream")
+	suite.True(cycleComplete, "Should indicate cycle is complete")
+	suite.T().Logf("Cycle complete: %s/%s (cycleComplete=%t)", conn.id, stream.id, cycleComplete)
+	
+	// Test 2: Input c1/s2, should give c1/s1
+	suite.T().Log("=== Test 2: Start from c1/s2 ===")
+	iter2 := NewNestedIterator(
+		simpleMap,
+		func(conn *ConnectionTest) *LinkedMap[string, *StreamTest] {
+			return conn.streams
+		},
+		"c1",
+		"s2",
+	)
+	
+	// Should return c1/s1 (wraps around since s2 is the last)
+	conn, stream, cycleComplete = iter2.Next()
+	suite.NotNil(conn, "Should return connection")
+	suite.NotNil(stream, "Should return stream")
+	suite.Equal("c1", conn.id, "Should return c1")
+	suite.Equal("s1", stream.id, "Should return s1")
+	suite.False(cycleComplete, "Should not be cycle complete yet")
+	suite.T().Logf("Got: %s/%s (cycleComplete=%t)", conn.id, stream.id, cycleComplete)
+	
+	// Next call should complete the cycle by returning c1/s2
+	conn, stream, cycleComplete = iter2.Next()
+	suite.NotNil(conn, "Should return start item when cycle completes")
+	suite.NotNil(stream, "Should return start item when cycle completes")
+	suite.Equal("c1", conn.id, "Should return to start connection")
+	suite.Equal("s2", stream.id, "Should return to start stream")
+	suite.True(cycleComplete, "Should indicate cycle is complete")
+	suite.T().Logf("Cycle complete: %s/%s (cycleComplete=%t)", conn.id, stream.id, cycleComplete)
+}
