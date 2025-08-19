@@ -24,23 +24,27 @@ func (s *SortedHashMapTestSuite) TestBasicOperations() {
 	s.NotNil(s.shm)
 	s.Equal(0, s.shm.Size())
 	
-	minKey, minVal := s.shm.Min()
+	minKey, minVal, ok := s.shm.Min()
+	s.False(ok)
 	s.Equal(0, minKey)    // zero value for int
 	s.Equal("", minVal)   // zero value for string
 
 	// Test basic Put and Get
 	s.shm.Put(1, "one")
-	value := s.shm.Get(1)
+	value, ok := s.shm.Get(1)
+	s.True(ok)
 	s.Equal("one", value)
 
 	// Test updating existing key
 	s.shm.Put(1, "ONE")
-	value = s.shm.Get(1)
+	value, ok = s.shm.Get(1)
+	s.True(ok)
 	s.Equal("ONE", value)
 	s.Equal(1, s.shm.Size())
 
 	// Test non-existent key
-	value = s.shm.Get(999)
+	value, ok = s.shm.Get(999)
+	s.False(ok)
 	s.Equal("", value) // zero value for string
 }
 
@@ -60,7 +64,9 @@ func (s *SortedHashMapTestSuite) TestContainsOperation() {
 	s.False(s.shm.Contains(3))
 
 	// Test after removal
-	s.shm.Remove(1)
+	value, ok := s.shm.Remove(1)
+	s.True(ok)
+	s.Equal("one", value)
 	s.False(s.shm.Contains(1))
 	s.True(s.shm.Contains(2))
 }
@@ -88,7 +94,8 @@ func (s *SortedHashMapTestSuite) TestTreeOperations() {
 	expected := []int{1, 3, 4, 5, 6, 7, 9}
 	
 	// Start from minimum and traverse
-	currentKey, currentVal := s.shm.Min()
+	currentKey, currentVal, ok := s.shm.Min()
+	s.True(ok)
 	s.Equal(1, currentKey)
 	s.Equal("one", currentVal)
 	
@@ -97,19 +104,22 @@ func (s *SortedHashMapTestSuite) TestTreeOperations() {
 		
 		// Get next key for next iteration
 		if i < len(expected)-1 {
-			currentKey, _ = s.shm.Next(currentKey)
+			currentKey, _, ok = s.shm.Next(currentKey)
+			s.True(ok)
 		}
 	}
 	
-	// Verify no next after last element (should return zero values)
-	nextKey, nextVal := s.shm.Next(currentKey)
+	// Verify no next after last element
+	nextKey, nextVal, ok := s.shm.Next(currentKey)
+	s.False(ok)
 	s.Equal(0, nextKey)   // zero value for int
 	s.Equal("", nextVal)  // zero value for string
 }
 
 func (s *SortedHashMapTestSuite) TestRemoveOperations() {
 	// Test removing from empty map
-	value := s.shm.Remove(1)
+	value, ok := s.shm.Remove(1)
+	s.False(ok)
 	s.Equal("", value) // zero value
 
 	// Build a complex map
@@ -119,17 +129,21 @@ func (s *SortedHashMapTestSuite) TestRemoveOperations() {
 	}
 
 	// Test removing elements
-	value = s.shm.Remove(15)
+	value, ok = s.shm.Remove(15)
+	s.True(ok)
 	s.Equal("value", value)
-	s.Equal("", s.shm.Get(15)) // Should be gone
+	_, exists := s.shm.Get(15)
+	s.False(exists) // Should be gone
 
-	value = s.shm.Remove(14)
+	value, ok = s.shm.Remove(14)
+	s.True(ok)
 	s.Equal("value", value)
 	
-	// Check that 13 is now accessible (since 14 and 15 are gone)
+	// Check that 13 is still accessible (since 14 and 15 are gone)
 	s.True(s.shm.Contains(13))
 
-	value = s.shm.Remove(8)
+	value, ok = s.shm.Remove(8)
+	s.True(ok)
 	s.Equal("value", value)
 
 	// Verify some remaining elements
@@ -142,7 +156,8 @@ func (s *SortedHashMapTestSuite) TestRemoveOperations() {
 
 func (s *SortedHashMapTestSuite) TestMinOperations() {
 	// Test empty map
-	minKey, minVal := s.shm.Min()
+	minKey, minVal, ok := s.shm.Min()
+	s.False(ok)
 	s.Equal(0, minKey)
 	s.Equal("", minVal)
 
@@ -159,31 +174,39 @@ func (s *SortedHashMapTestSuite) TestMinOperations() {
 	}
 
 	// Test minimum
-	minKey, minVal = s.shm.Min()
+	minKey, minVal, ok = s.shm.Min()
+	s.True(ok)
 	s.Equal(1, minKey)
 	s.Equal("one", minVal)
 
 	// Test after removing minimum
-	s.shm.Remove(1)
-	minKey, minVal = s.shm.Min()
+	removedVal, removed := s.shm.Remove(1)
+	s.True(removed)
+	s.Equal("one", removedVal)
+	
+	minKey, minVal, ok = s.shm.Min()
+	s.True(ok)
 	s.Equal(3, minKey)
 	s.Equal("three", minVal)
 }
 
 func (s *SortedHashMapTestSuite) TestNextOperations() {
 	// Test Next on empty map
-	nextKey, nextVal := s.shm.Next(1)
+	nextKey, nextVal, ok := s.shm.Next(1)
+	s.False(ok)
 	s.Equal(0, nextKey)
 	s.Equal("", nextVal)
 
 	// Test Next with single element
 	s.shm.Put(1, "one")
-	minKey, minVal := s.shm.Min()
+	minKey, minVal, ok := s.shm.Min()
+	s.True(ok)
 	s.Equal(1, minKey)
 	s.Equal("one", minVal)
 	
 	// Should have no next
-	nextKey, nextVal = s.shm.Next(1)
+	nextKey, nextVal, ok = s.shm.Next(1)
+	s.False(ok)
 	s.Equal(0, nextKey)
 	s.Equal("", nextVal)
 
@@ -192,20 +215,24 @@ func (s *SortedHashMapTestSuite) TestNextOperations() {
 	s.shm.Put(3, "three")
 
 	// Test traversal
-	key, val := s.shm.Min()
+	key, val, ok := s.shm.Min()
+	s.True(ok)
 	s.Equal(1, key)
 	s.Equal("one", val)
 	
-	key, val = s.shm.Next(key)
+	key, val, ok = s.shm.Next(key)
+	s.True(ok)
 	s.Equal(2, key)
 	s.Equal("two", val)
 	
-	key, val = s.shm.Next(key)
+	key, val, ok = s.shm.Next(key)
+	s.True(ok)
 	s.Equal(3, key)
 	s.Equal("three", val)
 	
 	// No more elements
-	key, val = s.shm.Next(key)
+	key, val, ok = s.shm.Next(key)
+	s.False(ok)
 	s.Equal(0, key)
 	s.Equal("", val)
 }
@@ -218,22 +245,26 @@ func (s *SortedHashMapTestSuite) TestNextFromKey() {
 	}
 
 	// Test Next from existing key
-	nextKey, nextValue := s.shm.Next(3)
+	nextKey, nextValue, ok := s.shm.Next(3)
+	s.True(ok)
 	s.Equal(5, nextKey)
 	s.Equal("value", nextValue)
 
 	// Test Next from non-existing key
-	nextKey, nextValue = s.shm.Next(4)
+	nextKey, nextValue, ok = s.shm.Next(4)
+	s.True(ok)
 	s.Equal(5, nextKey)
 	s.Equal("value", nextValue)
 
-	// Test Next from last key (should return zero values)
-	nextKey, nextValue = s.shm.Next(9)
+	// Test Next from last key (should return false)
+	nextKey, nextValue, ok = s.shm.Next(9)
+	s.False(ok)
 	s.Equal(0, nextKey)
 	s.Equal("", nextValue)
 
 	// Test Next from key larger than all keys
-	nextKey, nextValue = s.shm.Next(10)
+	nextKey, nextValue, ok = s.shm.Next(10)
+	s.False(ok)
 	s.Equal(0, nextKey)
 	s.Equal("", nextValue)
 }
@@ -307,11 +338,14 @@ func (s *SortedHashMapTestSuite) TestCustomComparators() {
 
 	// Verify reverse order by traversing from min
 	expected := []int{9, 7, 5, 3, 1}
-	currentKey, _ := reverseMap.Min()
+	currentKey, _, ok := reverseMap.Min()
+	s.True(ok)
+	
 	for _, exp := range expected {
 		s.Equal(exp, currentKey)
 		if exp != 1 { // not the last element
-			currentKey, _ = reverseMap.Next(currentKey)
+			currentKey, _, ok = reverseMap.Next(currentKey)
+			s.True(ok)
 		}
 	}
 
@@ -325,7 +359,8 @@ func (s *SortedHashMapTestSuite) TestCustomComparators() {
 	customMap.Put(CustomKey{1}, "one")
 	customMap.Put(CustomKey{2}, "two")
 	
-	minKey, minVal := customMap.Min()
+	minKey, minVal, ok := customMap.Min()
+	s.True(ok)
 	s.Equal(CustomKey{1}, minKey)
 	s.Equal("one", minVal)
 }
@@ -333,20 +368,27 @@ func (s *SortedHashMapTestSuite) TestCustomComparators() {
 func (s *SortedHashMapTestSuite) TestEdgeCases() {
 	// Test updating value for existing key
 	s.shm.Put(1, "original")
-	s.Equal("original", s.shm.Get(1))
+	value, ok := s.shm.Get(1)
+	s.True(ok)
+	s.Equal("original", value)
 	s.Equal(1, s.shm.Size())
 	
 	s.shm.Put(1, "updated")
-	s.Equal("updated", s.shm.Get(1))
+	value, ok = s.shm.Get(1)
+	s.True(ok)
+	s.Equal("updated", value)
 	s.Equal(1, s.shm.Size()) // Size shouldn't change
 
 	// Test removing non-existent key
-	removedVal := s.shm.Remove(999)
+	removedVal, removed := s.shm.Remove(999)
+	s.False(removed)
 	s.Equal("", removedVal)
 
 	// Test Contains after operations
 	s.shm.Put(5, "five")
 	s.True(s.shm.Contains(5))
-	s.shm.Remove(5)
+	removedVal, removed = s.shm.Remove(5)
+	s.True(removed)
+	s.Equal("five", removedVal)
 	s.False(s.shm.Contains(5))
 }

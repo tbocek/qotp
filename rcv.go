@@ -14,13 +14,13 @@ const (
 )
 
 type RcvBuffer struct {
-	segments                   *SortedMap[*packetKey, []byte]
+	segments                   *SortedMap[packetKey, []byte]
 	nextInOrderOffsetToWaitFor uint64 // Next expected offset
 	closeAtOffset              *uint64
 }
 
 type RcvBufferAck struct {
-	segments                   *SortedMap[*packetKey, *Ack]
+	segments                   *SortedMap[packetKey, *Ack]
 	nextInOrderOffsetToWaitFor uint64 // Next expected offset
 }
 
@@ -55,8 +55,8 @@ func (p packetKey) less(other packetKey) bool {
 	return false
 }
 
-func createPacketKey(offset uint64, length uint16) *packetKey {
-	var p *packetKey
+func createPacketKey(offset uint64, length uint16) packetKey {
+	p := packetKey{}
 	PutUint64(p[:8], offset)
 	PutUint16(p[8:], length)
 	return p
@@ -65,8 +65,8 @@ func createPacketKey(offset uint64, length uint16) *packetKey {
 
 func NewRcvBuffer() *RcvBuffer {
 	return &RcvBuffer{
-		segments: NewSortedMap[*packetKey, []byte](func(a, b *packetKey) bool {
-			if a.less(*b) {
+		segments: NewSortedMap[packetKey, []byte](func(a, b packetKey) bool {
+			if a.less(b) {
 				return true
 			}
 			return false
@@ -113,12 +113,12 @@ func (rb *ReceiveBuffer) Insert(streamId uint32, offset uint64, decodedData []by
 		return RcvInsertDuplicate
 	}
 
-	if stream.segments.Contains(&key) {
+	if stream.segments.Contains(key) {
 		slog.Debug("Rcv/Duplicate/InMap", slog.Uint64("offset", offset), slog.Int("len(data)", dataLen))
 		return RcvInsertDuplicate
 	}
 
-	stream.segments.Put(&key, decodedData)
+	stream.segments.Put(key, decodedData)
 	rb.size += dataLen
 
 	return RcvInsertOk
@@ -163,8 +163,8 @@ func (rb *ReceiveBuffer) RemoveOldestInOrder(streamId uint32) (offset uint64, da
 	}
 
 	// Check if there is any dataToSend at all
-	oldestKey, oldestValue := stream.segments.Min()
-	if oldestKey == nil {
+	oldestKey, oldestValue, ok := stream.segments.Min()
+	if !ok {
 		return 0, nil
 	}
 

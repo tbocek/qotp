@@ -33,7 +33,7 @@ type Connection struct {
 
 	// Core components
 	listener *Listener
-	streams  *SortedMap[*uint32, *Stream]
+	streams  *LinkedMap[uint32, *Stream]
 
 	// Cryptographic keys
 	keys ConnectionKeys
@@ -51,7 +51,6 @@ type Connection struct {
 
 	// Connection state
 	state         ConnectionState
-	currentStream *uint32
 	nextWriteTime uint64
 
 	// Crypto and performance
@@ -76,7 +75,7 @@ func (c *Connection) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	for k, _ := c.streams.Min(); c.streams.HasNext(k); k, _ = c.streams.Next(k) {
+	for k, _, _ := c.streams.First(); c.streams.HasNext(k); k, _, _ = c.streams.Next(k) {
 		v := c.streams.Get(k)
 		if v != nil {
 			v.Close()
@@ -88,8 +87,8 @@ func (c *Connection) Stream(streamId uint32) (s *Stream) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	k, v := c.streams.Next(&streamId)
-	if k!= nil && v!=nil {
+	_, v, ok := c.streams.Next(streamId)
+	if ok && v != nil {
 		return v
 	}
 
@@ -99,7 +98,7 @@ func (c *Connection) Stream(streamId uint32) (s *Stream) {
 		mu:       sync.Mutex{},
 		state:    StreamStateOpen,
 	}
-	c.streams.Put(&streamId, s)
+	c.streams.Put(streamId, s)
 	return s
 }
 
@@ -148,27 +147,33 @@ func (c *Connection) updateState(s *Stream, isClose bool) {
 	}
 	if s.state == StreamStateCloseRequest && isClose {
 		s.state = StreamStateClosed
-		c.cleanup(s.streamId)
+		c.cleanupStream(s.streamId)
 	}
 }
 
-// We need to check if we remove the current state, if yes, then move the state to the next stream
-func (c *Connection) cleanup(streamId uint32) {
-	if c.currentStream != nil && streamId == *c.currentStream {
-		c.currentStream, _ = c.streams.Next(&streamId)
+// We need to check if we remove the current state, if yes, then move the state to the previous stream
+func (c *Connection) cleanupStream(streamId uint32) {
+	// Check if iterator is at this stream, if yes, move to previous
+	if c.listener.iter != nil && c.listener.iter.startK2 == streamId {
+		prevStreamID, _, _ := c.streams.Previous(streamId)
+		c.listener.iter.startK2 = prevStreamID
 	}
-	v := c.streams.Remove(&streamId)
 
+	v, _ := c.streams.Remove(streamId)
 	if v != nil && c.streams.Size() == 0 {
-		c.cleanup2(v.conn.connId)
+		c.cleanupConn(v.conn.connId)
 	}
 }
 
-func (c *Connection) cleanup2(connId uint64) {
-	if c.listener.currentConnection != nil && connId == *c.listener.currentConnection {
-		c.listener.currentConnection, _ = c.listener.connMap.Next(&connId)
+func (c *Connection) cleanupConn(connId uint64) {
+	// Check if iterator is at this connection, if yes, move to previous
+	if c.listener.iter != nil && c.listener.iter.startK1 == connId {
+
+		prevConnID, _, _ := c.listener.connMap.Previous(connId)
+		c.listener.iter.startK1 = prevConnID
 	}
-	c.listener.connMap.Remove(&c.connId)
+
+	c.listener.connMap.Remove(connId)
 }
 
 func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacingNano uint64, err error) {
@@ -239,7 +244,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 
 		packetLen := len(splitData)
 		pacingNano = c.GetPacingInterval(uint64(packetLen))
-		
+
 		c.nextWriteTime = nowNano + pacingNano
 		return raw, packetLen, pacingNano, nil
 	}
@@ -302,4 +307,3 @@ func (c *Connection) debug() slog.Attr {
 		slog.Int("rcvBuf", c.rcvBuf.capacity-c.rcvBuf.size),
 		slog.Uint64("rcvWnd", c.rcvWndSize))
 }
-

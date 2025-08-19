@@ -209,7 +209,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 	case InitSnd:
 		//we might have received this a multiple times due to retransmission in the first packet
 		//however the other side send us this, so we are expected to drop the old keys
-		conn := l.connMap.Get(&origConnId)
+		conn := l.connMap.Get(origConnId)
 		
 		var prvKeyEpRcv *ecdh.PrivateKey
 		var prvKeyEpRcvRoll *ecdh.PrivateKey
@@ -248,18 +248,18 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 			//this is tricky: we need to store the first message on the receiver side twice, once under the old id, once under the new id
 			//in case of duplicate, we need to find the right connection, and if we already store it under the new, then duplciate data
 			// will arrive. That also means, we need to remove the old id on the first data packet
-			l.connMap.Put(&origConnId, conn)
+			l.connMap.Put(origConnId, conn)
 		}
 		
 		conn.sharedSecret = message.SharedSecret
 		slog.Debug(" Decode/InitSnd", debugGId(), l.debug())
 		return conn, message, nil
 	case InitRcv:
-		conn := l.connMap.Get(&origConnId)
+		conn := l.connMap.Get(origConnId)
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for InitRcv")
 		}
-		l.connMap.Remove(&origConnId) // only sender ep pub key connId no longer needed, we now have a proper connId
+		l.connMap.Remove(origConnId) // only sender ep pub key connId no longer needed, we now have a proper connId
 
 		// Decode R0 message
 		pubKeyIdRcv, pubKeyEpRcv, pubKeyEpRcvRoll, message, err := DecodeInitRcv(
@@ -270,7 +270,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		}
 
 		conn.connId = Uint64(conn.keys.prvKeyEpSnd.PublicKey().Bytes()) ^ Uint64(pubKeyEpRcv.Bytes())
-		l.connMap.Put(&conn.connId, conn)
+		l.connMap.Put(conn.connId, conn)
 		conn.keys.pubKeyIdRcv = pubKeyIdRcv
 		conn.keys.pubKeyEpRcv = pubKeyEpRcv
 		conn.keys.pubKeyEpRcvRoll = pubKeyEpRcvRoll
@@ -281,7 +281,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 	case InitCryptoSnd:
 		//we might have received this a multiple times due to retransmission in the first packet
 		//however the other side send us this, so we are expected to drop the old keys
-		conn := l.connMap.Get(&origConnId)
+		conn := l.connMap.Get(origConnId)
 		
 		var prvKeyEpRcv *ecdh.PrivateKey
 		var prvKeyEpRcvRoll *ecdh.PrivateKey
@@ -323,18 +323,18 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 			//this is tricky: we need to store the first message on the receiver side twice, once under the old id, once under the new id
 			//in case of duplicate, we need to find the right connection, and if we already store it under the new, then duplciate data
 			// will arrive. That also means, we need to remove the old id on the first data packet
-			l.connMap.Put(&origConnId, conn)
+			l.connMap.Put(origConnId, conn)
 		}
 
 		conn.sharedSecret = message.SharedSecret
 		slog.Debug(" Decode/InitCryptoSnd", debugGId(), l.debug())
 		return conn, message, nil
 	case InitCryptoRcv:
-		conn := l.connMap.Get(&origConnId)
+		conn := l.connMap.Get(origConnId)
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for InitWithCryptoR0")
 		}
-		l.connMap.Remove(&origConnId) // only sender ep pub key connId no longer needed, we now have a proper connId
+		l.connMap.Remove(origConnId) // only sender ep pub key connId no longer needed, we now have a proper connId
 
 		// Decode crypto R0 message
 		pubKeyEpRcv, pubKeyEpRcvRoll, message, err := DecodeInitCryptoRcv(buffer, conn.keys.prvKeyEpSnd)
@@ -343,7 +343,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		}
 
 		conn.connId = Uint64(conn.keys.prvKeyEpSnd.PublicKey().Bytes()) ^ Uint64(pubKeyEpRcv.Bytes())
-		l.connMap.Put(&conn.connId, conn)
+		l.connMap.Put(conn.connId, conn)
 		conn.keys.pubKeyEpRcv = pubKeyEpRcv
 		conn.keys.pubKeyEpRcvRoll = pubKeyEpRcvRoll
 		conn.sharedSecret = message.SharedSecret
@@ -351,14 +351,14 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		slog.Debug(" Decode/InitCryptoRcv", debugGId(), l.debug())
 		return conn, message, nil
 	case DataRot:
-		conn := l.connMap.Get(&origConnId)
+		conn := l.connMap.Get(origConnId)
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for Data0")
 		}
 		
 		//only needs to be done right after the handshake
 		firstConnId := Uint64(conn.keys.pubKeyEpRcv.Bytes())
-		l.connMap.Remove(&firstConnId)
+		l.connMap.Remove(firstConnId)
 
 		//rollover - TODO delete(l.connMap, origConnId)
 
@@ -377,14 +377,14 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 			slog.Int("len(buffer)", len(buffer)))
 		return conn, message, nil
 	case Data:
-		conn := l.connMap.Get(&origConnId)
+		conn := l.connMap.Get(origConnId)
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for DataMessage")
 		}
 		
 		//only needs to be done right after the handshake
 		firstConnId := Uint64(conn.keys.pubKeyEpRcv.Bytes())
-		l.connMap.Remove(&firstConnId)
+		l.connMap.Remove(firstConnId)
 
 		// Decode Data message
 		message, err := DecodeData(buffer, conn.state.isSender, conn.sharedSecret)

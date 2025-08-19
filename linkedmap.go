@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-// LinkedHashMap implements a thread-safe hash map with insertion order preservation.
+// LinkedMap implements a thread-safe hash map with insertion order preservation.
 type LinkedMap[K comparable, V any] struct {
 	items map[K]*lmNode[K, V]
 	head  *lmNode[K, V] // Sentinel head node
@@ -17,26 +17,31 @@ type LinkedMap[K comparable, V any] struct {
 
 // node represents an internal node in the linked list.
 type lmNode[K comparable, V any] struct {
-	key  K
+	key   K
 	value V
-	next *lmNode[K, V] // Next element in insertion order
-	prev *lmNode[K, V] // Previous element in insertion order
+	next  *lmNode[K, V] // Next element in insertion order
+	prev  *lmNode[K, V] // Previous element in insertion order
 }
 
-// NewLinkedHashMap creates a new linked hash map.
+type LinkedMapIterator[K comparable, V any] struct {
+	m    *LinkedMap[K, V]
+	curr *lmNode[K, V]
+}
+
+// NewLinkedMap creates a new linked hash map.
 func NewLinkedMap[K comparable, V any]() *LinkedMap[K, V] {
 	m := &LinkedMap[K, V]{
 		items: make(map[K]*lmNode[K, V]),
 	}
-	
+
 	// Create sentinel head and tail nodes
 	m.head = &lmNode[K, V]{}
 	m.tail = &lmNode[K, V]{}
-	
+
 	// Link head to tail initially
 	m.head.next = m.tail
 	m.tail.prev = m.head
-	
+
 	return m
 }
 
@@ -45,13 +50,6 @@ func (m *LinkedMap[K, V]) Size() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.size
-}
-
-// IsEmpty returns true if the map is empty.
-func (m *LinkedMap[K, V]) IsEmpty() bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.size == 0
 }
 
 // Put adds or updates a key-value pair in the map.
@@ -87,11 +85,11 @@ func (m *LinkedMap[K, V]) Put(key K, value V) {
 func (m *LinkedMap[K, V]) Get(key K) V {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	if node, exists := m.items[key]; exists {
 		return node.value
 	}
-	
+
 	var zero V
 	return zero
 }
@@ -104,15 +102,15 @@ func (m *LinkedMap[K, V]) Contains(key K) bool {
 	return exists
 }
 
-// Remove removes a key-value pair from the map. Returns the removed value.
-func (m *LinkedMap[K, V]) Remove(key K) V {
+// Remove removes a key-value pair from the map. Returns the removed value and true if found.
+func (m *LinkedMap[K, V]) Remove(key K) (V, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	node, ok := m.items[key]
 	if !ok {
 		var zero V
-		return zero
+		return zero, false
 	}
 
 	// Remove from doubly-linked list - O(1) thanks to prev/next pointers!
@@ -122,83 +120,43 @@ func (m *LinkedMap[K, V]) Remove(key K) V {
 	delete(m.items, key)
 	m.size--
 
-	return node.value
+	return node.value, true
 }
 
 // First returns the first inserted key and value in the map.
-func (m *LinkedMap[K, V]) First() (K, V) {
+// Returns false if the map is empty.
+func (m *LinkedMap[K, V]) First() (K, V, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	if m.head.next != m.tail {
 		node := m.head.next
-		return node.key, node.value
+		return node.key, node.value, true
 	}
-	
+
 	var zeroK K
 	var zeroV V
-	return zeroK, zeroV
-}
-
-// Last returns the last inserted key and value in the map.
-func (m *LinkedMap[K, V]) Last() (K, V) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if m.tail.prev != m.head {
-		node := m.tail.prev
-		return node.key, node.value
-	}
-	
-	var zeroK K
-	var zeroV V
-	return zeroK, zeroV
+	return zeroK, zeroV, false
 }
 
 // Next finds the next key in insertion order after the given key.
 // This is O(1) if the key exists in the map!
-// Returns the next key and its value in insertion order. If no next element exists, returns zero values.
-func (m *LinkedMap[K, V]) Next(key K) (K, V) {
+// Returns the next key, its value, and true if a next element exists.
+func (m *LinkedMap[K, V]) Next(key K) (K, V, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	// Fast path: if key exists in map, just follow the 'next' pointer - O(1)!
 	if node, exists := m.items[key]; exists {
 		if node.next != m.tail {
-			return node.next.key, node.next.value
+			return node.next.key, node.next.value, true
 		}
-		var zeroK K
-		var zeroV V
-		return zeroK, zeroV
 	}
 
-	// If key doesn't exist, we can't determine insertion order position
+	// If key doesn't exist or no next element
 	var zeroK K
 	var zeroV V
-	return zeroK, zeroV
-}
-
-// Prev finds the previous key in insertion order before the given key.
-// This is O(1) if the key exists in the map!
-// Returns the previous key and its value in insertion order. If no previous element exists, returns zero values.
-func (m *LinkedMap[K, V]) Prev(key K) (K, V) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	// Fast path: if key exists in map, just follow the 'prev' pointer - O(1)!
-	if node, exists := m.items[key]; exists {
-		if node.prev != m.head {
-			return node.prev.key, node.prev.value
-		}
-		var zeroK K
-		var zeroV V
-		return zeroK, zeroV
-	}
-
-	// If key doesn't exist, we can't determine insertion order position
-	var zeroK K
-	var zeroV V
-	return zeroK, zeroV
+	return zeroK, zeroV, false
 }
 
 // HasNext checks if there's a next element after the given key in insertion order.
@@ -213,8 +171,27 @@ func (m *LinkedMap[K, V]) HasNext(key K) bool {
 	return false
 }
 
-// HasPrev checks if there's a previous element before the given key in insertion order.
-func (m *LinkedMap[K, V]) HasPrev(key K) bool {
+// Previous finds the previous key in insertion order before the given key.
+// Returns the previous key, its value, and true if a previous element exists.
+func (m *LinkedMap[K, V]) Previous(key K) (K, V, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Fast path: if key exists in map, just follow the 'prev' pointer - O(1)!
+	if node, exists := m.items[key]; exists {
+		if node.prev != m.head {
+			return node.prev.key, node.prev.value, true
+		}
+	}
+
+	// If key doesn't exist or no previous element
+	var zeroK K
+	var zeroV V
+	return zeroK, zeroV, false
+}
+
+// HasPrevious checks if there's a previous element before the given key in insertion order.
+func (m *LinkedMap[K, V]) HasPrevious(key K) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -225,113 +202,83 @@ func (m *LinkedMap[K, V]) HasPrev(key K) bool {
 	return false
 }
 
-// Keys returns all keys in insertion order.
-func (m *LinkedMap[K, V]) Keys() []K {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	keys := make([]K, 0, m.size)
-	current := m.head.next
-
-	for current != m.tail {
-		keys = append(keys, current.key)
-		current = current.next
-	}
-
-	return keys
-}
-
-// Values returns all values in insertion order.
-func (m *LinkedMap[K, V]) Values() []V {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	values := make([]V, 0, m.size)
-	current := m.head.next
-
-	for current != m.tail {
-		values = append(values, current.value)
-		current = current.next
-	}
-
-	return values
-}
-
-// Clear removes all elements from the map.
-func (m *LinkedMap[K, V]) Clear() {
+// Replace replaces an existing key with a new key and value, maintaining the same position in insertion order.
+// Returns true if oldKey existed and was replaced, false otherwise.
+// If newKey already exists elsewhere in the map, the operation fails and returns false.
+func (m *LinkedMap[K, V]) Replace(oldKey K, newKey K, value V) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Clear the hash map
-	m.items = make(map[K]*lmNode[K, V])
-	
-	// Reset the linked list
-	m.head.next = m.tail
-	m.tail.prev = m.head
-	
-	m.size = 0
-}
-
-// RemoveFirst removes and returns the first inserted key-value pair.
-func (m *LinkedMap[K, V]) RemoveFirst() (K, V) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.head.next == m.tail {
-		var zeroK K
-		var zeroV V
-		return zeroK, zeroV
+	// Check if old key exists
+	oldNode, oldExists := m.items[oldKey]
+	if !oldExists {
+		return false
 	}
 
-	firstNode := m.head.next
-	key, value := firstNode.key, firstNode.value
-
-	// Remove from linked list
-	m.head.next = firstNode.next
-	firstNode.next.prev = m.head
-
-	// Remove from hash map
-	delete(m.items, key)
-	m.size--
-
-	return key, value
-}
-
-// RemoveLast removes and returns the last inserted key-value pair.
-func (m *LinkedMap[K, V]) RemoveLast() (K, V) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.tail.prev == m.head {
-		var zeroK K
-		var zeroV V
-		return zeroK, zeroV
-	}
-
-	lastNode := m.tail.prev
-	key, value := lastNode.key, lastNode.value
-
-	// Remove from linked list
-	m.tail.prev = lastNode.prev
-	lastNode.prev.next = m.tail
-
-	// Remove from hash map
-	delete(m.items, key)
-	m.size--
-
-	return key, value
-}
-
-// Replace replaces the value for an existing key without affecting insertion order.
-// Returns true if the key existed and was replaced, false otherwise.
-func (m *LinkedMap[K, V]) Replace(key K, value V) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if existing, ok := m.items[key]; ok {
-		existing.value = value
+	// If the keys are the same, just update the value
+	if oldKey == newKey {
+		oldNode.value = value
 		return true
 	}
-	
-	return false
+
+	// Check if new key already exists (and it's different from old key)
+	if _, newExists := m.items[newKey]; newExists {
+		return false // Can't replace with a key that already exists
+	}
+
+	// Update the node with new key and value
+	oldNode.key = newKey
+	oldNode.value = value
+
+	// Update the map entries
+	delete(m.items, oldKey)
+	m.items[newKey] = oldNode
+
+	return true
+}
+
+// Iterator returns a new iterator for traversing the map in insertion order.
+func (m *LinkedMap[K, V]) Iterator() *LinkedMapIterator[K, V] {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var curr *lmNode[K, V]
+	if m.head.next != m.tail {
+		curr = m.head.next // Start at first real element
+	} else {
+		curr = nil // Empty map
+	}
+
+	return &LinkedMapIterator[K, V]{
+		curr: curr,
+		m:    m,
+	}
+}
+
+// Next advances the iterator and returns the current key, value, and true if valid.
+// Returns false when iteration has reached the end.
+func (it *LinkedMapIterator[K, V]) Next() (K, V, bool) {
+	it.m.mu.RLock()
+	defer it.m.mu.RUnlock()
+
+	var zeroK K
+	var zeroV V
+
+	// Check if curr is nil (empty map or end of iteration)
+	if it.curr == nil || it.curr == it.m.tail {
+		return zeroK, zeroV, false
+	}
+
+	// Get current values
+	key := it.curr.key
+	value := it.curr.value
+
+	// Advance to next
+	if it.curr.next == it.m.tail {
+		it.curr = nil // Mark end of iteration
+	} else {
+		it.curr = it.curr.next
+	}
+
+	return key, value, true
 }

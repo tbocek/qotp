@@ -38,9 +38,7 @@ func NewSortedMap[K comparable, V any](less func(K, K) bool) *SortedMap[K, V] {
 	}
 	
 	// Create sentinel head and tail nodes
-	m.head = &node[K, V]{
-		next: make([]*node[K, V], maxLevel),
-	}
+	m.head = &node[K, V]{next: make([]*node[K, V], maxLevel)}
 	m.tail = &node[K, V]{}
 	
 	// Link head to tail initially
@@ -130,16 +128,17 @@ func (m *SortedMap[K, V]) Put(key K, value V) {
 }
 
 // Get retrieves a value from the map.
-func (m *SortedMap[K, V]) Get(key K) V {
+// Returns the value and a boolean indicating if the key was found.
+func (m *SortedMap[K, V]) Get(key K) (V, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	
 	if node, exists := m.items[key]; exists {
-		return node.value
+		return node.value, true
 	}
 	
 	var zero V
-	return zero
+	return zero, false
 }
 
 // Contains checks if a key exists in the map.
@@ -152,19 +151,19 @@ func (m *SortedMap[K, V]) Contains(key K) bool {
 
 // Next finds the next key that is strictly greater than the given key.
 // This is now O(1) if the key exists in the map!
-// Returns the next key and its value. If no next element exists, returns zero values.
-func (m *SortedMap[K, V]) Next(key K) (K, V) {
+// Returns the next key, its value, and a boolean indicating if a next element exists.
+func (m *SortedMap[K, V]) Next(key K) (K, V, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	// Fast path: if key exists in map, just follow the 'after' pointer - O(1)!
 	if node, exists := m.items[key]; exists {
 		if node.after != m.tail {
-			return node.after.key, node.after.value
+			return node.after.key, node.after.value, true
 		}
 		var zeroK K
 		var zeroV V
-		return zeroK, zeroV
+		return zeroK, zeroV, false
 	}
 
 	// Slow path: key doesn't exist, need to search - O(log n)
@@ -176,38 +175,40 @@ func (m *SortedMap[K, V]) Next(key K) (K, V) {
 	}
 
 	if current.after != m.tail {
-		return current.after.key, current.after.value
+		return current.after.key, current.after.value, true
 	}
 
 	var zeroK K
 	var zeroV V
-	return zeroK, zeroV
+	return zeroK, zeroV, false
 }
 
 // Min returns the smallest key and value in the map.
-func (m *SortedMap[K, V]) Min() (K, V) {
+// Returns the key, value, and a boolean indicating if the map is not empty.
+func (m *SortedMap[K, V]) Min() (K, V, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	if m.head.after != m.tail {
 		node := m.head.after
-		return node.key, node.value
+		return node.key, node.value, true
 	}
 	
 	var zeroK K
 	var zeroV V
-	return zeroK, zeroV
+	return zeroK, zeroV, false
 }
 
-// Remove removes a key-value pair from the map. Returns the removed value.
-func (m *SortedMap[K, V]) Remove(key K) V {
+// Remove removes a key-value pair from the map. 
+// Returns the removed value and a boolean indicating if the key existed.
+func (m *SortedMap[K, V]) Remove(key K) (V, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	node, ok := m.items[key]
+	targetNode, ok := m.items[key]
 	if !ok {
 		var zero V
-		return zero
+		return zero, false
 	}
 
 	// Remove from skip list levels
@@ -222,18 +223,18 @@ func (m *SortedMap[K, V]) Remove(key K) V {
 	}
 
 	// Update skip list pointers
-	if current.next[0] == node {
+	if current.next[0] == targetNode {
 		for i := 0; i < m.level; i++ {
-			if update[i].next[i] != node {
+			if update[i].next[i] != targetNode {
 				continue
 			}
-			update[i].next[i] = node.next[i]
+			update[i].next[i] = targetNode.next[i]
 		}
 	}
 
 	// Remove from doubly-linked list - O(1) thanks to prev/after pointers!
-	node.prev.after = node.after
-	node.after.prev = node.prev
+	targetNode.prev.after = targetNode.after
+	targetNode.after.prev = targetNode.prev
 
 	// Update level if needed
 	for m.level > 1 && m.head.next[m.level-1] == nil {
@@ -243,7 +244,7 @@ func (m *SortedMap[K, V]) Remove(key K) V {
 	delete(m.items, key)
 	m.size--
 
-	return node.value
+	return targetNode.value, true
 }
 
 // HasNext checks if there's a next element after the given key.

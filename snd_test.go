@@ -58,10 +58,10 @@ func TestReadyToSend(t *testing.T) {
 	// Verify range tracking
 	stream := sb.streams[1]
 
-	rangePair := stream.dataInFlightMap.Min()
+	rangePair, v, _ := stream.dataInFlightMap.First()
 	assert.NotNil(rangePair)
-	assert.Equal(uint16(5), rangePair.key.length())
-	assert.Equal(nowMillis2, rangePair.value.beforeSendNano)
+	assert.Equal(uint16(5), rangePair.length())
+	assert.Equal(nowMillis2, v.sentTimeNano)
 
 	sb.ReadyToSend(1, &Overhead{debug: 10}, nowMillis2)
 
@@ -112,9 +112,9 @@ func TestReadyToRetransmit(t *testing.T) {
 	stream := sb.streams[1]
 
 	assert.Equal(2, stream.dataInFlightMap.Size())
-	node := stream.dataInFlightMap.Min()
-	assert.Equal(uint16(4), node.key.length())
-	assert.Equal(uint64(4), node.key.offset())
+	node, _, _ := stream.dataInFlightMap.First()
+	assert.Equal(uint16(4), node.length())
+	assert.Equal(uint64(4), node.offset())
 }
 
 func TestAcknowledgeRangeBasic(t *testing.T) {

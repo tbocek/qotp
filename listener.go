@@ -15,14 +15,37 @@ import (
 	"sync/atomic"
 )
 
+// Wrapper for your original use case
+type ConnStreamIterator struct {
+	*NestedIterator[uint64, uint32, *Connection, *Stream]
+}
+
+func NewConnStreamIterator(
+	connMap *LinkedMap[uint64, *Connection],
+	startConn uint64,
+	startStream uint32,
+) *ConnStreamIterator {
+	nested := NewNestedIterator(
+		connMap,
+		func(conn *Connection) *LinkedMap[uint32, *Stream] {
+			return conn.streams
+		},
+		startConn,
+		startStream,
+	)
+	
+	return &ConnStreamIterator{nested}
+}
+
+
 type Listener struct {
 	// this is the port we are listening to
-	localConn         NetworkConn
-	prvKeyId          *ecdh.PrivateKey               //never nil
-	connMap           *SortedMap[*uint64, *Connection] // here we store the connection to remote peers, we can have up to
-	currentConnection *uint64
-	closed            bool
-	mu                sync.Mutex
+	localConn NetworkConn
+	prvKeyId  *ecdh.PrivateKey                //never nil
+	connMap   *LinkedMap[uint64, *Connection] // here we store the connection to remote peers, we can have up to
+	iter      *ConnStreamIterator
+	closed    bool
+	mu        sync.Mutex
 }
 
 type ListenOption struct {
@@ -154,7 +177,7 @@ func Listen(listenAddr *net.UDPAddr, options ...ListenFunc) (*Listener, error) {
 	l := &Listener{
 		localConn: lOpts.localConn,
 		prvKeyId:  lOpts.prvKeyId,
-		connMap:   newConnHashMap(),
+		connMap:   NewLinkedMap[uint64, *Connection](),
 		mu:        sync.Mutex{},
 	}
 
@@ -236,122 +259,40 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 // Flush sends pending data for all connections using round-robin
 func (l *Listener) Flush(nowNano uint64) (minPacing uint64, err error) {
 	minPacing = MinDeadLine
-	
-	if l.currentConnection == nil {
-		l.currentConnection, _ = l.connMap.Min()
-	}
-	// If no connections, return immediately
-	if l.currentConnection == nil {
+	if l.connMap.Size() == 0 {
+		//if we do not have at least one connection, exit
 		return minPacing, nil
 	}
-	// Remember where we started
-	startConn := l.currentConnection
-	
-	// Process each connection once
-	for {
-		// Process streams for current connection
-		pacing, err := l.flushConnectionStreams(nowNano)
-		if err != nil {
-			return 0, err
-		}
 
-		if pacing < minPacing {
-			minPacing = pacing
-		}
+	if l.iter == nil {
+		l.iter = NewConnStreamIterator(l.connMap, 0, 0)
+	}
+	conn, stream, cycle := l.iter.Next()
 
-		// If we sent data, return immediately for responsiveness
-		if pacing == 0 {
-			return 0, nil
-		}
-		
-		// Move to next connection
-		l.currentConnection, _ = l.connMap.Next(l.currentConnection)
-		if l.currentConnection == nil {
-			// Wrap around to beginning
-			l.currentConnection, _ = l.connMap.Min()
-			if l.currentConnection == nil {
-				return minPacing, nil
-			}
-		}
-		
-		// Check if we've completed a full round
-		if l.currentConnection == startConn {
-			return minPacing, nil
-		}
-	}
-}
-
-// flushConnectionStreams processes all streams for the current connection
-func (l *Listener) flushConnectionStreams(nowNano uint64) (uint64, error) {
-	conn := l.connMap.Get(l.currentConnection)
-	minPacing := MinDeadLine
-	
-	debug("flushX", "conn", conn, "l.currentConnection", l.currentConnection)
-	
-	// Initialize stream pointer if needed
-	if conn.currentStream == nil {
-		conn.currentStream, _ = conn.streams.Min()
-	}
-	if conn.currentStream == nil {
-		return minPacing, nil
-	}
-	
-	startStream := conn.currentStream
-	// Process each stream once
-	for {
-		stream := conn.streams.Get(conn.currentStream)
-		
-		// Flush the current stream
+	for conn != nil && stream != nil {
 		_, dataSent, pacingNano, err := conn.Flush(stream, nowNano)
+
 		if err != nil {
-			conn.cleanup2(conn.connId)
+			conn.cleanupConn(conn.connId)
 			return 0, err
 		}
 
-		// Clean up closed streams
 		if stream.state == StreamStateClosed {
-			conn.cleanup(stream.streamId)
+			conn.cleanupStream(stream.streamId)
 		}
 
-		if pacingNano < minPacing {
-			minPacing = pacingNano
-		}
-
-		// If we sent data, return immediately
 		if dataSent > 0 {
 			return 0, nil
 		}
-		
-		// Move to next stream
-		conn.currentStream, _ = conn.streams.Next(conn.currentStream)
-		if conn.currentStream == nil {
-			// Wrap around to beginning
-			conn.currentStream, _ = conn.streams.Min()
-			if conn.currentStream == nil  {
-				return minPacing, nil
-			}
+		if pacingNano < minPacing {
+			minPacing = pacingNano
 		}
-		
-		// Check if we've completed a full round
-		if conn.currentStream == startStream {
-			break
+		if cycle {
+			return minPacing, nil
 		}
+		conn, stream, cycle = l.iter.Next()
 	}
-
 	return minPacing, nil
-}
-
-
-func newStreamHashMap() *SortedMap[*uint32, *Stream] {
-	return NewSortedMap[*uint32, *Stream](func(a, b *uint32) bool {
-		return *a < *b
-	})
-}
-
-func newConnHashMap() *SortedMap[*uint64, *Connection] {
-	return NewSortedMap[*uint64, *Connection](func(a, b *uint64) bool {
-		return *a < *b
-	})
 }
 
 func (l *Listener) newConn(
@@ -376,7 +317,7 @@ func (l *Listener) newConn(
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.connMap.Contains(&connId) {
+	if l.connMap.Contains(connId) {
 		slog.Warn("conn already exists", slog.Any("connId", connId))
 		return nil, errors.New("conn already exists")
 	}
@@ -384,7 +325,7 @@ func (l *Listener) newConn(
 	conn := &Connection{
 		connId:     connId,
 		connIdRoll: connIdRollover,
-		streams:    newStreamHashMap(),
+		streams:    NewLinkedMap[uint32, *Stream](),
 		remoteAddr: remoteAddr,
 		keys: ConnectionKeys{
 			pubKeyIdRcv:     pubKeyIdRcv,
@@ -406,7 +347,7 @@ func (l *Listener) newConn(
 		rcvWndSize: rcvBufferCapacity, //initially our capacity, correct value will be sent to us in the 1st handshake
 	}
 
-	l.connMap.Put(&connId, conn)
+	l.connMap.Put(connId, conn)
 	return conn, nil
 }
 
@@ -448,5 +389,5 @@ func (l *Listener) debug() slog.Attr {
 }
 
 func (l *Listener) ForceClose(c *Connection) {
-	c.cleanup2(c.connId)
+	c.cleanupConn(c.connId)
 }
