@@ -33,10 +33,9 @@ func NewConnStreamIterator(
 		startConn,
 		startStream,
 	)
-	
+
 	return &ConnStreamIterator{nested}
 }
-
 
 type Listener struct {
 	// this is the port we are listening to
@@ -267,9 +266,13 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64, err error) {
 	if l.iter == nil {
 		l.iter = NewConnStreamIterator(l.connMap, 0, 0)
 	}
-	conn, stream, cycle := l.iter.Next()
 
-	for conn != nil && stream != nil {
+	for {
+		conn, stream, cycle := l.iter.Next()
+		if conn == nil || stream == nil {
+			break
+		}
+
 		_, dataSent, pacingNano, err := conn.Flush(stream, nowNano)
 
 		if err != nil {
@@ -290,7 +293,6 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64, err error) {
 		if cycle {
 			return minPacing, nil
 		}
-		conn, stream, cycle = l.iter.Next()
 	}
 	return minPacing, nil
 }

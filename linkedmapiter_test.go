@@ -646,3 +646,97 @@ func (suite *NestedIteratorTestSuite) TestSimpleCycleExample() {
 	suite.Equal("s1", stream.id)
 	suite.True(cycleComplete) // Cycle is now complete!
 }
+
+func (suite *NestedIteratorTestSuite) TestSingleItemCycle_C1S1() {
+	// Create a map with only one connection and one stream
+	singleMap := NewLinkedMap[string, *ConnectionTest]()
+	singleConn := &ConnectionTest{
+		id:      "c1",
+		streams: NewLinkedMap[string, *StreamTest](),
+	}
+	singleConn.streams.Put("s1", &StreamTest{id: "s1"})
+	singleMap.Put("c1", singleConn)
+	
+	// Test starting from the only item c1/s1
+	iter := NewNestedIterator(
+		singleMap,
+		func(conn *ConnectionTest) *LinkedMap[string, *StreamTest] {
+			return conn.streams
+		},
+		"c1",
+		"s1",
+	)
+	
+	// First call should return c1/s1 with cycleComplete=true
+	// since we started at c1/s1 and there's nowhere else to go, 
+	// so we immediately return to the start position
+	conn, stream, cycleComplete := iter.Next()
+	suite.NotNil(conn, "Should return the single item")
+	suite.NotNil(stream, "Should return the single item")
+	suite.Equal("c1", conn.id, "Should return c1")
+	suite.Equal("s1", stream.id, "Should return s1")
+	suite.True(cycleComplete, "Should indicate cycle complete since we're back to start")
+	// repeat
+	conn, stream, cycleComplete = iter.Next()
+	suite.NotNil(conn, "Should return the single item")
+	suite.NotNil(stream, "Should return the single item")
+	suite.Equal("c1", conn.id, "Should return c1")
+	suite.Equal("s1", stream.id, "Should return s1")
+	suite.True(cycleComplete, "Should indicate cycle complete since we're back to start")
+}
+
+func (suite *NestedIteratorTestSuite) TestTwoItemCycle_C1S1() {
+	// Create a map with only one connection and two streams
+	twoItemMap := NewLinkedMap[string, *ConnectionTest]()
+	conn := &ConnectionTest{
+		id:      "c1",
+		streams: NewLinkedMap[string, *StreamTest](),
+	}
+	conn.streams.Put("s1", &StreamTest{id: "s1"})
+	conn.streams.Put("s2", &StreamTest{id: "s2"})
+	twoItemMap.Put("c1", conn)
+	
+	// Test starting from c1/s1
+	iter := NewNestedIterator(
+		twoItemMap,
+		func(conn *ConnectionTest) *LinkedMap[string, *StreamTest] {
+			return conn.streams
+		},
+		"c1",
+		"s1",
+	)
+	
+	// Expected sequence: c1/s2, then back to c1/s1 with cycleComplete=true
+	
+	// First call: should return c1/s2 (next after start position)
+	conn1, stream1, cycleComplete1 := iter.Next()
+	suite.NotNil(conn1, "Should return connection")
+	suite.NotNil(stream1, "Should return stream")
+	suite.Equal("c1", conn1.id, "Should return c1")
+	suite.Equal("s2", stream1.id, "Should return s2")
+	suite.False(cycleComplete1, "Should not be cycle complete yet")
+	
+	// Second call: should return c1/s1 with cycleComplete=true (back to start)
+	conn2, stream2, cycleComplete2 := iter.Next()
+	suite.NotNil(conn2, "Should return connection")
+	suite.NotNil(stream2, "Should return stream")
+	suite.Equal("c1", conn2.id, "Should return c1")
+	suite.Equal("s1", stream2.id, "Should return s1 (back to start)")
+	suite.True(cycleComplete2, "Should indicate cycle complete")
+	
+	// Third call: should start new cycle with c1/s2 again
+	conn3, stream3, cycleComplete3 := iter.Next()
+	suite.NotNil(conn3, "Should continue cycling")
+	suite.NotNil(stream3, "Should continue cycling")
+	suite.Equal("c1", conn3.id, "Should return c1")
+	suite.Equal("s2", stream3.id, "Should return s2 (start of new cycle)")
+	suite.False(cycleComplete3, "Should not be cycle complete at start of new cycle")
+	
+	// Fourth call: should complete second cycle
+	conn4, stream4, cycleComplete4 := iter.Next()
+	suite.NotNil(conn4, "Should return connection")
+	suite.NotNil(stream4, "Should return stream")
+	suite.Equal("c1", conn4.id, "Should return c1")
+	suite.Equal("s1", stream4.id, "Should return s1 (complete second cycle)")
+	suite.True(cycleComplete4, "Should indicate second cycle complete")
+}

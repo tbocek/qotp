@@ -6,7 +6,6 @@ type NestedIterator[K1, K2 comparable, V1, V2 any] struct {
 	getInner func(V1) *LinkedMap[K2, V2]
 	startK1  K1
 	startK2  K2
-	hasStart bool
 
 	// Current position
 	currentOuterK1 K1
@@ -22,22 +21,12 @@ func NewNestedIterator[K1, K2 comparable, V1, V2 any](
 	startInner K2,
 ) *NestedIterator[K1, K2, V1, V2] {
 
-	it := &NestedIterator[K1, K2, V1, V2]{
+	return &NestedIterator[K1, K2, V1, V2]{
 		outer:    outerMap,
 		getInner: getInnerMap,
 		startK1:  startOuter,
 		startK2:  startInner,
 	}
-
-	// Check if start position exists
-	if outerMap.Contains(startOuter) {
-		outerVal := outerMap.Get(startOuter)
-		if innerMap := getInnerMap(outerVal); innerMap.Contains(startInner) {
-			it.hasStart = true
-		}
-	}
-
-	return it
 }
 
 // Next returns (outerValue, innerValue, cycleComplete)
@@ -58,42 +47,45 @@ func (it *NestedIterator[K1, K2, V1, V2]) initialize() (V1, V2, bool) {
 
 	it.initialized = true
 
-	if !it.hasStart {
-		// No valid start, begin from very first item
-		outerK1, outerV1, ok := it.outer.First()
-		if !ok {
-			return zeroV1, zeroV2, false
-		}
-
-		innerMap := it.getInner(outerV1)
-		innerK2, innerV2, ok := innerMap.First()
-		if !ok {
-			// This outer has no inner items, advance to next
-			it.currentOuterK1 = outerK1
-			return it.advance()
-		}
-
-		it.currentOuterK1 = outerK1
-		it.currentInnerK2 = innerK2
-		return outerV1, innerV2, false
-	}
-
-	// Start from next position after startK1/startK2
-	
+	// Try to start from next position after startK1/startK2
 	if it.outer.Contains(it.startK1) {
 		startOuterV1 := it.outer.Get(it.startK1)
 		innerMap := it.getInner(startOuterV1)
-		nextInnerK2, nextInnerV2, ok := innerMap.Next(it.startK2)
-		if ok {
+		if innerMap.Contains(it.startK2) {
+			// Start position exists, try to get next
+			nextInnerK2, nextInnerV2, ok := innerMap.Next(it.startK2)
+			if ok {
+				it.currentOuterK1 = it.startK1
+				it.currentInnerK2 = nextInnerK2
+				return startOuterV1, nextInnerV2, false
+			}
+			// No next inner in same outer, move to next outer
 			it.currentOuterK1 = it.startK1
-			it.currentInnerK2 = nextInnerK2
-			return startOuterV1, nextInnerV2, false
+			return it.advance()
 		}
 	}
 
-	// No next inner in same outer, move to next outer
-	it.currentOuterK1 = it.startK1
-	return it.advance()
+	// Start position doesn't exist, adjust start to first available and begin from very first item
+	outerK1, outerV1, ok := it.outer.First()
+	if !ok {
+		return zeroV1, zeroV2, false
+	}
+
+	innerMap := it.getInner(outerV1)
+	innerK2, innerV2, ok := innerMap.First()
+	if !ok {
+		// This outer has no inner items, advance to next
+		it.currentOuterK1 = outerK1
+		return it.advance()
+	}
+
+	// Update our start position to the first actual item for cycle detection
+	it.startK1 = outerK1
+	it.startK2 = innerK2
+	
+	it.currentOuterK1 = outerK1
+	it.currentInnerK2 = innerK2
+	return outerV1, innerV2, false
 }
 
 // advance moves to the next position
@@ -102,14 +94,14 @@ func (it *NestedIterator[K1, K2, V1, V2]) advance() (V1, V2, bool) {
 	var zeroV2 V2
 
 	// Try next inner in current outer first
-	
 	if it.outer.Contains(it.currentOuterK1) {
 		currentOuterV1 := it.outer.Get(it.currentOuterK1)
 		innerMap := it.getInner(currentOuterV1)
 		nextInnerK2, nextInnerV2, ok := innerMap.Next(it.currentInnerK2)
 		if ok {
 			// Check if we've come full circle
-			if it.hasStart && it.currentOuterK1 == it.startK1 && nextInnerK2 == it.startK2 {
+			if it.currentOuterK1 == it.startK1 && nextInnerK2 == it.startK2 {
+				it.currentInnerK2 = nextInnerK2
 				return currentOuterV1, nextInnerV2, true
 			}
 
@@ -121,13 +113,9 @@ func (it *NestedIterator[K1, K2, V1, V2]) advance() (V1, V2, bool) {
 	// No next inner, try next outer
 	nextOuterK1, nextOuterV1, ok := it.outer.Next(it.currentOuterK1)
 	if !ok {
-		// Reached end of outers, wrap around if we have a start
-		if it.hasStart {
-			nextOuterK1, nextOuterV1, ok = it.outer.First()
-			if !ok {
-				return zeroV1, zeroV2, false
-			}
-		} else {
+		// Reached end of outers, wrap around to first
+		nextOuterK1, nextOuterV1, ok = it.outer.First()
+		if !ok {
 			return zeroV1, zeroV2, false
 		}
 	}
@@ -142,7 +130,7 @@ func (it *NestedIterator[K1, K2, V1, V2]) advance() (V1, V2, bool) {
 	}
 
 	// Check if we've come full circle
-	if it.hasStart && nextOuterK1 == it.startK1 && firstInnerK2== it.startK2 {
+	if nextOuterK1 == it.startK1 && firstInnerK2 == it.startK2 {
 		it.currentOuterK1 = nextOuterK1
 		it.currentInnerK2 = firstInnerK2
 		return nextOuterV1, firstInnerV2, true

@@ -159,6 +159,7 @@ func (c *Connection) cleanupStream(streamId uint32) {
 		c.listener.iter.startK2 = prevStreamID
 	}
 
+	slog.Debug("Cleanup/Stream", debugGId(), c.debug(), slog.Uint64("streamId", uint64(streamId)))
 	v, _ := c.streams.Remove(streamId)
 	if v != nil && c.streams.Size() == 0 {
 		c.cleanupConn(v.conn.connId)
@@ -168,11 +169,11 @@ func (c *Connection) cleanupStream(streamId uint32) {
 func (c *Connection) cleanupConn(connId uint64) {
 	// Check if iterator is at this connection, if yes, move to previous
 	if c.listener.iter != nil && c.listener.iter.startK1 == connId {
-
 		prevConnID, _, _ := c.listener.connMap.Previous(connId)
 		c.listener.iter.startK1 = prevConnID
 	}
 
+	slog.Debug("Cleanup/Stream", debugGId(), c.debug(), slog.Uint64("connId", connId))
 	c.listener.connMap.Remove(connId)
 }
 
