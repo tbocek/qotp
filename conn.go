@@ -1,4 +1,4 @@
-package tomtp
+package qotp
 
 import (
 	"crypto/ecdh"
@@ -33,7 +33,7 @@ type Connection struct {
 
 	// Core components
 	listener *Listener
-	streams  *skipList[uint32, *Stream]
+	streams  *LinkedMap[uint32, *Stream]
 
 	// Cryptographic keys
 	keys ConnectionKeys
@@ -51,7 +51,6 @@ type Connection struct {
 
 	// Connection state
 	state         ConnectionState
-	stateStream   *shmPair[uint32, *Stream]
 	nextWriteTime uint64
 
 	// Crypto and performance
@@ -76,9 +75,14 @@ func (c *Connection) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	for node := c.streams.Min(); node != nil; node = node.Next() {
-		if node.value != nil {
-			node.value.Close()
+	iter := c.streams.Iterator()
+	for {
+		_, s, ok := iter.Next()
+		if !ok {
+			break
+		}
+		if s != nil {
+			s.Close()
 		}
 	}
 }
@@ -87,8 +91,9 @@ func (c *Connection) Stream(streamId uint32) (s *Stream) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if node := c.streams.Get(streamId); node != nil && node.value != nil {
-		return node.value
+	v := c.streams.Get(streamId)
+	if v != nil {
+		return v
 	}
 
 	s = &Stream{
@@ -146,27 +151,22 @@ func (c *Connection) updateState(s *Stream, isClose bool) {
 	}
 	if s.state == StreamStateCloseRequest && isClose {
 		s.state = StreamStateClosed
-		c.cleanup(s.streamId)
+		c.cleanupStream(s.streamId)
 	}
 }
 
-// We need to check if we remove the current state, if yes, then move the state to the next stream
-func (c *Connection) cleanup(streamId uint32) {
-	if c.stateStream != nil && streamId == c.stateStream.key {
-		c.stateStream = c.stateStream.Next()
-	}
-	s := c.streams.Remove(streamId)
-
-	if s != nil && c.streams.Size() == 0 {
-		c.cleanup2(s.value.conn.connId)
+// We need to check if we remove the current state, if yes, then move the state to the previous stream
+func (c *Connection) cleanupStream(streamId uint32) {
+	slog.Debug("Cleanup/Stream", debugGId(), c.debug(), slog.Uint64("streamId", uint64(streamId)))
+	v, _ := c.streams.Remove(streamId)
+	if v != nil && c.streams.Size() == 0 {
+		c.cleanupConn(v.conn.connId)
 	}
 }
 
-func (c *Connection) cleanup2(connId uint64) {
-	if connId == c.listener.stateConn.key {
-		c.listener.stateConn = c.listener.stateConn.Next()
-	}
-	c.listener.connMap.Remove(c.connId)
+func (c *Connection) cleanupConn(connId uint64) {
+	slog.Debug("Cleanup/Stream", debugGId(), c.debug(), slog.Uint64("connId", connId))
+	c.listener.connMap.Remove(connId)
 }
 
 func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacingNano uint64, err error) {
@@ -237,7 +237,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 
 		packetLen := len(splitData)
 		pacingNano = c.GetPacingInterval(uint64(packetLen))
-		
+
 		c.nextWriteTime = nowNano + pacingNano
 		return raw, packetLen, pacingNano, nil
 	}
@@ -300,4 +300,3 @@ func (c *Connection) debug() slog.Attr {
 		slog.Int("rcvBuf", c.rcvBuf.capacity-c.rcvBuf.size),
 		slog.Uint64("rcvWnd", c.rcvWndSize))
 }
-

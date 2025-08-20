@@ -1,4 +1,4 @@
-package tomtp
+package qotp
 
 import (
 	"crypto/ecdh"
@@ -209,11 +209,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 	case InitSnd:
 		//we might have received this a multiple times due to retransmission in the first packet
 		//however the other side send us this, so we are expected to drop the old keys
-		connPair := l.connMap.Get(origConnId)
-		var conn *Connection
-		if connPair != nil && connPair.value != nil {
-			conn = connPair.value
-		}
+		conn := l.connMap.Get(origConnId)
 		
 		var prvKeyEpRcv *ecdh.PrivateKey
 		var prvKeyEpRcvRoll *ecdh.PrivateKey
@@ -259,7 +255,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		slog.Debug(" Decode/InitSnd", debugGId(), l.debug())
 		return conn, message, nil
 	case InitRcv:
-		conn := l.connMap.Get(origConnId).value
+		conn := l.connMap.Get(origConnId)
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for InitRcv")
 		}
@@ -285,11 +281,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 	case InitCryptoSnd:
 		//we might have received this a multiple times due to retransmission in the first packet
 		//however the other side send us this, so we are expected to drop the old keys
-		connPair := l.connMap.Get(origConnId)
-		var conn *Connection
-		if connPair != nil && connPair.value != nil {
-			conn = connPair.value
-		}
+		conn := l.connMap.Get(origConnId)
 		
 		var prvKeyEpRcv *ecdh.PrivateKey
 		var prvKeyEpRcvRoll *ecdh.PrivateKey
@@ -338,11 +330,10 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		slog.Debug(" Decode/InitCryptoSnd", debugGId(), l.debug())
 		return conn, message, nil
 	case InitCryptoRcv:
-		connP := l.connMap.Get(origConnId)
-		if connP == nil {
+		conn := l.connMap.Get(origConnId)
+		if conn == nil {
 			return nil, nil, errors.New("connection not found for InitWithCryptoR0")
 		}
-		conn := connP.value
 		l.connMap.Remove(origConnId) // only sender ep pub key connId no longer needed, we now have a proper connId
 
 		// Decode crypto R0 message
@@ -360,7 +351,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		slog.Debug(" Decode/InitCryptoRcv", debugGId(), l.debug())
 		return conn, message, nil
 	case DataRot:
-		conn := l.connMap.Get(origConnId).value
+		conn := l.connMap.Get(origConnId)
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for Data0")
 		}
@@ -386,11 +377,10 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 			slog.Int("len(buffer)", len(buffer)))
 		return conn, message, nil
 	case Data:
-		conP := l.connMap.Get(origConnId)
-		if conP == nil {
+		conn := l.connMap.Get(origConnId)
+		if conn == nil {
 			return nil, nil, errors.New("connection not found for DataMessage")
 		}
-		conn := conP.value
 		
 		//only needs to be done right after the handshake
 		firstConnId := Uint64(conn.keys.pubKeyEpRcv.Bytes())

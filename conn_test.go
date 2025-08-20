@@ -1,4 +1,4 @@
-package tomtp
+package qotp
 
 import (
 	"github.com/stretchr/testify/assert"
@@ -29,7 +29,7 @@ func TestConnection_GetOrNewStreamRcv(t *testing.T) {
 		},
 	}
 	conn := &Connection{
-		streams: newStreamHashMap(),
+		streams: NewLinkedMap[uint32, *Stream](),
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

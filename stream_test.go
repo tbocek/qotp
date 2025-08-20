@@ -1,10 +1,9 @@
-package tomtp
+package qotp
 
 import (
 	"net/netip"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -66,6 +65,9 @@ func TestTwoStream(t *testing.T) {
 	_, err := streamA1.Write(a1)
 	assert.Nil(t, err)
 	_, err = connA.listener.Flush(specificNano)
+	assert.Nil(t, err)
+	// we send one packet
+	_, err = connPair.senderToRecipient(1)
 	assert.Nil(t, err)
 
 	a2 := []byte("hallo22")
@@ -279,7 +281,9 @@ func TestCloseAWithInit(t *testing.T) {
 	_, err = connPair.recipientToSender(1)
 	assert.Nil(t, err)
 
+	assert.True(t, streamA.state == StreamStateCloseRequest)
 	streamA, err = streamA.conn.listener.Listen(0, specificNano)
+	assert.True(t, streamA.state == StreamStateCloseRequest)
 	assert.Nil(t, err)
 
 	buffer, err = streamA.Read()
@@ -429,7 +433,7 @@ func TestBBR2(t *testing.T) {
 	_, err := streamA.Write(dataA)
 	assert.Nil(t, err)
 
-	start := time.Now()
+	//start := time.Now()
 	for {
 		mu.Lock()
 		received := totalBytesReceived
@@ -448,12 +452,12 @@ func TestBBR2(t *testing.T) {
 		assert.Nil(t, err)
 
 		//time.Sleep(time.Duration(d1+d2) * time.Nanoecond)
-		time.Sleep(100 * time.Millisecond)
+		//time.Sleep(100 * time.Millisecond)
 
-		if time.Since(start) > 5*time.Second {
-			cancelA()
-			cancelB()
-			break
-		}
+		//if time.Since(start) > 5*time.Second {
+		//	cancelA()
+		//	cancelB()
+		//	break
+		//}
 	}
 }

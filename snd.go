@@ -1,7 +1,6 @@
-package tomtp
+package qotp
 
 import (
-	"errors"
 	"log/slog"
 	"sync"
 )
@@ -22,50 +21,13 @@ const (
 	AckDup
 )
 
-type packetKey [10]byte
-
-func (p packetKey) offset() uint64 {
-	return Uint64(p[:8])
-}
-
-func (p packetKey) length() uint16 {
-	return Uint16(p[8:])
-}
-
-func (p packetKey) less(other packetKey) bool {
-	for i := range len(p) {
-		if p[i] < other[i] {
-			return true
-		}
-		if p[i] > other[i] {
-			return false
-		}
-	}
-	return false
-}
-
-func createPacketKey(offset uint64, length uint16) packetKey {
-	var p packetKey
-	PutUint64(p[:8], offset)
-	PutUint16(p[8:], length)
-	return p
-}
-
 type SendInfo struct {
-	beforeSendNano         uint64
+	sentTimeNano           uint64
 	sentNr                 int
 	msgType                MsgType //we may know this only after running encryption
 	offset                 uint64
 	expectedRtoBackoffNano uint64
 	actualRtoNano          uint64
-}
-
-func (s *SendInfo) less(other *SendInfo) bool {
-	return s.beforeSendNano < other.beforeSendNano
-}
-
-func (s *SendInfo) eq(other *SendInfo) bool {
-	return s.beforeSendNano == other.beforeSendNano
 }
 
 func (s *SendInfo) debug() slog.Attr {
@@ -76,7 +38,6 @@ func (s *SendInfo) debug() slog.Attr {
 		slog.Uint64("expRto:ms", s.expectedRtoBackoffNano/msNano),
 		slog.Uint64("actRto:ms", s.actualRtoNano/msNano))
 }
-
 
 // StreamBuffer represents a single stream's dataToSend and metadata
 type StreamBuffer struct {
@@ -95,7 +56,7 @@ type StreamBuffer struct {
 	// If MTU changes for inflight packets and need to be resent. The range is split. Example:
 	// offset: 500, len/mtu: 50 -> 1 range: 500/50,time
 	// retransmit with mtu:20 -> 3 dataInFlightMap: 500/20,time; 520/20,time; 540/10,time
-	dataInFlightMap *skipList[packetKey, *SendInfo]
+	dataInFlightMap *LinkedMap[packetKey, *SendInfo]
 }
 
 type SendBuffer struct {
@@ -109,13 +70,8 @@ type SendBuffer struct {
 
 func NewStreamBuffer() *StreamBuffer {
 	return &StreamBuffer{
-		dataToSend: []byte{},
-		dataInFlightMap: newSortedHashMap[packetKey, *SendInfo](func(a, b packetKey, c, d *SendInfo) bool {
-			if c.eq(d) {
-				return a.less(b)
-			}
-			return c.less(d)
-		}),
+		dataToSend:      []byte{},
+		dataInFlightMap: NewLinkedMap[packetKey, *SendInfo](),
 	}
 }
 
@@ -192,24 +148,19 @@ func (sb *SendBuffer) ReadyToSend(streamId uint32, overhead *Overhead, nowNano u
 		// Pack offset and length into key
 		key := createPacketKey(stream.sentOffset, length)
 
-		// Check if range is already tracked
-		if stream.dataInFlightMap.Get(key) == nil {
-			// Get dataToSend slice accounting for bias
-			offset := stream.sentOffset - stream.bias
-			splitData = stream.dataToSend[offset : offset+uint64(length)]
+		// Get dataToSend slice accounting for bias
+		offset := stream.sentOffset - stream.bias
+		splitData = stream.dataToSend[offset : offset+uint64(length)]
 
-			// Track range
-			m = &SendInfo{beforeSendNano: nowNano, sentNr: 1, msgType: -1, offset: stream.sentOffset} //we do not know the msg type yet
-			stream.dataInFlightMap.Put(key, m)
+		// Track range
+		m = &SendInfo{sentNr: 1, msgType: -1, offset: stream.sentOffset, sentTimeNano: nowNano} //we do not know the msg type yet
+		stream.dataInFlightMap.Put(key, m)
 
-			// Update tracking
-			stream.sentOffset = stream.sentOffset + uint64(length)
-			sb.lastReadToSendStream = streamId
+		// Update tracking
+		stream.sentOffset = stream.sentOffset + uint64(length)
+		sb.lastReadToSendStream = streamId
 
-			return splitData, m
-		} else {
-			panic(errors.New("stream range already sent? should not happen"))
-		}
+		return splitData, m
 	}
 
 	return nil, nil
@@ -230,19 +181,18 @@ func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, exp
 	}
 
 	// Check Oldest range first
-	dataInFlight := stream.dataInFlightMap.Min()
-	if dataInFlight != nil {
-		rtoData := dataInFlight.value
+	packetKey, rtoData, ok := stream.dataInFlightMap.First()
+	if ok {
 		expectedRtoBackoffNano, err := backoff(expectedRtoNano, rtoData.sentNr)
 		if err != nil {
 			return nil, nil, err
 		}
-		actualRtoNano := nowNano - rtoData.beforeSendNano
+		actualRtoNano := nowNano - rtoData.sentTimeNano
 
 		if actualRtoNano > expectedRtoBackoffNano {
 			// Extract offset and length from key
-			rangeOffset := dataInFlight.key.offset()
-			rangeLen := dataInFlight.key.length()
+			rangeOffset := packetKey.offset()
+			rangeLen := packetKey.length()
 
 			// Get dataToSend using bias
 			dataOffset := rangeOffset - stream.bias
@@ -254,20 +204,21 @@ func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, exp
 			sb.lastReadToRetransmitStream = streamId
 			if rangeLen <= maxData {
 				if rangeLen < maxData {
-					slog.Debug("Resend/Partial", slog.Uint64("free-space", uint64(maxData - rangeLen)))
+					slog.Debug("Resend/Partial", slog.Uint64("free-space", uint64(maxData-rangeLen)))
 				} else {
 					slog.Debug("Resend/Full")
 				}
 				// Remove old range
-				stream.dataInFlightMap.Remove(dataInFlight.key)
+				stream.dataInFlightMap.Remove(packetKey)
 				// Same MTU - resend entire range
-				m := &SendInfo{beforeSendNano: nowNano,
+				m := &SendInfo{
+					sentTimeNano:           nowNano,
 					sentNr:                 rtoData.sentNr + 1,
 					msgType:                rtoData.msgType,
 					offset:                 rangeOffset,
 					expectedRtoBackoffNano: expectedRtoBackoffNano,
 					actualRtoNano:          actualRtoNano}
-				stream.dataInFlightMap.Put(dataInFlight.key, m)
+				stream.dataInFlightMap.Put(createPacketKey(packetKey.offset(), packetKey.length()), m)
 				return data, m, nil
 			} else {
 				// Split range due to smaller MTU
@@ -277,20 +228,19 @@ func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, exp
 				remainingLen := rangeLen - maxData
 				rightKey := createPacketKey(remainingOffset, remainingLen)
 
-				// Remove old range
-				stream.dataInFlightMap.Remove(dataInFlight.key)
-				mLeft := &SendInfo{beforeSendNano: nowNano,
+				mLeft := &SendInfo{sentTimeNano: nowNano,
 					sentNr:  rtoData.sentNr + 1,
 					msgType: rtoData.msgType,
 					offset:  rangeOffset, expectedRtoBackoffNano: expectedRtoBackoffNano, actualRtoNano: actualRtoNano}
 				stream.dataInFlightMap.Put(leftKey, mLeft)
-				mRight := &SendInfo{beforeSendNano: rtoData.beforeSendNano,
+				
+				mRight := &SendInfo{sentTimeNano: rtoData.sentTimeNano,
 					sentNr:                 rtoData.sentNr,
 					msgType:                rtoData.msgType,
 					offset:                 remainingOffset,
 					expectedRtoBackoffNano: rtoData.expectedRtoBackoffNano,
 					actualRtoNano:          rtoData.actualRtoNano}
-				stream.dataInFlightMap.Put(rightKey, mRight)
+				stream.dataInFlightMap.Replace(packetKey, rightKey, mRight)
 
 				slog.Debug("Resend/Split", slog.Uint64("send", uint64(maxData)), slog.Uint64("remain", uint64(remainingLen)))
 				return data[:maxData], mLeft, nil
@@ -314,25 +264,25 @@ func (sb *SendBuffer) AcknowledgeRange(ack *Ack) (status AckStatus, sentTimeNano
 	// Remove range key
 	key := createPacketKey(ack.offset, ack.len)
 
-	rangePair := stream.dataInFlightMap.Remove(key)
-	if rangePair == nil {
+	rangePair, ok := stream.dataInFlightMap.Remove(key)
+	if !ok {
 		sb.mu.Unlock()
 		return AckDup, 0
 	}
 
-	sentTimeNano = rangePair.value.beforeSendNano
+	sentTimeNano = rangePair.sentTimeNano
 
 	// If this range starts at our bias point, we can Remove dataToSend
 	if ack.offset == stream.bias {
 		// Check if we have a gap between this ack and nxt range
-		nextRange := stream.dataInFlightMap.Min()
-		if nextRange == nil {
+		nextRange, _, ok := stream.dataInFlightMap.First()
+		if !ok {
 			// No gap, safe to Remove all dataToSend
 			stream.dataToSend = stream.dataToSend[stream.sentOffset-stream.bias:]
 			sb.size -= int(stream.sentOffset - stream.bias)
 			stream.bias += stream.sentOffset - stream.bias
 		} else {
-			nextOffset := nextRange.key.offset()
+			nextOffset := nextRange.offset()
 			stream.dataToSend = stream.dataToSend[nextOffset-stream.bias:]
 			stream.bias += nextOffset
 			sb.size -= int(nextOffset)

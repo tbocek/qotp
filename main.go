@@ -1,4 +1,4 @@
-package tomtp
+package qotp
 
 import (
 	"log/slog"

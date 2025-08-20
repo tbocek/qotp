@@ -1,15 +1,16 @@
-# TomTP
+# QOTP
 
 A UDP-based transport protocol that takes an "opinionated" approach, similar to QUIC but with a focus 
 on providing reasonable defaults rather than many options. The goal is to have lower complexity, 
 simplicity, and security, while still being reasonably performant.
 
-TomTP is peer-to-peer (P2P) friendly, meaning a P2P-friendly protocol often includes easy integration
-for NAT traversal, such as UDP hole punching, multi-homing, where data packets can come from different 
-source addresses, or out of band public key exchange. It does not have a TIME_WAIT state that could exhaust 
-ports and it does not open a socket for each connection, thus allowing many short-lived connections.
+QOTP (quite ok transport protocol) is peer-to-peer (P2P) friendly, meaning a P2P-friendly protocol often 
+includes easy integration for NAT traversal, such as UDP hole punching, multi-homing, where data packets 
+can come from different source addresses, or out of band public key exchange. It does not have a TIME_WAIT 
+state that could exhaust ports and it does not open a socket for each connection, thus allowing many 
+short-lived connections.
 
-In TomTP, there is 1 supported crypto algorithm (curve25519/chacha20-poly1305) as in contrast to TLS with
+In QOTP, there is 1 supported crypto algorithm (curve25519/chacha20-poly1305) as in contrast to TLS with
 many options. It is mentioned [here](https://www.cs.auckland.ac.nz/~pgut001/pubs/bollocks.pdf) that there 
 are 60 RFCs for TLS. However, the [Wikipedia](https://en.wikipedia.org/wiki/Transport_Layer_Security) site 
 only mentions 9 primary RFCs and 48 extensions and informational RFCs, totalling 57 RFC.
