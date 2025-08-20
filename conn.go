@@ -158,14 +158,31 @@ func (c *Connection) updateState(s *Stream, isClose bool) {
 // We need to check if we remove the current state, if yes, then move the state to the previous stream
 func (c *Connection) cleanupStream(streamId uint32) {
 	slog.Debug("Cleanup/Stream", debugGId(), c.debug(), slog.Uint64("streamId", uint64(streamId)))
-	v, _ := c.streams.Remove(streamId)
-	if v != nil && c.streams.Size() == 0 {
-		c.cleanupConn(v.conn.connId)
+
+	if c.listener.iter.nextK2 != nil && streamId == *c.listener.iter.nextK2 {
+		var ok bool
+		*c.listener.iter.nextK2, _, ok = c.streams.Next(streamId)
+		if !ok {
+			*c.listener.iter.nextK2, _, _ = c.streams.First()
+		}
 	}
+
+	c.streams.Remove(streamId)
+	//even if the stream size is 0, do not remove the connection yet, only after a certain timeout,
+	// so that BBR, RTT, is preserved for a bit
 }
 
 func (c *Connection) cleanupConn(connId uint64) {
 	slog.Debug("Cleanup/Stream", debugGId(), c.debug(), slog.Uint64("connId", connId))
+
+	if c.listener.iter.nextK1 != nil && connId == *c.listener.iter.nextK1 {
+		var ok bool
+		*c.listener.iter.nextK1, _, ok = c.listener.connMap.Next(connId)
+		if !ok {
+			*c.listener.iter.nextK1, _, _ = c.listener.connMap.First()
+		}
+	}
+
 	c.listener.connMap.Remove(connId)
 }
 

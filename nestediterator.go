@@ -2,12 +2,10 @@ package qotp
 
 // NestedIterator iterates through nested maps
 type NestedIterator[K1, K2 comparable, V1, V2 any] struct {
-	outer    *LinkedMap[K1, V1]
-	getInner func(V1) *LinkedMap[K2, V2]
-	currentK1   *K1
-	currentK2   *K2
-	nextK1   *K1
-	nextK2   *K2
+	outer             *LinkedMap[K1, V1]
+	getInner          func(V1) *LinkedMap[K2, V2]
+	currentK1, nextK1 *K1
+	currentK2, nextK2 *K2
 }
 
 // NewNestedIterator creates a simple nested iterator
@@ -28,15 +26,17 @@ func (it *NestedIterator[K1, K2, V1, V2]) Next() (currentV1 V1, currentV2 V2) {
 	var zeroV2 V2
 	var tmpK1 K1
 	var tmpK2 K2
-	
+
+	it.currentK1 = nil
 	if it.nextK1 != nil {
 		it.currentK1 = it.nextK1
 	}
-	
+
+	it.currentK2 = nil
 	if it.nextK2 != nil {
 		it.currentK2 = it.nextK2
 	}
-	
+
 	if it.currentK1 == nil || !it.outer.Contains(*it.currentK1) {
 		tmpK1, currentV1, ok = it.outer.First()
 		if !ok {

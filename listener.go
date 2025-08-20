@@ -277,7 +277,7 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64, err error) {
 			break
 		}
 
-		if startK1 == nil &&  startK2 == nil {
+		if startK1 == nil && startK2 == nil {
 			startK1 = l.iter.currentK1
 			startK2 = l.iter.currentK2 //startK2 can be null
 		}
@@ -290,17 +290,18 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64, err error) {
 			}
 
 			if stream.state == StreamStateClosed {
-				debug("Stream closed, cleaning up", "streamId", stream.streamId)
+				// stream closed, mark for cleaning up, do not clean up yet, otherwise the iterator will become
+				// much more complex
 				closeStream = append(closeStream, ConnIdStreamId{connId: conn.connId, streamId: stream.streamId})
 			}
 
 			if dataSent > 0 {
-				debug("Data sent, returning early", "dataSent", dataSent)
-				return 0, nil
+				// data sent, returning early
+				minPacing = 0
+				break
 			}
 
 			if pacingNano < minPacing {
-				debug("Updating minPacing", "old", minPacing, "new", pacingNano)
 				minPacing = pacingNano
 			}
 		}
