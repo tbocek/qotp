@@ -246,23 +246,3 @@ func (m *SortedMap[K, V]) Remove(key K) (V, bool) {
 
 	return targetNode.value, true
 }
-
-// HasNext checks if there's a next element after the given key.
-func (m *SortedMap[K, V]) HasNext(key K) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if node, exists := m.items[key]; exists {
-		return node.after != m.tail
-	}
-
-	// Search for next element
-	current := m.head
-	for i := m.level - 1; i >= 0; i-- {
-		for current.next[i] != nil && current.next[i] != m.tail && !m.less(key, current.next[i].key) {
-			current = current.next[i]
-		}
-	}
-
-	return current.after != m.tail
-}

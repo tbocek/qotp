@@ -159,18 +159,6 @@ func (m *LinkedMap[K, V]) Next(key K) (K, V, bool) {
 	return zeroK, zeroV, false
 }
 
-// HasNext checks if there's a next element after the given key in insertion order.
-func (m *LinkedMap[K, V]) HasNext(key K) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if node, exists := m.items[key]; exists {
-		return node.next != m.tail
-	}
-
-	return false
-}
-
 // Previous finds the previous key in insertion order before the given key.
 // Returns the previous key, its value, and true if a previous element exists.
 func (m *LinkedMap[K, V]) Previous(key K) (K, V, bool) {
@@ -188,18 +176,6 @@ func (m *LinkedMap[K, V]) Previous(key K) (K, V, bool) {
 	var zeroK K
 	var zeroV V
 	return zeroK, zeroV, false
-}
-
-// HasPrevious checks if there's a previous element before the given key in insertion order.
-func (m *LinkedMap[K, V]) HasPrevious(key K) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if node, exists := m.items[key]; exists {
-		return node.prev != m.head
-	}
-
-	return false
 }
 
 // Replace replaces an existing key with a new key and value, maintaining the same position in insertion order.

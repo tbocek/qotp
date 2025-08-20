@@ -75,10 +75,14 @@ func (c *Connection) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	for k, _, _ := c.streams.First(); c.streams.HasNext(k); k, _, _ = c.streams.Next(k) {
-		v := c.streams.Get(k)
-		if v != nil {
-			v.Close()
+	iter := c.streams.Iterator()
+	for {
+		_, s, ok := iter.Next()
+		if !ok {
+			break
+		}
+		if s != nil {
+			s.Close()
 		}
 	}
 }
@@ -87,8 +91,8 @@ func (c *Connection) Stream(streamId uint32) (s *Stream) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	_, v, ok := c.streams.Next(streamId)
-	if ok && v != nil {
+	v := c.streams.Get(streamId)
+	if v != nil {
 		return v
 	}
 
@@ -153,12 +157,6 @@ func (c *Connection) updateState(s *Stream, isClose bool) {
 
 // We need to check if we remove the current state, if yes, then move the state to the previous stream
 func (c *Connection) cleanupStream(streamId uint32) {
-	// Check if iterator is at this stream, if yes, move to previous
-	if c.listener.iter != nil && c.listener.iter.startK2 == streamId {
-		prevStreamID, _, _ := c.streams.Previous(streamId)
-		c.listener.iter.startK2 = prevStreamID
-	}
-
 	slog.Debug("Cleanup/Stream", debugGId(), c.debug(), slog.Uint64("streamId", uint64(streamId)))
 	v, _ := c.streams.Remove(streamId)
 	if v != nil && c.streams.Size() == 0 {
@@ -167,12 +165,6 @@ func (c *Connection) cleanupStream(streamId uint32) {
 }
 
 func (c *Connection) cleanupConn(connId uint64) {
-	// Check if iterator is at this connection, if yes, move to previous
-	if c.listener.iter != nil && c.listener.iter.startK1 == connId {
-		prevConnID, _, _ := c.listener.connMap.Previous(connId)
-		c.listener.iter.startK1 = prevConnID
-	}
-
 	slog.Debug("Cleanup/Stream", debugGId(), c.debug(), slog.Uint64("connId", connId))
 	c.listener.connMap.Remove(connId)
 }

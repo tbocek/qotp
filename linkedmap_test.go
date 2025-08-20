@@ -293,7 +293,6 @@ func (suite *LinkedMapTestSuite) TestRemove_LastElement() {
 	suite.Equal(first, key)
 	suite.Equal(1, value)
 	
-	suite.False(suite.lm.HasNext(first))
 }
 
 // Test First function
@@ -397,7 +396,6 @@ func (suite *LinkedMapTestSuite) TestHasNext_ExistingKeyWithNext() {
 	suite.lm.Put(a, 1)
 	suite.lm.Put(b, 2)
 	
-	suite.True(suite.lm.HasNext(a))
 }
 
 func (suite *LinkedMapTestSuite) TestHasNext_LastElement() {
@@ -407,25 +405,18 @@ func (suite *LinkedMapTestSuite) TestHasNext_LastElement() {
 	suite.lm.Put(a, 1)
 	suite.lm.Put(b, 2)
 	
-	suite.False(suite.lm.HasNext(b))
 }
 
 func (suite *LinkedMapTestSuite) TestHasNext_NonExistentKey() {
 	a := "a"
 	suite.lm.Put(a, 1)
 	
-	suite.False(suite.lm.HasNext("nonexistent"))
-}
-
-func (suite *LinkedMapTestSuite) TestHasNext_EmptyMap() {
-	suite.False(suite.lm.HasNext("any"))
 }
 
 func (suite *LinkedMapTestSuite) TestHasNext_SingleElement() {
 	only := "only"
 	suite.lm.Put(only, 42)
 	
-	suite.False(suite.lm.HasNext(only))
 }
 
 // Test Previous function
@@ -496,8 +487,6 @@ func (suite *LinkedMapTestSuite) TestHasPrevious_ExistingKeyWithPrevious() {
 	
 	suite.lm.Put(a, 1)
 	suite.lm.Put(b, 2)
-	
-	suite.True(suite.lm.HasPrevious(b))
 }
 
 func (suite *LinkedMapTestSuite) TestHasPrevious_FirstElement() {
@@ -506,26 +495,18 @@ func (suite *LinkedMapTestSuite) TestHasPrevious_FirstElement() {
 	
 	suite.lm.Put(a, 1)
 	suite.lm.Put(b, 2)
-	
-	suite.False(suite.lm.HasPrevious(a))
 }
 
 func (suite *LinkedMapTestSuite) TestHasPrevious_NonExistentKey() {
 	a := "a"
 	suite.lm.Put(a, 1)
 	
-	suite.False(suite.lm.HasPrevious("nonexistent"))
-}
-
-func (suite *LinkedMapTestSuite) TestHasPrevious_EmptyMap() {
-	suite.False(suite.lm.HasPrevious("any"))
 }
 
 func (suite *LinkedMapTestSuite) TestHasPrevious_SingleElement() {
 	only := "only"
 	suite.lm.Put(only, 42)
 	
-	suite.False(suite.lm.HasPrevious(only))
 }
 
 // Test Replace function
@@ -1067,11 +1048,8 @@ func (suite *LinkedMapTestSuite) TestTraversalAfterOperations() {
 		suite.Equal(exp.value, value, "Position %d", i)
 		
 		if i < len(expected)-1 {
-			suite.True(suite.lm.HasNext(key))
 			key, value, ok = suite.lm.Next(key)
 			suite.True(ok)
-		} else {
-			suite.False(suite.lm.HasNext(key))
 		}
 	}
 }
@@ -1109,7 +1087,6 @@ func (suite *LinkedMapTestSuite) TestSingleElementOperations() {
 	suite.Equal(single, key)
 	suite.Equal(42, value)
 	
-	suite.False(suite.lm.HasNext(single))
 	
 	nextKey, nextValue, ok := suite.lm.Next(single)
 	suite.False(ok)
@@ -1188,12 +1165,6 @@ func (suite *LinkedMapTestSuite) TestBidirectionalTraversal() {
 	suite.True(ok)
 	suite.Equal(a, key)
 	suite.Equal(1, value)
-	
-	// Check boundaries
-	suite.False(suite.lm.HasPrevious(a))
-	suite.True(suite.lm.HasNext(a))
-	suite.True(suite.lm.HasPrevious(d))
-	suite.False(suite.lm.HasNext(d))
 }
 
 // Test edge cases with Previous and HasPrevious after modifications
@@ -1218,9 +1189,6 @@ func (suite *LinkedMapTestSuite) TestPreviousAfterOperations() {
 	suite.Equal(a, key)
 	suite.Equal(1, value)
 	
-	suite.True(suite.lm.HasPrevious(c))
-	suite.True(suite.lm.HasPrevious(d))
-	suite.False(suite.lm.HasPrevious(a))
 }
 
 func (suite *LinkedMapTestSuite) TestPreviousAfterReplace() {
@@ -1278,8 +1246,6 @@ func (suite *LinkedMapTestSuite) TestConcurrentReadOperations() {
 				if suite.lm.Contains(key) {
 					_, _, _ = suite.lm.Next(key)
 					_, _, _ = suite.lm.Previous(key)
-					_ = suite.lm.HasNext(key)
-					_ = suite.lm.HasPrevious(key)
 				}
 				
 				_, _, _ = suite.lm.First()
@@ -1595,11 +1561,8 @@ func (suite *LinkedMapTestSuite) TestTraversalIntegrity() {
 		suite.Equal(i*10, currentValue, "Forward traversal value at position %d", i)
 		
 		if i < len(keys)-1 {
-			suite.True(suite.lm.HasNext(currentKey))
 			currentKey, currentValue, ok = suite.lm.Next(currentKey)
 			suite.True(ok)
-		} else {
-			suite.False(suite.lm.HasNext(currentKey))
 		}
 	}
 	
@@ -1610,11 +1573,8 @@ func (suite *LinkedMapTestSuite) TestTraversalIntegrity() {
 		suite.Equal(expectedKey, currentKey, "Backward traversal at position %d", i)
 		
 		if i > 0 {
-			suite.True(suite.lm.HasPrevious(currentKey))
 			currentKey, _, ok = suite.lm.Previous(currentKey)
 			suite.True(ok)
-		} else {
-			suite.False(suite.lm.HasPrevious(currentKey))
 		}
 	}
 }

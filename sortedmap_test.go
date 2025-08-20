@@ -269,30 +269,6 @@ func (s *SortedHashMapTestSuite) TestNextFromKey() {
 	s.Equal("", nextValue)
 }
 
-func (s *SortedHashMapTestSuite) TestHasNextOperation() {
-	// Test empty map
-	s.False(s.shm.HasNext(1))
-
-	// Add some values
-	values := []int{1, 3, 5, 7, 9}
-	for _, v := range values {
-		s.shm.Put(v, "value")
-	}
-
-	// Test HasNext with existing keys
-	s.True(s.shm.HasNext(1))
-	s.True(s.shm.HasNext(3))
-	s.True(s.shm.HasNext(5))
-	s.True(s.shm.HasNext(7))
-	s.False(s.shm.HasNext(9)) // last element
-
-	// Test HasNext with non-existing keys
-	s.True(s.shm.HasNext(2))  // between 1 and 3
-	s.True(s.shm.HasNext(4))  // between 3 and 5
-	s.False(s.shm.HasNext(10)) // beyond last element
-	s.True(s.shm.HasNext(0))   // before first element
-}
-
 func (s *SortedHashMapTestSuite) TestConcurrentOperations() {
 	var wg sync.WaitGroup
 	numGoroutines := 10

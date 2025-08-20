@@ -22,18 +22,13 @@ type ConnStreamIterator struct {
 
 func NewConnStreamIterator(
 	connMap *LinkedMap[uint64, *Connection],
-	startConn uint64,
-	startStream uint32,
 ) *ConnStreamIterator {
 	nested := NewNestedIterator(
 		connMap,
 		func(conn *Connection) *LinkedMap[uint32, *Stream] {
 			return conn.streams
 		},
-		startConn,
-		startStream,
 	)
-
 	return &ConnStreamIterator{nested}
 }
 
@@ -255,6 +250,11 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 	return s, nil
 }
 
+type ConnIdStreamId struct {
+	connId   uint64
+	streamId uint32
+}
+
 // Flush sends pending data for all connections using round-robin
 func (l *Listener) Flush(nowNano uint64) (minPacing uint64, err error) {
 	minPacing = MinDeadLine
@@ -264,37 +264,85 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64, err error) {
 	}
 
 	if l.iter == nil {
-		l.iter = NewConnStreamIterator(l.connMap, 0, 0)
+		l.iter = NewConnStreamIterator(l.connMap)
 	}
 
+	var startK1 *uint64
+	var startK2 *uint32
+	closeStream := []ConnIdStreamId{}
+	defer func() {
+		for _, connIdStreamId := range closeStream {
+			conn := l.connMap.Get(connIdStreamId.connId)
+			conn.cleanupStream(connIdStreamId.streamId)
+		}
+	}()
+
 	for {
-		conn, stream, cycle := l.iter.Next()
-		if conn == nil || stream == nil {
-			break
+		conn, stream := l.iter.Next()
+
+		if conn == nil && stream == nil {
+			debug("Cann nil, returning", "minPacing", minPacing)
+			return minPacing, nil
 		}
 
+		if startK1 == nil {
+			startK1 = l.iter.currentK1
+		}
+
+		if startK2 == nil {
+			startK2 = l.iter.currentK2
+		}
+
+		if stream == nil {
+			debug("Stream nil, cont")
+			continue
+		}
+
+		// Debug the iterator state
+		debug("Loop iteration",
+			"conn_nil", conn == nil,
+			"stream_nil", stream == nil,
+			"startK1", startK1,
+			"l.iter.nextK1", l.iter.nextK1,
+			"startK2", startK2,
+			"l.iter.nextK2", l.iter.nextK2,
+		)
+
+		debug("Processing stream", "streamId", stream.streamId, "connId", conn.connId)
 		_, dataSent, pacingNano, err := conn.Flush(stream, nowNano)
+		debug("Flush result",
+			"dataSent", dataSent,
+			"pacingNano", pacingNano,
+			"err", err)
 
 		if err != nil {
+			debug("Flush error, cleaning up", "connId", conn.connId, "error", err)
 			conn.cleanupConn(conn.connId)
 			return 0, err
 		}
 
 		if stream.state == StreamStateClosed {
-			conn.cleanupStream(stream.streamId)
+			debug("Stream closed, cleaning up", "streamId", stream.streamId)
+			closeStream = append(closeStream, ConnIdStreamId{connId: conn.connId, streamId: stream.streamId})
 		}
 
 		if dataSent > 0 {
+			debug("Data sent, returning early", "dataSent", dataSent)
 			return 0, nil
 		}
+
 		if pacingNano < minPacing {
+			debug("Updating minPacing", "old", minPacing, "new", pacingNano)
 			minPacing = pacingNano
 		}
-		if cycle {
+
+		if *startK1 == *l.iter.nextK1 && *startK2 == *l.iter.nextK2 {
+			debug("Cycle detected")
 			return minPacing, nil
 		}
+
+		debug("Continuing to next iteration")
 	}
-	return minPacing, nil
 }
 
 func (l *Listener) newConn(

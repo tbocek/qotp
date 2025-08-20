@@ -67,7 +67,6 @@ func TestTwoStream(t *testing.T) {
 	assert.Nil(t, err)
 	_, err = connA.listener.Flush(specificNano)
 	assert.Nil(t, err)
-	
 	// we send one packet
 	_, err = connPair.senderToRecipient(1)
 	assert.Nil(t, err)
@@ -283,7 +282,9 @@ func TestCloseAWithInit(t *testing.T) {
 	_, err = connPair.recipientToSender(1)
 	assert.Nil(t, err)
 
+	assert.True(t, streamA.state == StreamStateCloseRequest)
 	streamA, err = streamA.conn.listener.Listen(0, specificNano)
+	assert.True(t, streamA.state == StreamStateCloseRequest)
 	assert.Nil(t, err)
 
 	buffer, err = streamA.Read()
