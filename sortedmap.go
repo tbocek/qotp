@@ -1,6 +1,6 @@
 // Package tomtp provides a sorted map with O(1) Next() traversal.
 // All exported methods are thread-safe.
-package tomtp
+package qotp
 
 import (
 	"sync"

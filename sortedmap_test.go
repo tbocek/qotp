@@ -1,4 +1,4 @@
-package tomtp
+package qotp
 
 import (
 	"github.com/stretchr/testify/suite"

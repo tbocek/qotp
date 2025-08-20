@@ -1,10 +1,9 @@
-package tomtp
+package qotp
 
 import (
 	"net/netip"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -434,7 +433,7 @@ func TestBBR2(t *testing.T) {
 	_, err := streamA.Write(dataA)
 	assert.Nil(t, err)
 
-	start := time.Now()
+	//start := time.Now()
 	for {
 		mu.Lock()
 		received := totalBytesReceived
@@ -453,12 +452,12 @@ func TestBBR2(t *testing.T) {
 		assert.Nil(t, err)
 
 		//time.Sleep(time.Duration(d1+d2) * time.Nanoecond)
-		time.Sleep(100 * time.Millisecond)
+		//time.Sleep(100 * time.Millisecond)
 
-		if time.Since(start) > 5*time.Second {
-			cancelA()
-			cancelB()
-			break
-		}
+		//if time.Since(start) > 5*time.Second {
+		//	cancelA()
+		//	cancelB()
+		//	break
+		//}
 	}
 }

@@ -1,4 +1,4 @@
-package tomtp
+package qotp
 
 // NestedIterator iterates through nested maps
 type NestedIterator[K1, K2 comparable, V1, V2 any] struct {
@@ -51,7 +51,7 @@ func (it *NestedIterator[K1, K2, V1, V2]) Next() (currentV1 V1, currentV2 V2) {
 	if it.currentK2 == nil || !innerMap.Contains(*it.currentK2) {
 		tmpK2, currentV2, ok = innerMap.First()
 		if !ok {
-			return zeroV1, zeroV2
+			currentV2 = zeroV2
 		}
 		it.currentK2 = &tmpK2
 	} else {
@@ -74,8 +74,8 @@ func (it *NestedIterator[K1, K2, V1, V2]) Next() (currentV1 V1, currentV2 V2) {
 		//in any case on next conn /outer, get first stearm /inner
 		innerMap = it.getInner(nextV1)
 		tmpK2, _, ok = innerMap.First()
-		if !ok { //this should never happen, inner has always a size > 0 if it exists
-			return zeroV1, zeroV2
+		if !ok { //if an inner is empty, return empty, we handle outside
+			currentV2 = zeroV2
 		}
 	}
 	it.nextK1 = &tmpK1

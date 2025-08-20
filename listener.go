@@ -1,4 +1,4 @@
-package tomtp
+package qotp
 
 import (
 	"crypto/ecdh"
@@ -270,79 +270,51 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64, err error) {
 	var startK1 *uint64
 	var startK2 *uint32
 	closeStream := []ConnIdStreamId{}
-	defer func() {
-		for _, connIdStreamId := range closeStream {
-			conn := l.connMap.Get(connIdStreamId.connId)
-			conn.cleanupStream(connIdStreamId.streamId)
-		}
-	}()
 
 	for {
 		conn, stream := l.iter.Next()
-
-		if conn == nil && stream == nil {
-			debug("Cann nil, returning", "minPacing", minPacing)
-			return minPacing, nil
+		if conn == nil {
+			break
 		}
 
-		if startK1 == nil {
+		if startK1 == nil &&  startK2 == nil {
 			startK1 = l.iter.currentK1
+			startK2 = l.iter.currentK2 //startK2 can be null
 		}
 
-		if startK2 == nil {
-			startK2 = l.iter.currentK2
-		}
+		if stream != nil {
+			_, dataSent, pacingNano, err := conn.Flush(stream, nowNano)
+			if err != nil {
+				conn.cleanupConn(conn.connId)
+				return 0, err
+			}
 
-		if stream == nil {
-			debug("Stream nil, cont")
-			continue
-		}
+			if stream.state == StreamStateClosed {
+				debug("Stream closed, cleaning up", "streamId", stream.streamId)
+				closeStream = append(closeStream, ConnIdStreamId{connId: conn.connId, streamId: stream.streamId})
+			}
 
-		// Debug the iterator state
-		debug("Loop iteration",
-			"conn_nil", conn == nil,
-			"stream_nil", stream == nil,
-			"startK1", startK1,
-			"l.iter.nextK1", l.iter.nextK1,
-			"startK2", startK2,
-			"l.iter.nextK2", l.iter.nextK2,
-		)
+			if dataSent > 0 {
+				debug("Data sent, returning early", "dataSent", dataSent)
+				return 0, nil
+			}
 
-		debug("Processing stream", "streamId", stream.streamId, "connId", conn.connId)
-		_, dataSent, pacingNano, err := conn.Flush(stream, nowNano)
-		debug("Flush result",
-			"dataSent", dataSent,
-			"pacingNano", pacingNano,
-			"err", err)
-
-		if err != nil {
-			debug("Flush error, cleaning up", "connId", conn.connId, "error", err)
-			conn.cleanupConn(conn.connId)
-			return 0, err
-		}
-
-		if stream.state == StreamStateClosed {
-			debug("Stream closed, cleaning up", "streamId", stream.streamId)
-			closeStream = append(closeStream, ConnIdStreamId{connId: conn.connId, streamId: stream.streamId})
-		}
-
-		if dataSent > 0 {
-			debug("Data sent, returning early", "dataSent", dataSent)
-			return 0, nil
-		}
-
-		if pacingNano < minPacing {
-			debug("Updating minPacing", "old", minPacing, "new", pacingNano)
-			minPacing = pacingNano
+			if pacingNano < minPacing {
+				debug("Updating minPacing", "old", minPacing, "new", pacingNano)
+				minPacing = pacingNano
+			}
 		}
 
 		if *startK1 == *l.iter.nextK1 && *startK2 == *l.iter.nextK2 {
-			debug("Cycle detected")
-			return minPacing, nil
+			break
 		}
-
-		debug("Continuing to next iteration")
 	}
+
+	for _, connIdStreamId := range closeStream {
+		conn := l.connMap.Get(connIdStreamId.connId)
+		conn.cleanupStream(connIdStreamId.streamId)
+	}
+	return minPacing, nil
 }
 
 func (l *Listener) newConn(
