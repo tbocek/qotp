@@ -11,9 +11,9 @@ const nodesPerLevel = 4 // Every 4 nodes we add a level up
 
 // SortedMap implements a thread-safe skip list with O(1) lookups and O(1) Next() operations.
 type SortedMap[K comparable, V any] struct {
-	items map[K]*node[K, V]
-	head  *node[K, V]
-	tail  *node[K, V] // Sentinel tail node
+	items map[K]*smNode[K, V]
+	head  *smNode[K, V]
+	tail  *smNode[K, V] // Sentinel tail node
 	level int
 	size  int
 	mu    sync.RWMutex
@@ -21,25 +21,25 @@ type SortedMap[K comparable, V any] struct {
 }
 
 // node represents an internal node in the skip list.
-type node[K comparable, V any] struct {
+type smNode[K comparable, V any] struct {
 	key   K
 	value V
-	next  []*node[K, V] // Skip list levels for fast search
-	after *node[K, V]   // Direct pointer to next element in sorted order - O(1) traversal!
-	prev  *node[K, V]   // Direct pointer to previous element for O(1) removal
+	next  []*smNode[K, V] // Skip list levels for fast search
+	after *smNode[K, V]   // Direct pointer to next element in sorted order - O(1) traversal!
+	prev  *smNode[K, V]   // Direct pointer to previous element for O(1) removal
 }
 
 // NewSortedMap creates a new sorted map with the given key comparison function.
 func NewSortedMap[K comparable, V any](less func(K, K) bool) *SortedMap[K, V] {
 	m := &SortedMap[K, V]{
-		items: make(map[K]*node[K, V]),
+		items: make(map[K]*smNode[K, V]),
 		level: 1,
 		less:  less,
 	}
 	
 	// Create sentinel head and tail nodes
-	m.head = &node[K, V]{next: make([]*node[K, V], maxLevel)}
-	m.tail = &node[K, V]{}
+	m.head = &smNode[K, V]{next: make([]*smNode[K, V], maxLevel)}
+	m.tail = &smNode[K, V]{}
 	
 	// Link head to tail initially
 	m.head.after = m.tail
@@ -81,7 +81,7 @@ func (m *SortedMap[K, V]) Put(key K, value V) {
 	}
 
 	// Find insert position at each level using skip list search
-	update := make([]*node[K, V], maxLevel)
+	update := make([]*smNode[K, V], maxLevel)
 	current := m.head
 
 	for i := m.level - 1; i >= 0; i-- {
@@ -101,10 +101,10 @@ func (m *SortedMap[K, V]) Put(key K, value V) {
 	}
 
 	// Create new node
-	newNode := &node[K, V]{
+	newNode := &smNode[K, V]{
 		key:   key,
 		value: value,
-		next:  make([]*node[K, V], level),
+		next:  make([]*smNode[K, V], level),
 	}
 
 	// Insert into skip list levels
@@ -212,7 +212,7 @@ func (m *SortedMap[K, V]) Remove(key K) (V, bool) {
 	}
 
 	// Remove from skip list levels
-	update := make([]*node[K, V], maxLevel)
+	update := make([]*smNode[K, V], maxLevel)
 	current := m.head
 
 	for i := m.level - 1; i >= 0; i-- {
