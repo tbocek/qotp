@@ -237,11 +237,10 @@ func (it *LinkedMapIterator[K, V]) Next() (K, V, bool) {
 	it.m.mu.RLock()
 	defer it.m.mu.RUnlock()
 
-	var zeroK K
-	var zeroV V
-
 	// Check if curr is nil (empty map or end of iteration)
 	if it.curr == nil || it.curr == it.m.tail {
+		var zeroK K
+		var zeroV V
 		return zeroK, zeroV, false
 	}
 

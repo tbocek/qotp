@@ -46,7 +46,7 @@ func TestUpdateBBR_FirstMeasurement(t *testing.T) {
 	assert.Equal(t, uint64(10000), conn.BBR.bwMax, "Bandwidth should be calculated correctly")
 	assert.Equal(t, uint64(0), conn.BBR.bwDec, "bwDec should be 0 after bandwidth increase")
 	assert.Equal(t, BBRStateStartup, conn.BBR.state, "Should remain in startup state")
-	assert.Equal(t, uint64(277), conn.BBR.pacingGain, "Should maintain startup gain")
+	assert.Equal(t, uint64(277), conn.BBR.pacingGainPct, "Should maintain startup gain")
 }
 
 // TestUpdateBBR_RTTMinTracking verifies that minimum RTT is tracked correctly
@@ -145,7 +145,7 @@ func TestUpdateBBR_StartupToNormalTransition(t *testing.T) {
 
 	// After 3 decreases, should transition
 	assert.Equal(t, BBRStateNormal, conn.BBR.state, "Should transition to normal after 3 bwDec")
-	assert.Equal(t, uint64(100), conn.BBR.pacingGain, "Pacing gain should be 1.0x")
+	assert.Equal(t, uint64(100), conn.BBR.pacingGainPct, "Pacing gain should be 1.0x")
 }
 
 // TestUpdateBBR_NormalStateRTTBased verifies normal state RTT-based pacing adjustments
@@ -155,23 +155,23 @@ func TestUpdateBBR_NormalStateRTTBased(t *testing.T) {
 	conn.BBR.bwMax = 10000
 	conn.BBR.rttMinNano = 100000000        // Set min RTT to 100ms
 	conn.BBR.rttMinTimeNano = 1000000000   // Set time for min RTT
-	conn.BBR.lastProbeTime = 1000000000    // Initialize to prevent probing
+	conn.BBR.lastProbeTimeNano = 1000000000    // Initialize to prevent probing
 
 	// Test high RTT inflation (SRTT > 1.5x min)
 	conn.RTT.srtt = 160000000                // 160ms
 	conn.UpdateBBR(200000000, 1000, 1100000000) // New measurement won't replace min
-	assert.Equal(t, uint64(75), conn.BBR.pacingGain, "Should reduce to 75% when RTT > 1.5x min")
+	assert.Equal(t, uint64(75), conn.BBR.pacingGainPct, "Should reduce to 75% when RTT > 1.5x min")
 
 	// Test moderate RTT inflation (SRTT > 1.25x min)
 	conn.RTT.srtt = 130000000                // 130ms
 	conn.UpdateBBR(200000000, 1000, 1200000000)
-	assert.Equal(t, uint64(90), conn.BBR.pacingGain, "Should reduce to 90% when RTT > 1.25x min")
+	assert.Equal(t, uint64(90), conn.BBR.pacingGainPct, "Should reduce to 90% when RTT > 1.25x min")
 
 	// Test normal RTT (ensure we're not in probe window)
 	conn.RTT.srtt = 100000000                // 100ms
-	conn.BBR.lastProbeTime = 1200000000      // Recent probe time
+	conn.BBR.lastProbeTimeNano = 1200000000      // Recent probe time
 	conn.UpdateBBR(200000000, 1000, 1300000000) // Only 100ms later (1 RTT, not 8)
-	assert.Equal(t, uint64(100), conn.BBR.pacingGain, "Should be 100% when RTT is normal")
+	assert.Equal(t, uint64(100), conn.BBR.pacingGainPct, "Should be 100% when RTT is normal")
 }
 
 // TestUpdateBBR_BandwidthProbing verifies periodic bandwidth probing
@@ -182,16 +182,16 @@ func TestUpdateBBR_BandwidthProbing(t *testing.T) {
 	conn.BBR.rttMinNano = 100000000        // 100ms min RTT
 	conn.BBR.rttMinTimeNano = 1000000000
 	conn.RTT.srtt = 100000000              // 100ms
-	conn.BBR.lastProbeTime = 1000000000
+	conn.BBR.lastProbeTimeNano = 1000000000
 
 	// Update before probe time (less than 8 RTTs = 800ms)
 	conn.UpdateBBR(150000000, 1000, 1500000000) // 0.5 seconds = 5 RTTs
-	assert.Equal(t, uint64(100), conn.BBR.pacingGain, "Should not probe yet")
+	assert.Equal(t, uint64(100), conn.BBR.pacingGainPct, "Should not probe yet")
 
 	// Update after probe time (more than 8 RTTs = 800ms)
 	conn.UpdateBBR(150000000, 1000, 1900000000) // 0.9 seconds = 9 RTTs since last probe
-	assert.Equal(t, uint64(125), conn.BBR.pacingGain, "Should probe with 125% gain")
-	assert.Equal(t, uint64(1900000000), conn.BBR.lastProbeTime, "Should update probe time")
+	assert.Equal(t, uint64(125), conn.BBR.pacingGainPct, "Should probe with 125% gain")
+	assert.Equal(t, uint64(1900000000), conn.BBR.lastProbeTimeNano, "Should update probe time")
 }
 
 // TestOnDuplicateAck verifies duplicate ACK handling
@@ -203,7 +203,7 @@ func TestOnDuplicateAck(t *testing.T) {
 
 	assert.Equal(t, BBRStateNormal, conn.BBR.state, "Should exit startup on dup ACK")
 	assert.Equal(t, uint64(9800), conn.BBR.bwMax, "Bandwidth should reduce by 2%")
-	assert.Equal(t, uint64(90), conn.BBR.pacingGain, "Should set gain to 90%")
+	assert.Equal(t, uint64(90), conn.BBR.pacingGainPct, "Should set gain to 90%")
 
 	// Test in normal state
 	conn2 := newTestConnection()
@@ -224,7 +224,7 @@ func TestOnPacketLoss(t *testing.T) {
 
 	assert.Equal(t, BBRStateNormal, conn.BBR.state, "Should switch to normal state")
 	assert.Equal(t, uint64(9500), conn.BBR.bwMax, "Bandwidth should reduce by 5%")
-	assert.Equal(t, uint64(100), conn.BBR.pacingGain, "Should reset gain to 100%")
+	assert.Equal(t, uint64(100), conn.BBR.pacingGainPct, "Should reset gain to 100%")
 }
 
 // TestGetPacingInterval_NoBandwidth verifies pacing when no bandwidth estimate exists
@@ -232,12 +232,12 @@ func TestGetPacingInterval_NoBandwidth(t *testing.T) {
 	conn := newTestConnection()
 
 	// Test with no SRTT
-	interval := conn.GetPacingInterval(1000)
+	interval := conn.CalcPacingInterval(1000)
 	assert.Equal(t, uint64(10 * msNano), interval, "Should return 10ms default when no SRTT")
 
 	// Test with SRTT but no bandwidth
 	conn.RTT.srtt = 100000000 // 100ms in nanoseconds
-	interval = conn.GetPacingInterval(1000)
+	interval = conn.CalcPacingInterval(1000)
 	assert.Equal(t, uint64(10000000), interval, "Should return SRTT/10 when no bandwidth")
 }
 
@@ -245,20 +245,20 @@ func TestGetPacingInterval_NoBandwidth(t *testing.T) {
 func TestGetPacingInterval_WithBandwidth(t *testing.T) {
 	conn := newTestConnection()
 	conn.BBR.bwMax = 10000    // 10KB/s
-	conn.BBR.pacingGain = 100 // 1.0x
+	conn.BBR.pacingGainPct = 100 // 1.0x
 
 	// 1KB packet: (1000 bytes / 10000 bytes/sec) * 1e9 ns = 100,000,000 ns
-	interval := conn.GetPacingInterval(1000)
+	interval := conn.CalcPacingInterval(1000)
 	assert.Equal(t, uint64(100000000), interval, "Should calculate correct interval")
 
 	// Test with pacing gain
-	conn.BBR.pacingGain = 200 // 2.0x
-	interval = conn.GetPacingInterval(1000)
+	conn.BBR.pacingGainPct = 200 // 2.0x
+	interval = conn.CalcPacingInterval(1000)
 	assert.Equal(t, uint64(50000000), interval, "Higher gain should reduce interval")
 
 	// Test with very low pacing gain
-	conn.BBR.pacingGain = 50 // 0.5x
-	interval = conn.GetPacingInterval(1000)
+	conn.BBR.pacingGainPct = 50 // 0.5x
+	interval = conn.CalcPacingInterval(1000)
 	assert.Equal(t, uint64(200000000), interval, "Lower gain should increase interval")
 }
 
@@ -268,13 +268,13 @@ func TestGetPacingInterval_EdgeCases(t *testing.T) {
 
 	// Test with zero effective rate
 	conn.BBR.bwMax = 10000
-	conn.BBR.pacingGain = 0 // Would make effective rate 0
-	interval := conn.GetPacingInterval(1000)
+	conn.BBR.pacingGainPct = 0 // Would make effective rate 0
+	interval := conn.CalcPacingInterval(1000)
 	assert.Equal(t, uint64(10 * msNano), interval, "Should return 10ms fallback")
 
 	// Test with very small packet
-	conn.BBR.pacingGain = 100
-	interval = conn.GetPacingInterval(1) // 1 byte
+	conn.BBR.pacingGainPct = 100
+	interval = conn.CalcPacingInterval(1) // 1 byte
 	assert.Equal(t, uint64(100000), interval, "Should handle small packets")
 }
 
@@ -296,6 +296,6 @@ func TestBBRIntegration(t *testing.T) {
 	assert.Equal(t, BBRStateNormal, conn.BBR.state, "Should transition to normal")
 
 	// Verify pacing calculation works
-	interval := conn.GetPacingInterval(1000)
+	interval := conn.CalcPacingInterval(1000)
 	assert.Greater(t, interval, uint64(0), "Should calculate valid pacing interval")
 }

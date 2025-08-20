@@ -20,16 +20,13 @@ type ConnStreamIterator struct {
 	*NestedIterator[uint64, uint32, *Connection, *Stream]
 }
 
-func NewConnStreamIterator(
-	connMap *LinkedMap[uint64, *Connection],
-) *ConnStreamIterator {
-	nested := NewNestedIterator(
+func NewConnStreamIterator(connMap *LinkedMap[uint64, *Connection]) *ConnStreamIterator {
+	return &ConnStreamIterator{NewNestedIterator(
 		connMap,
 		func(conn *Connection) *LinkedMap[uint32, *Stream] {
 			return conn.streams
 		},
-	)
-	return &ConnStreamIterator{nested}
+	)}
 }
 
 type Listener struct {
@@ -151,7 +148,7 @@ func fillListenOpts(listenAddr *net.UDPAddr, options ...ListenFunc) (*ListenOpti
 			return nil, err
 		}
 
-		err = setDF(conn)
+		err = setDontFragment(conn)
 		if err != nil {
 			return nil, err
 		}
@@ -184,7 +181,7 @@ func Listen(listenAddr *net.UDPAddr, options ...ListenFunc) (*Listener, error) {
 }
 
 func (l *Listener) Close() error {
-	slog.Debug("ListenerClose", debugGId())
+	slog.Debug("ListenerClose", getGoroutineID())
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -222,7 +219,7 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 		return nil, nil
 	}
 
-	slog.Debug("   Listen/Data", debugGId(), l.debug(), slog.Any("len(data)", n), slog.Uint64("now:ms", nowNano/msNano))
+	slog.Debug("   Listen/Data", getGoroutineID(), l.debug(), slog.Any("len(data)", n), slog.Uint64("now:ms", nowNano/msNano))
 
 	conn, m, err := l.decode(data[:n], remoteAddr)
 	if err != nil {
@@ -241,18 +238,13 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 				conn.state.isHandshakeComplete = true
 			}
 		} else {
-			if m.MsgType == Data || m.MsgType == DataRot {
+			if m.MsgType == Data || m.MsgType == DataRoll {
 				conn.state.isHandshakeComplete = true
 			}
 		}
 	}
 
 	return s, nil
-}
-
-type ConnIdStreamId struct {
-	connId   uint64
-	streamId uint32
 }
 
 // Flush sends pending data for all connections using round-robin
@@ -269,7 +261,7 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64, err error) {
 
 	var startK1 *uint64
 	var startK2 *uint32
-	closeStream := []ConnIdStreamId{}
+	closeStream := []connStreamKey{}
 
 	for {
 		conn, stream := l.iter.Next()
@@ -278,8 +270,8 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64, err error) {
 		}
 
 		if startK1 == nil && startK2 == nil {
-			startK1 = l.iter.currentK1
-			startK2 = l.iter.currentK2 //startK2 can be null
+			startK1 = l.iter.currentOuterKey
+			startK2 = l.iter.currentInnerKey //startK2 can be null
 		}
 
 		if stream != nil {
@@ -292,7 +284,7 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64, err error) {
 			if stream.state == StreamStateClosed {
 				// stream closed, mark for cleaning up, do not clean up yet, otherwise the iterator will become
 				// much more complex
-				closeStream = append(closeStream, ConnIdStreamId{connId: conn.connId, streamId: stream.streamId})
+				closeStream = append(closeStream, createConnStreamKey(conn.connId, stream.streamID))
 			}
 
 			if dataSent > 0 {
@@ -306,14 +298,14 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64, err error) {
 			}
 		}
 
-		if *startK1 == *l.iter.nextK1 && *startK2 == *l.iter.nextK2 {
+		if *startK1 == *l.iter.nextOuterKey && *startK2 == *l.iter.nextInnerKey {
 			break
 		}
 	}
 
-	for _, connIdStreamId := range closeStream {
-		conn := l.connMap.Get(connIdStreamId.connId)
-		conn.cleanupStream(connIdStreamId.streamId)
+	for _, connStreamKey := range closeStream {
+		conn := l.connMap.Get(connStreamKey.connID())
+		conn.cleanupStream(connStreamKey.streamID())
 	}
 	return minPacing, nil
 }
@@ -364,8 +356,8 @@ func (l *Listener) newConn(
 			withCrypto: withCrypto,
 		},
 		mtu:        startMtu,
-		sndBuf:     NewSendBuffer(sndBufferCapacity),
-		rcvBuf:     NewReceiveBuffer(rcvBufferCapacity),
+		snd:        NewSendBuffer(sndBufferCapacity),
+		rcv:        NewReceiveBuffer(rcvBufferCapacity),
 		BBR:        NewBBR(),
 		rcvWndSize: rcvBufferCapacity, //initially our capacity, correct value will be sent to us in the 1st handshake
 	}

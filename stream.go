@@ -20,20 +20,20 @@ var (
 )
 
 type Stream struct {
-	streamId uint32
+	streamID uint32
 	conn     *Connection
 	state    StreamState
 	mu       sync.Mutex
 }
 
-func (s *Stream) NotifyStreamChange() error {
+func (s *Stream) NotifyDataAvailable() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	return s.conn.listener.localConn.TimeoutReadNow()
 }
 
-func (s *Stream) Read() (readData []byte, err error) {
+func (s *Stream) Read() (userData []byte, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -41,14 +41,14 @@ func (s *Stream) Read() (readData []byte, err error) {
 		return nil, ErrStreamClosed
 	}
 
-	offset, data := s.conn.rcvBuf.RemoveOldestInOrder(s.streamId)
-	closeOffset := s.conn.rcvBuf.GetOffsetClosedAt(s.streamId)
+	offset, data := s.conn.rcv.RemoveOldestInOrder(s.streamID)
+	closeOffset := s.conn.rcv.GetOffsetClosedAt(s.streamID)
 	s.conn.updateState(s, closeOffset != nil && *closeOffset == offset)
-	slog.Debug("Read", debugGId(), s.debug(), slog.String("b…", string(data[:min(16, len(data))])))
+	slog.Debug("Read", getGoroutineID(), s.debug(), slog.String("b…", string(data[:min(16, len(data))])))
 	return data, nil
 }
 
-func (s *Stream) Write(writeData []byte) (remainingWriteData []byte, err error) {
+func (s *Stream) Write(userData []byte) (remainingUserData []byte, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -56,14 +56,14 @@ func (s *Stream) Write(writeData []byte) (remainingWriteData []byte, err error) 
 		return nil, ErrStreamClosed
 	}
 
-	if len(writeData) == 0 {
-		return writeData, nil
+	if len(userData) == 0 {
+		return userData, nil
 	}
 
-	slog.Debug("Write", debugGId(), s.debug(), slog.String("b…", string(writeData[:min(16, len(writeData))])))
-	n, status := s.conn.sndBuf.Insert(s.streamId, writeData)
+	slog.Debug("Write", getGoroutineID(), s.debug(), slog.String("b…", string(userData[:min(16, len(userData))])))
+	n, status := s.conn.snd.QueueData(s.streamID, userData)
 	if status != InsertStatusOk {
-		slog.Debug("Status Nok", debugGId(), s.debug(), slog.Any("status", status))
+		slog.Debug("Status Nok", getGoroutineID(), s.debug(), slog.Any("status", status))
 	} else {
 		//data is read, so signal to cancel read, since we could do a flush
 		err = s.conn.listener.localConn.TimeoutReadNow()
@@ -72,8 +72,8 @@ func (s *Stream) Write(writeData []byte) (remainingWriteData []byte, err error) 
 		}
 	}
 
-	remainingWriteData = writeData[n:]
-	return remainingWriteData, nil
+	remainingUserData = userData[n:]
+	return remainingUserData, nil
 }
 
 func (s *Stream) Close() {
@@ -85,20 +85,20 @@ func (s *Stream) Close() {
 
 func (s *Stream) debug() slog.Attr {
 	if s.conn == nil {
-		return slog.String("net", "s.conn is null")
+		return slog.String("net", "s.conn is nil")
 	} else if s.conn.listener == nil {
-		return slog.String("net", "s.conn.listener is null")
+		return slog.String("net", "s.conn.listener is nil")
 	} else if s.conn.listener.localConn == nil {
-		return slog.String("net", "s.conn.listener.localConn is null")
+		return slog.String("net", "s.conn.listener.localConn is nil")
 	}
 	
 	return slog.String("net", s.conn.listener.localConn.LocalAddrString())
 }
 
 func (s *Stream) currentOffset() uint64 {
-	sb := s.conn.sndBuf.streams[s.streamId]
-	if sb == nil {
+	streamBuffer := s.conn.snd.streams[s.streamID]
+	if streamBuffer == nil {
 		return 0
 	}
-	return sb.sentOffset
+	return streamBuffer.sentOffset
 }

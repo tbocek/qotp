@@ -39,13 +39,13 @@ func (s *SendInfo) debug() slog.Attr {
 		slog.Uint64("actRto:ms", s.actualRtoNano/msNano))
 }
 
-// StreamBuffer represents a single stream's dataToSend and metadata
+// StreamBuffer represents a single stream's userData and metadata
 type StreamBuffer struct {
-	// here we append the dataToSend, after appending, we sent currentOffset.
-	// This is necessary, as when dataToSend gets acked, we Remove the acked dataToSend,
-	// which will be in front of the array. Thus, len(dataToSend) would not work.
-	dataToSend []byte
-	// this is the offset of the dataToSend we did not send yet
+	// here we append the userData, after appending, we sent currentOffset.
+	// This is necessary, as when userData gets acked, we Remove the acked userData,
+	// which will be in front of the array. Thus, len(userData) would not work.
+	userData []byte
+	// this is the offset of the userData we did not send yet
 	unsentOffset uint64
 	// this is the offset of the dataToSend we did send
 	sentOffset uint64
@@ -70,7 +70,7 @@ type SendBuffer struct {
 
 func NewStreamBuffer() *StreamBuffer {
 	return &StreamBuffer{
-		dataToSend:      []byte{},
+		userData:      []byte{},
 		dataInFlightMap: NewLinkedMap[packetKey, *SendInfo](),
 	}
 }
@@ -83,9 +83,9 @@ func NewSendBuffer(capacity int) *SendBuffer {
 	}
 }
 
-// Insert stores the dataToSend in the dataMap, does not send yet
-func (sb *SendBuffer) Insert(streamId uint32, data []byte) (inserted int, status InsertStatus) {
-	remainingData := data
+// QueueData stores the userData in the dataMap, does not send yet
+func (sb *SendBuffer) QueueData(streamID uint32, userData []byte) (inserted int, status InsertStatus) {
+	remainingData := userData
 
 	if len(remainingData) <= 0 {
 		return 0, InsertStatusNoData
@@ -94,7 +94,7 @@ func (sb *SendBuffer) Insert(streamId uint32, data []byte) (inserted int, status
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 
-	// Calculate how much dataToSend we can insert
+	// Calculate how much userData we can insert
 	remainingCapacitySnd := sb.capacity - sb.size
 	if remainingCapacitySnd <= 0 {
 		return 0, InsertStatusSndFull
@@ -105,14 +105,14 @@ func (sb *SendBuffer) Insert(streamId uint32, data []byte) (inserted int, status
 	chunk := remainingData[:inserted]
 
 	// Get or create stream buffer
-	stream := sb.streams[streamId]
+	stream := sb.streams[streamID]
 	if stream == nil {
 		stream = NewStreamBuffer()
-		sb.streams[streamId] = stream
+		sb.streams[streamID] = stream
 	}
 
 	// Store chunk
-	stream.dataToSend = append(stream.dataToSend, chunk...)
+	stream.userData = append(stream.userData, chunk...)
 	stream.unsentOffset = stream.unsentOffset + uint64(inserted)
 	sb.size += inserted
 
@@ -122,7 +122,7 @@ func (sb *SendBuffer) Insert(streamId uint32, data []byte) (inserted int, status
 }
 
 // ReadyToSend gets data from dataToSend and creates an entry in dataInFlightMap
-func (sb *SendBuffer) ReadyToSend(streamId uint32, overhead *Overhead, nowNano uint64) (splitData []byte, m *SendInfo) {
+func (sb *SendBuffer) ReadyToSend(streamID uint32, overhead *Overhead, nowNano uint64) (packetData []byte, m *SendInfo) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 
@@ -130,7 +130,7 @@ func (sb *SendBuffer) ReadyToSend(streamId uint32, overhead *Overhead, nowNano u
 		return nil, nil
 	}
 
-	stream := sb.streams[streamId]
+	stream := sb.streams[streamID]
 	if stream == nil {
 		return nil, nil
 	}
@@ -148,9 +148,9 @@ func (sb *SendBuffer) ReadyToSend(streamId uint32, overhead *Overhead, nowNano u
 		// Pack offset and length into key
 		key := createPacketKey(stream.sentOffset, length)
 
-		// Get dataToSend slice accounting for bias
+		// Get userData slice accounting for bias
 		offset := stream.sentOffset - stream.bias
-		splitData = stream.dataToSend[offset : offset+uint64(length)]
+		packetData = stream.userData[offset : offset+uint64(length)]
 
 		// Track range
 		m = &SendInfo{sentNr: 1, msgType: -1, offset: stream.sentOffset, sentTimeNano: nowNano} //we do not know the msg type yet
@@ -158,16 +158,16 @@ func (sb *SendBuffer) ReadyToSend(streamId uint32, overhead *Overhead, nowNano u
 
 		// Update tracking
 		stream.sentOffset = stream.sentOffset + uint64(length)
-		sb.lastReadToSendStream = streamId
+		sb.lastReadToSendStream = streamID
 
-		return splitData, m
+		return packetData, m
 	}
 
 	return nil, nil
 }
 
 // ReadyToRetransmit finds expired dataInFlightMap that need to be resent
-func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, expectedRtoNano uint64, nowNano uint64) (data []byte, m *SendInfo, err error) {
+func (sb *SendBuffer) ReadyToRetransmit(streamID uint32, overhead *Overhead, expectedRtoNano uint64, nowNano uint64) (data []byte, m *SendInfo, err error) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 
@@ -175,7 +175,7 @@ func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, exp
 		return nil, nil, nil
 	}
 
-	stream := sb.streams[streamId]
+	stream := sb.streams[streamID]
 	if stream == nil {
 		return nil, nil, nil
 	}
@@ -194,14 +194,14 @@ func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, exp
 			rangeOffset := packetKey.offset()
 			rangeLen := packetKey.length()
 
-			// Get dataToSend using bias
+			// Get userData using bias
 			dataOffset := rangeOffset - stream.bias
-			data = stream.dataToSend[dataOffset : dataOffset+uint64(rangeLen)]
+			data = stream.userData[dataOffset : dataOffset+uint64(rangeLen)]
 
 			overhead.dataOffset = dataOffset
 			maxData := overhead.CalcMaxData()
 
-			sb.lastReadToRetransmitStream = streamId
+			sb.lastReadToRetransmitStream = streamID
 			if rangeLen <= maxData {
 				if rangeLen < maxData {
 					slog.Debug("Resend/Partial", slog.Uint64("free-space", uint64(maxData-rangeLen)))
@@ -255,7 +255,7 @@ func (sb *SendBuffer) ReadyToRetransmit(streamId uint32, overhead *Overhead, exp
 func (sb *SendBuffer) AcknowledgeRange(ack *Ack) (status AckStatus, sentTimeNano uint64) {
 	sb.mu.Lock()
 
-	stream := sb.streams[ack.streamId]
+	stream := sb.streams[ack.streamID]
 	if stream == nil {
 		sb.mu.Unlock()
 		return AckNoStream, 0
@@ -277,13 +277,13 @@ func (sb *SendBuffer) AcknowledgeRange(ack *Ack) (status AckStatus, sentTimeNano
 		// Check if we have a gap between this ack and nxt range
 		nextRange, _, ok := stream.dataInFlightMap.First()
 		if !ok {
-			// No gap, safe to Remove all dataToSend
-			stream.dataToSend = stream.dataToSend[stream.sentOffset-stream.bias:]
+			// No gap, safe to Remove all userData
+			stream.userData = stream.userData[stream.sentOffset-stream.bias:]
 			sb.size -= int(stream.sentOffset - stream.bias)
 			stream.bias += stream.sentOffset - stream.bias
 		} else {
 			nextOffset := nextRange.offset()
-			stream.dataToSend = stream.dataToSend[nextOffset-stream.bias:]
+			stream.userData = stream.userData[nextOffset-stream.bias:]
 			stream.bias += nextOffset
 			sb.size -= int(nextOffset)
 		}

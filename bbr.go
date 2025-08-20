@@ -14,20 +14,20 @@ const (
 
 type BBR struct {
 	// Core state
-	state          BBRState // Current state (Startup or Normal)
-	rttMinNano     uint64   // Keep lowest RTT samples (rtt=maxuint64 means empty)
-	rttMinTimeNano uint64   // When we observed the lowest RTT sample
-	bwMax          uint64   // Bytes per second
-	bwDec          uint64
-	lastProbeTime  uint64 // When we last probed for more bandwidth (nanoeconds)
-	pacingGain     uint64 // Current pacing gain (100 = 1.0x, 277 = 2.77x)
+	state             BBRState // Current state (Startup or Normal)
+	rttMinNano        uint64   // Keep lowest RTT samples (rtt=maxuint64 means empty)
+	rttMinTimeNano    uint64   // When we observed the lowest RTT sample
+	bwMax             uint64   // Bytes per second
+	bwDec             uint64
+	lastProbeTimeNano uint64 // When we last probed for more bandwidth (nanoeconds)
+	pacingGainPct     uint64 // Current pacing gain (100 = 1.0x, 277 = 2.77x)
 }
 
 // NewBBR creates a new BBR instance with default values
 func NewBBR() BBR {
 	return BBR{
 		state:          BBRStateStartup,
-		pacingGain:     277, // BBR's startup gain of 2.77x (https://github.com/google/bbr/blob/master/Documentation/startup/gain/analysis/bbr_startup_gain.pdf)
+		pacingGainPct:  277, // BBR's startup gain of 2.77x (https://github.com/google/bbr/blob/master/Documentation/startup/gain/analysis/bbr_startup_gain.pdf)
 		rttMinNano:     math.MaxUint64,
 		rttMinTimeNano: math.MaxUint64,
 	}
@@ -36,7 +36,6 @@ func NewBBR() BBR {
 func (c *Connection) UpdateBBR(rttMeasurementNano uint64, bytesAcked uint64, nowNano uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
 
 	// 1. Update RTT samples - keep current
 	if rttMeasurementNano == 0 {
@@ -58,17 +57,17 @@ func (c *Connection) UpdateBBR(rttMeasurementNano uint64, bytesAcked uint64, now
 	}
 
 	// 2. Update bwInc/bwDec based on whether we found a new max
-	instantBw := (bytesAcked * 1_000_000) / (c.BBR.rttMinNano / 1000)
-	if instantBw > c.BBR.bwMax {
-		c.BBR.bwMax = instantBw
+	bwCurrent := (bytesAcked * 1_000_000) / (c.BBR.rttMinNano / 1000)
+	if bwCurrent > c.BBR.bwMax {
+		c.BBR.bwMax = bwCurrent
 		c.BBR.bwDec = 0
 	} else {
 		c.BBR.bwDec++
 	}
 
 	// 3. Initialize on first measurement
-	if c.BBR.lastProbeTime == 0 {
-		c.BBR.lastProbeTime = nowNano
+	if c.BBR.lastProbeTimeNano == 0 {
+		c.BBR.lastProbeTimeNano = nowNano
 	}
 
 	// 4. State-specific behavior
@@ -76,20 +75,20 @@ func (c *Connection) UpdateBBR(rttMeasurementNano uint64, bytesAcked uint64, now
 	case BBRStateStartup:
 		if c.BBR.bwDec >= 3 {
 			c.BBR.state = BBRStateNormal
-			c.BBR.pacingGain = 100
+			c.BBR.pacingGainPct = 100
 		}
 	case BBRStateNormal:
 		rttRatioPct := (c.RTT.srtt * 100) / c.BBR.rttMinNano
 
 		if rttRatioPct > 150 {
-			c.BBR.pacingGain = 75
+			c.BBR.pacingGainPct = 75
 		} else if rttRatioPct > 125 {
-			c.BBR.pacingGain = 90
-		} else if nowNano-c.BBR.lastProbeTime > c.BBR.rttMinNano*8 {
-			c.BBR.pacingGain = 125
-			c.BBR.lastProbeTime = nowNano
+			c.BBR.pacingGainPct = 90
+		} else if nowNano-c.BBR.lastProbeTimeNano > c.BBR.rttMinNano*8 {
+			c.BBR.pacingGainPct = 125
+			c.BBR.lastProbeTimeNano = nowNano
 		} else {
-			c.BBR.pacingGain = 100
+			c.BBR.pacingGainPct = 100
 		}
 	}
 }
@@ -101,7 +100,7 @@ func (c *Connection) OnDuplicateAck() {
 	// For pacing-based BBR, duplicate ACKs indicate mild congestion
 	// We respond by slightly reducing our bandwidth estimate and pacing gain
 	c.BBR.bwMax = c.BBR.bwMax * 98 / 100 // Reduce bandwidth estimate by 2%
-	c.BBR.pacingGain = 90                // Reduce pacing to 0.9x
+	c.BBR.pacingGainPct = 90             // Reduce pacing to 0.9x
 
 	// Don't necessarily need to change state - dup ACKs are less severe than loss
 	// But if we're in startup, this is a sign to exit
@@ -114,21 +113,21 @@ func (c *Connection) OnPacketLoss() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	slog.Debug("PaketLoss", 
-		slog.Uint64("bwMax", c.BBR.bwMax), 
-		slog.Uint64("newBwMax", c.BBR.bwMax * 95 / 100), 
-		slog.Uint64("gain", c.BBR.pacingGain), 
+	slog.Debug("PaketLoss",
+		slog.Uint64("bwMax", c.BBR.bwMax),
+		slog.Uint64("newBwMax", c.BBR.bwMax*95/100),
+		slog.Uint64("gain", c.BBR.pacingGainPct),
 		slog.Uint64("newGain", 100),
 		slog.Any("state", c.BBR.state),
 		slog.Any("newState", BBRStateNormal),
 	)
-	
+
 	c.BBR.bwMax = c.BBR.bwMax * 95 / 100 // Reduce by 5%
-	c.BBR.pacingGain = 100               // Reset to 1.0x
+	c.BBR.pacingGainPct = 100            // Reset to 1.0x
 	c.BBR.state = BBRStateNormal
 }
 
-func (c *Connection) GetPacingInterval(packetSize uint64) uint64 {
+func (c *Connection) CalcPacingInterval(packetSize uint64) uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -141,16 +140,16 @@ func (c *Connection) GetPacingInterval(packetSize uint64) uint64 {
 	}
 
 	// Apply pacing gain to bandwidth
-	effectiveRate := (c.BBR.bwMax * c.BBR.pacingGain) / 100
+	adjustedBandwidth := (c.BBR.bwMax * c.BBR.pacingGainPct) / 100
 
-	if effectiveRate == 0 {
+	if adjustedBandwidth == 0 {
 		return 10 * msNano // 10ms fallback only for truly broken state
 	}
-	
-	// Calculate inter-packet interval in nanoseconds
-	// packetSize is in bytes, effectiveRate is in bytes/second
-	// interval = (packetSize / effectiveRate) * 1,000,000 nanoseconds/second
-	intervalNano := (packetSize * 1_000_000_000) / effectiveRate
 
-	return intervalNano
+	// Calculate inter-packet interval in nanoseconds
+	// packetSize is in bytes, adjustedBandwidth is in bytes/second
+	// interval = (packetSize / adjustedBandwidth) * 1,000,000 nanoseconds/second
+	pacingIntervalNano := (packetSize * 1_000_000_000) / adjustedBandwidth
+
+	return pacingIntervalNano
 }

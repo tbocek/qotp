@@ -43,8 +43,8 @@ type Connection struct {
 	sharedSecretRoll []byte
 
 	// Buffers and flow control
-	sndBuf       *SendBuffer
-	rcvBuf       *ReceiveBuffer
+	snd          *SendBuffer
+	rcv          *ReceiveBuffer
 	dataInFlight int
 	rcvWndSize   uint64
 	mtu          uint64
@@ -87,37 +87,37 @@ func (c *Connection) Close() {
 	}
 }
 
-func (c *Connection) Stream(streamId uint32) (s *Stream) {
+func (c *Connection) Stream(streamID uint32) (s *Stream) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	v := c.streams.Get(streamId)
+	v := c.streams.Get(streamID)
 	if v != nil {
 		return v
 	}
 
 	s = &Stream{
-		streamId: streamId,
+		streamID: streamID,
 		conn:     c,
 		mu:       sync.Mutex{},
 		state:    StreamStateOpen,
 	}
-	c.streams.Put(streamId, s)
+	c.streams.Put(streamID, s)
 	return s
 }
 
-func (c *Connection) decode(decryptedData []byte, rawLen int, nowNano uint64) (s *Stream, err error) {
-	p, _, payloadData, err := DecodePayload(decryptedData)
+func (c *Connection) decode(packetData []byte, rawLen int, nowNano uint64) (s *Stream, err error) {
+	p, _, userData, err := DecodePayload(packetData)
 	if err != nil {
 		slog.Info("error in decoding payload from new connection", slog.Any("error", err))
 		return nil, err
 	}
 
 	c.rcvWndSize = p.RcvWndSize
-	s = c.Stream(p.StreamId)
+	s = c.Stream(p.StreamID)
 
 	if p.Ack != nil {
-		ackStatus, sentTimeNano := c.sndBuf.AcknowledgeRange(p.Ack) //remove data from rbSnd if we got the ack
+		ackStatus, sentTimeNano := c.snd.AcknowledgeRange(p.Ack) //remove data from rbSnd if we got the ack
 		if ackStatus == AckStatusOk {
 			c.dataInFlight -= rawLen
 		} else if ackStatus == AckDup {
@@ -134,11 +134,11 @@ func (c *Connection) decode(decryptedData []byte, rawLen int, nowNano uint64) (s
 		}
 	}
 
-	if len(payloadData) > 0 {
-		c.rcvBuf.Insert(s.streamId, p.StreamOffset, payloadData)
+	if len(userData) > 0 {
+		c.rcv.Insert(s.streamID, p.StreamOffset, userData)
 	}
 	if p.IsClose {
-		c.rcvBuf.CloseAt(s.streamId, p.StreamOffset)
+		c.rcv.CloseAt(s.streamID, p.StreamOffset)
 	}
 
 	return s, nil
@@ -151,49 +151,49 @@ func (c *Connection) updateState(s *Stream, isClose bool) {
 	}
 	if s.state == StreamStateCloseRequest && isClose {
 		s.state = StreamStateClosed
-		c.cleanupStream(s.streamId)
+		c.cleanupStream(s.streamID)
 	}
 }
 
 // We need to check if we remove the current state, if yes, then move the state to the previous stream
-func (c *Connection) cleanupStream(streamId uint32) {
-	slog.Debug("Cleanup/Stream", debugGId(), c.debug(), slog.Uint64("streamId", uint64(streamId)))
+func (c *Connection) cleanupStream(streamID uint32) {
+	slog.Debug("Cleanup/Stream", getGoroutineID(), c.debug(), slog.Uint64("streamID", uint64(streamID)))
 
-	if c.listener.iter.nextK2 != nil && streamId == *c.listener.iter.nextK2 {
+	if c.listener.iter.nextInnerKey != nil && streamID == *c.listener.iter.nextInnerKey {
 		var ok bool
-		*c.listener.iter.nextK2, _, ok = c.streams.Next(streamId)
+		*c.listener.iter.nextInnerKey, _, ok = c.streams.Next(streamID)
 		if !ok {
-			*c.listener.iter.nextK2, _, _ = c.streams.First()
+			*c.listener.iter.nextInnerKey, _, _ = c.streams.First()
 		}
 	}
 
-	c.streams.Remove(streamId)
+	c.streams.Remove(streamID)
 	//even if the stream size is 0, do not remove the connection yet, only after a certain timeout,
 	// so that BBR, RTT, is preserved for a bit
 }
 
-func (c *Connection) cleanupConn(connId uint64) {
-	slog.Debug("Cleanup/Stream", debugGId(), c.debug(), slog.Uint64("connId", connId))
+func (c *Connection) cleanupConn(connID uint64) {
+	slog.Debug("Cleanup/Stream", getGoroutineID(), c.debug(), slog.Uint64("connID", connID))
 
-	if c.listener.iter.nextK1 != nil && connId == *c.listener.iter.nextK1 {
+	if c.listener.iter.nextOuterKey != nil && connID == *c.listener.iter.nextOuterKey {
 		var ok bool
-		*c.listener.iter.nextK1, _, ok = c.listener.connMap.Next(connId)
+		*c.listener.iter.nextOuterKey, _, ok = c.listener.connMap.Next(connID)
 		if !ok {
-			*c.listener.iter.nextK1, _, _ = c.listener.connMap.First()
+			*c.listener.iter.nextOuterKey, _, _ = c.listener.connMap.First()
 		}
 	}
 
-	c.listener.connMap.Remove(connId)
+	c.listener.connMap.Remove(connID)
 }
 
-func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacingNano uint64, err error) {
+func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacingIntervalNano uint64, err error) {
 	//update state for receiver
-	ack := c.rcvBuf.GetSndAck()
+	ack := c.rcv.GetSndAck()
 
 	// If close requested, do not send any data, just send ack
 	if s.state == StreamStateCloseReceived {
 		s.state = StreamStateClosed
-		slog.Debug(" Flush/Close", debugGId(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
+		slog.Debug(" Flush/Close", getGoroutineID(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
 		if ack == nil {
 			return 0, 0, MinDeadLine, nil
 		}
@@ -202,7 +202,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 
 	// Respect pacing
 	if c.nextWriteTime > nowNano {
-		slog.Debug(" Flush/Pacing", debugGId(), s.debug(), c.debug(),
+		slog.Debug(" Flush/Pacing", getGoroutineID(), s.debug(), c.debug(),
 			slog.Uint64("waitTime:ms", (c.nextWriteTime-nowNano)/msNano),
 			slog.Bool("ack?", ack != nil))
 		if ack == nil {
@@ -212,7 +212,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 	}
 	//Respect rwnd
 	if c.dataInFlight+startMtu > int(c.rcvWndSize) {
-		slog.Debug(" Flush/Rwnd/Rcv", debugGId(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
+		slog.Debug(" Flush/Rwnd/Rcv", getGoroutineID(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
 		if ack == nil {
 			return 0, 0, MinDeadLine, nil
 		}
@@ -227,7 +227,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 	}
 
 	// Retransmission case
-	splitData, m, err := c.sndBuf.ReadyToRetransmit(s.streamId, overhead, c.rtoNano(), nowNano)
+	splitData, m, err := c.snd.ReadyToRetransmit(s.streamID, overhead, c.rtoNano(), nowNano)
 	if err != nil {
 		return 0, 0, 0, err
 	}
@@ -236,7 +236,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 	//otherwise go ahead
 	if m != nil && splitData != nil {
 		c.OnPacketLoss()
-		slog.Debug(" Flush/Retransmit", debugGId(), s.debug(), m.debug(), c.debug())
+		slog.Debug(" Flush/Retransmit", getGoroutineID(), s.debug(), m.debug(), c.debug())
 
 		encData, err := s.encode(splitData, m.offset, ack, m.msgType)
 		if err != nil {
@@ -253,17 +253,17 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 		}
 
 		packetLen := len(splitData)
-		pacingNano = c.GetPacingInterval(uint64(packetLen))
+		pacingIntervalNano = c.CalcPacingInterval(uint64(packetLen))
 
-		c.nextWriteTime = nowNano + pacingNano
-		return raw, packetLen, pacingNano, nil
+		c.nextWriteTime = nowNano + pacingIntervalNano
+		return raw, packetLen, pacingIntervalNano, nil
 	}
 
 	//next check if we can send packets, during handshake we can only send 1 packet
 	if !c.state.isHandshakeComplete && !c.state.isFirstPacketProduced || c.state.isHandshakeComplete {
-		splitData, m = c.sndBuf.ReadyToSend(s.streamId, overhead, nowNano)
+		splitData, m = c.snd.ReadyToSend(s.streamID, overhead, nowNano)
 		if m != nil && splitData != nil {
-			slog.Debug(" Flush/Send", debugGId(), s.debug(), m.debug(), c.debug())
+			slog.Debug(" Flush/Send", getGoroutineID(), s.debug(), m.debug(), c.debug())
 			encData, err := s.encode(splitData, m.offset, ack, s.msgType())
 			if err != nil {
 				return 0, 0, 0, err
@@ -281,20 +281,20 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 
 			packetLen := len(splitData)
 			c.dataInFlight += packetLen
-			pacingNano = c.GetPacingInterval(uint64(packetLen))
-			c.nextWriteTime = nowNano + pacingNano
-			return raw, packetLen, pacingNano, nil
+			pacingIntervalNano = c.CalcPacingInterval(uint64(len(encData)))
+			c.nextWriteTime = nowNano + pacingIntervalNano
+			return raw, packetLen, pacingIntervalNano, nil
 		}
 	}
 
 	if ack == nil {
 		return 0, 0, MinDeadLine, nil
 	}
-	slog.Debug(" Flush/Ack", debugGId(), s.debug(), m.debug(), c.debug())
+	slog.Debug(" Flush/Ack", getGoroutineID(), s.debug(), m.debug(), c.debug())
 	return c.writeAck(s, ack, nowNano)
 }
 
-func (c *Connection) writeAck(stream *Stream, ack *Ack, nowNano uint64) (raw int, data int, pacingNano uint64, err error) {
+func (c *Connection) writeAck(stream *Stream, ack *Ack, nowNano uint64) (raw int, data int, pacingIntervalNano uint64, err error) {
 	encData, err := stream.encode([]byte{}, stream.currentOffset(), ack, stream.msgType())
 	if err != nil {
 		return 0, 0, 0, err
@@ -306,7 +306,9 @@ func (c *Connection) writeAck(stream *Stream, ack *Ack, nowNano uint64) (raw int
 	if raw != len(encData) {
 		return 0, 0, 0, fmt.Errorf("could not send all data. This should not happen.")
 	}
-	return raw, 0, MinDeadLine, nil
+	pacingIntervalNano = c.CalcPacingInterval(uint64(len(encData)))
+	c.nextWriteTime = nowNano + pacingIntervalNano
+	return raw, 0, pacingIntervalNano, nil
 }
 
 func (c *Connection) debug() slog.Attr {
@@ -314,6 +316,6 @@ func (c *Connection) debug() slog.Attr {
 		slog.Uint64("nextWrt:ms", c.nextWriteTime/msNano),
 		//slog.Uint64("nextWrt:ns", c.nextWriteTime),
 		slog.Int("inFlight", c.dataInFlight+startMtu),
-		slog.Int("rcvBuf", c.rcvBuf.capacity-c.rcvBuf.size),
+		slog.Int("rcvBuf", c.rcv.capacity-c.rcv.size),
 		slog.Uint64("rcvWnd", c.rcvWndSize))
 }

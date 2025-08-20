@@ -10,14 +10,13 @@ import (
 	"log/slog"
 	"math"
 	"net"
-	"reflect"
 	"runtime"
 	"strings"
 	"time"
 )
 
 // based on: https://github.com/quic-go/quic-go/blob/d540f545b0b70217220eb0fbd5278ece436a7a20/sys_conn_df_linux.go#L15
-func setDF(conn *net.UDPConn) error {
+func setDontFragment(conn *net.UDPConn) error {
 	rawConn, err := conn.SyscallConn()
 	if err != nil {
 		return err
@@ -46,7 +45,7 @@ func setDF(conn *net.UDPConn) error {
 	return nil
 }
 
-func debugGId() slog.Attr {
+func getGoroutineID() slog.Attr {
 	buf := make([]byte, 64)
 	n := runtime.Stack(buf, false)
 	buf = buf[:n]
@@ -121,14 +120,6 @@ func Uint64(b []byte) uint64 {
 		uint64(b[4])<<32 | uint64(b[5])<<40 | uint64(b[6])<<48 | uint64(b[7])<<56
 }
 
-func isNil(v any) bool {
-	if v == nil {
-		return true
-	}
-	rv := reflect.ValueOf(v)
-	return rv.Kind() == reflect.Ptr && rv.IsNil()
-}
-
 func decodeHex(pubKeyHex string) ([]byte, error) {
 	if strings.HasPrefix(pubKeyHex, "0x") {
 		pubKeyHex = strings.Replace(pubKeyHex, "0x", "", 1)
@@ -161,6 +152,47 @@ func generateTwoKeys() (*ecdh.PrivateKey, *ecdh.PrivateKey, error) {
 	}
 	return prvKey1, prvKey2, nil
 }
+
+type packetKey [10]byte
+func (p packetKey) offset() uint64 {
+	return Uint64(p[:8])
+}
+func (p packetKey) length() uint16 {
+	return Uint16(p[8:])
+}
+func (p packetKey) less(other packetKey) bool {
+	for i := range len(p) {
+		if p[i] < other[i] {
+			return true
+		}
+		if p[i] > other[i] {
+			return false
+		}
+	}
+	return false
+}
+func createPacketKey(offset uint64, length uint16) packetKey {
+	p := packetKey{}
+	PutUint64(p[:8], offset)
+	PutUint16(p[8:], length)
+	return p
+}
+
+type connStreamKey [12]byte
+func (csk connStreamKey) connID() uint64 {
+	return Uint64(csk[:8])
+}
+func (csk connStreamKey) streamID() uint32 {
+	return Uint32(csk[8:])
+}
+func createConnStreamKey(connID uint64, streamID uint32) connStreamKey {
+	csk := connStreamKey{}
+	PutUint64(csk[:8], connID)
+	PutUint32(csk[8:], streamID)
+	return csk
+}
+
+// ******************* Time **********************
 
 var specificNano uint64 = math.MaxUint64
 

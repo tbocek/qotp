@@ -35,7 +35,7 @@ func TestConnection_GetOrNewStreamRcv(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			stream := conn.Stream(tt.streamID)
 			assert.NotNil(t, stream)
-			assert.Equal(t, tt.streamID, stream.streamId)
+			assert.Equal(t, tt.streamID, stream.streamID)
 		})
 	}
 }

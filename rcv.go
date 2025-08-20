@@ -33,36 +33,6 @@ type ReceiveBuffer struct {
 	mu         *sync.Mutex
 }
 
-type packetKey [10]byte
-
-func (p packetKey) offset() uint64 {
-	return Uint64(p[:8])
-}
-
-func (p packetKey) length() uint16 {
-	return Uint16(p[8:])
-}
-
-func (p packetKey) less(other packetKey) bool {
-	for i := range len(p) {
-		if p[i] < other[i] {
-			return true
-		}
-		if p[i] > other[i] {
-			return false
-		}
-	}
-	return false
-}
-
-func createPacketKey(offset uint64, length uint16) packetKey {
-	p := packetKey{}
-	PutUint64(p[:8], offset)
-	PutUint16(p[8:], length)
-	return p
-}
-
-
 func NewRcvBuffer() *RcvBuffer {
 	return &RcvBuffer{
 		segments: NewSortedMap[packetKey, []byte](func(a, b packetKey) bool {
@@ -85,17 +55,17 @@ func NewReceiveBuffer(capacity int) *ReceiveBuffer {
 	}
 }
 
-func (rb *ReceiveBuffer) Insert(streamId uint32, offset uint64, decodedData []byte) RcvInsertStatus {
-	dataLen := len(decodedData)
+func (rb *ReceiveBuffer) Insert(streamID uint32, offset uint64, userData []byte) RcvInsertStatus {
+	dataLen := len(userData)
 
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
 	// Get or create stream buffer
-	stream := rb.streams[streamId]
+	stream := rb.streams[streamID]
 	if stream == nil {
 		stream = NewRcvBuffer()
-		rb.streams[streamId] = stream
+		rb.streams[streamID] = stream
 	}
 
 	if rb.size+dataLen > rb.capacity {
@@ -106,7 +76,7 @@ func (rb *ReceiveBuffer) Insert(streamId uint32, offset uint64, decodedData []by
 
 	//now we need to add the ack to the list even if it's a duplicate,
 	//as the ack may have been lost, we need to send it again
-	rb.ackList = append(rb.ackList, &Ack{streamId: streamId, offset: offset, len: uint16(dataLen)})
+	rb.ackList = append(rb.ackList, &Ack{streamID: streamID, offset: offset, len: uint16(dataLen)})
 	
 	if offset+uint64(dataLen) <= stream.nextInOrderOffsetToWaitFor {
 		slog.Debug("Rcv/Duplicate/WithUser", slog.Uint64("offset", offset), slog.Int("len(data)", dataLen))
@@ -118,30 +88,30 @@ func (rb *ReceiveBuffer) Insert(streamId uint32, offset uint64, decodedData []by
 		return RcvInsertDuplicate
 	}
 
-	stream.segments.Put(key, decodedData)
+	stream.segments.Put(key, userData)
 	rb.size += dataLen
 
 	return RcvInsertOk
 }
 
-func (rb *ReceiveBuffer) CloseAt(streamId uint32, offset uint64)  {
+func (rb *ReceiveBuffer) CloseAt(streamID uint32, offset uint64)  {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
 	// Get or create stream buffer
-	stream := rb.streams[streamId]
+	stream := rb.streams[streamID]
 	if stream == nil {
 		stream = NewRcvBuffer()
-		rb.streams[streamId] = stream
+		rb.streams[streamID] = stream
 	}
 	stream.closeAtOffset = &offset
 }
 
-func (rb *ReceiveBuffer) GetOffsetClosedAt(streamId uint32) (offset *uint64)  {
+func (rb *ReceiveBuffer) GetOffsetClosedAt(streamID uint32) (offset *uint64)  {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
-	stream := rb.streams[streamId]
+	stream := rb.streams[streamID]
 	if stream == nil {
 		return nil
 	}
@@ -149,7 +119,7 @@ func (rb *ReceiveBuffer) GetOffsetClosedAt(streamId uint32) (offset *uint64)  {
 	return stream.closeAtOffset
 }
 
-func (rb *ReceiveBuffer) RemoveOldestInOrder(streamId uint32) (offset uint64, data []byte) {
+func (rb *ReceiveBuffer) RemoveOldestInOrder(streamID uint32) (offset uint64, data []byte) {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
@@ -157,7 +127,7 @@ func (rb *ReceiveBuffer) RemoveOldestInOrder(streamId uint32) (offset uint64, da
 		return 0, nil
 	}
 
-	stream := rb.streams[streamId]
+	stream := rb.streams[streamID]
 	if stream == nil {
 		return 0, nil
 	}

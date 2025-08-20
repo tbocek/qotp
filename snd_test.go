@@ -11,20 +11,20 @@ func TestInsert(t *testing.T) {
 	sb := NewSendBuffer(1000)
 
 	// Basic insert
-	_, status := sb.Insert(1, []byte("test"))
+	_, status := sb.QueueData(1, []byte("test"))
 	assert.Equal(InsertStatusOk, status)
 
 	// Verify stream created correctly
 	stream := sb.streams[1]
 
-	assert.Equal([]byte("test"), stream.dataToSend)
+	assert.Equal([]byte("test"), stream.userData)
 	assert.Equal(uint64(4), stream.unsentOffset)
 	assert.Equal(uint64(0), stream.sentOffset)
 	assert.Equal(uint64(0), stream.bias)
 
 	// Test capacity limit
 	sb = NewSendBuffer(3)
-	nr, status := sb.Insert(1, []byte("test"))
+	nr, status := sb.QueueData(1, []byte("test"))
 	assert.Equal(InsertStatusOk, status)
 	assert.Equal(3, nr)
 
@@ -33,7 +33,7 @@ func TestInsert(t *testing.T) {
 	stream = NewStreamBuffer()
 	stream.unsentOffset = math.MaxUint64 - 2
 	sb.streams[1] = stream
-	_, status = sb.Insert(1, []byte("test"))
+	_, status = sb.QueueData(1, []byte("test"))
 	assert.Equal(InsertStatusOk, status) // Should succeed now
 
 	stream = sb.streams[1]
@@ -48,8 +48,8 @@ func TestReadyToSend(t *testing.T) {
 	nowMillis2 := uint64(100)
 
 	// Insert data
-	sb.Insert(1, []byte("test1"))
-	sb.Insert(2, []byte("test2"))
+	sb.QueueData(1, []byte("test1"))
+	sb.QueueData(2, []byte("test2"))
 
 	// Basic send
 	data, _ := sb.ReadyToSend(1, &Overhead{debug: 10}, nowMillis2)
@@ -66,7 +66,7 @@ func TestReadyToSend(t *testing.T) {
 	sb.ReadyToSend(1, &Overhead{debug: 10}, nowMillis2)
 
 	// Test MTU limiting
-	sb.Insert(3, []byte("toolongdata"))
+	sb.QueueData(3, []byte("toolongdata"))
 	data, _ = sb.ReadyToSend(3, &Overhead{debug: 4}, nowMillis2)
 	assert.Equal([]byte("tool"), data)
 
@@ -80,8 +80,8 @@ func TestReadyToRetransmit(t *testing.T) {
 	sb := NewSendBuffer(1000)
 
 	// Setup test data
-	sb.Insert(1, []byte("test1"))
-	sb.Insert(2, []byte("test2"))
+	sb.QueueData(1, []byte("test1"))
+	sb.QueueData(2, []byte("test2"))
 
 	sb.ReadyToSend(1, &Overhead{debug: 10}, 100) // Initial send at time 100
 	sb.ReadyToSend(2, &Overhead{debug: 10}, 100) // Initial send at time 100
@@ -101,7 +101,7 @@ func TestReadyToRetransmit(t *testing.T) {
 
 	// Test MTU split
 	sb = NewSendBuffer(1000)
-	sb.Insert(1, []byte("testdata"))
+	sb.QueueData(1, []byte("testdata"))
 	sb.ReadyToSend(1, &Overhead{debug: 100}, 100) // Initial send
 
 	data, _, err = sb.ReadyToRetransmit(1, &Overhead{debug: 4}, 99, 200)
@@ -120,17 +120,17 @@ func TestReadyToRetransmit(t *testing.T) {
 func TestAcknowledgeRangeBasic(t *testing.T) {
 	assert := require.New(t)
 	sb := NewSendBuffer(1000)
-	sb.Insert(1, []byte("testdata"))
+	sb.QueueData(1, []byte("testdata"))
 	sb.ReadyToSend(1, &Overhead{debug: 4}, 100)
 	stream := sb.streams[1]
 
 	_, time := sb.AcknowledgeRange(&Ack{
-		streamId: 1,
+		streamID: 1,
 		offset:   0,
 		len:      4,
 	})
 	assert.Equal(uint64(100), time)
-	assert.Equal(4, len(stream.dataToSend))
+	assert.Equal(4, len(stream.userData))
 	assert.Equal(uint64(4), stream.bias)
 }
 
@@ -138,7 +138,7 @@ func TestAcknowledgeRangeNonExistentStream(t *testing.T) {
 	assert := require.New(t)
 	sb := NewSendBuffer(1000)
 	_, time := sb.AcknowledgeRange(&Ack{
-		streamId: 1,
+		streamID: 1,
 		offset:   0,
 		len:      4,
 	})
@@ -151,7 +151,7 @@ func TestAcknowledgeRangeNonExistentRange(t *testing.T) {
 	stream := NewStreamBuffer()
 	sb.streams[1] = stream
 	_, time := sb.AcknowledgeRange(&Ack{
-		streamId: 1,
+		streamID: 1,
 		offset:   0,
 		len:      4,
 	})

@@ -2,10 +2,10 @@ package qotp
 
 // NestedIterator iterates through nested maps
 type NestedIterator[K1, K2 comparable, V1, V2 any] struct {
-	outer             *LinkedMap[K1, V1]
-	getInner          func(V1) *LinkedMap[K2, V2]
-	currentK1, nextK1 *K1
-	currentK2, nextK2 *K2
+	outer                         *LinkedMap[K1, V1]
+	getInner                      func(V1) *LinkedMap[K2, V2]
+	currentOuterKey, nextOuterKey *K1
+	currentInnerKey, nextInnerKey *K2
 }
 
 // NewNestedIterator creates a simple nested iterator
@@ -20,65 +20,65 @@ func NewNestedIterator[K1, K2 comparable, V1, V2 any](
 }
 
 // Next returns (outerValue, innerValue)
-func (it *NestedIterator[K1, K2, V1, V2]) Next() (currentV1 V1, currentV2 V2) {
+func (it *NestedIterator[K1, K2, V1, V2]) Next() (currentOuter V1, currentInner V2) {
 	var ok bool
-	var zeroV1 V1
-	var zeroV2 V2
-	var tmpK1 K1
-	var tmpK2 K2
+	var zeroOuter V1
+	var zeroInner V2
+	var tmpOuterKey K1
+	var tmpInnerKey K2
 
-	it.currentK1 = nil
-	if it.nextK1 != nil {
-		it.currentK1 = it.nextK1
+	it.currentOuterKey = nil
+	if it.nextOuterKey != nil {
+		it.currentOuterKey = it.nextOuterKey
 	}
 
-	it.currentK2 = nil
-	if it.nextK2 != nil {
-		it.currentK2 = it.nextK2
+	it.currentInnerKey = nil
+	if it.nextInnerKey != nil {
+		it.currentInnerKey = it.nextInnerKey
 	}
 
-	if it.currentK1 == nil || !it.outer.Contains(*it.currentK1) {
-		tmpK1, currentV1, ok = it.outer.First()
+	if it.currentOuterKey == nil || !it.outer.Contains(*it.currentOuterKey) {
+		tmpOuterKey, currentOuter, ok = it.outer.First()
 		if !ok {
-			return zeroV1, zeroV2
+			return zeroOuter, zeroInner
 		}
-		it.currentK1 = &tmpK1
+		it.currentOuterKey = &tmpOuterKey
 	} else {
-		currentV1 = it.outer.Get(*it.currentK1)
+		currentOuter = it.outer.Get(*it.currentOuterKey)
 	}
 
-	innerMap := it.getInner(currentV1)
-	if it.currentK2 == nil || !innerMap.Contains(*it.currentK2) {
-		tmpK2, currentV2, ok = innerMap.First()
+	innerMap := it.getInner(currentOuter)
+	if it.currentInnerKey == nil || !innerMap.Contains(*it.currentInnerKey) {
+		tmpInnerKey, currentInner, ok = innerMap.First()
 		if !ok {
-			currentV2 = zeroV2
+			currentInner = zeroInner
 		}
-		it.currentK2 = &tmpK2
+		it.currentInnerKey = &tmpInnerKey
 	} else {
-		currentV2 = innerMap.Get(*it.currentK2)
+		currentInner = innerMap.Get(*it.currentInnerKey)
 	}
 
 	//now we have valid current k1/k2, v1/v2, search next
-	tmpK1 = *it.currentK1
-	tmpK2, _, ok = innerMap.Next(*it.currentK2)
+	tmpOuterKey = *it.currentOuterKey
+	tmpInnerKey, _, ok = innerMap.Next(*it.currentInnerKey)
 	if !ok { //reached end of streams / inner, go to next connection / outer
-		var nextV1 V1
-		tmpK1, nextV1, ok = it.outer.Next(*it.currentK1)
+		var nextOuter V1
+		tmpOuterKey, nextOuter, ok = it.outer.Next(*it.currentOuterKey)
 		if !ok { // handle wrap
-			tmpK1, nextV1, ok = it.outer.First()
+			tmpOuterKey, nextOuter, ok = it.outer.First()
 			if !ok { // no elements
-				return zeroV1, zeroV2
+				return zeroOuter, zeroInner
 			}
 		}
 
 		//in any case on next conn /outer, get first stearm /inner
-		innerMap = it.getInner(nextV1)
-		tmpK2, _, ok = innerMap.First()
+		innerMap = it.getInner(nextOuter)
+		tmpInnerKey, _, ok = innerMap.First()
 		if !ok { //if an inner is empty, return empty, we handle outside
-			currentV2 = zeroV2
+			currentInner = zeroInner
 		}
 	}
-	it.nextK1 = &tmpK1
-	it.nextK2 = &tmpK2
-	return currentV1, currentV2
+	it.nextOuterKey = &tmpOuterKey
+	it.nextInnerKey = &tmpInnerKey
+	return currentOuter, currentInner
 }

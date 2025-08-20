@@ -31,7 +31,7 @@ var (
 func TestStreamEncodeClosedStates(t *testing.T) {
 	// Setup base connection
 	conn := &Connection{
-		rcvBuf: NewReceiveBuffer(1000),
+		rcv: NewReceiveBuffer(1000),
 		keys: ConnectionKeys{
 			pubKeyEpRcv:     prvEpBob.PublicKey(),
 			prvKeyEpSnd:     prvEpAlice,
@@ -87,7 +87,7 @@ func TestStreamEncodeHandshakeTypes(t *testing.T) {
 				prvKeyEpSndRoll: prvEpAliceRoll,
 			},
 			listener: &Listener{prvKeyId: prvIdAlice},
-			rcvBuf:    NewReceiveBuffer(1000),
+			rcv:    NewReceiveBuffer(1000),
 		}
 
 		if !tc.isSender {
@@ -131,7 +131,7 @@ func TestStreamEncodeDataTypes(t *testing.T) {
 			pubKeyEpRcv:     prvEpBob.PublicKey(),
 		},
 		listener:     &Listener{prvKeyId: prvIdAlice},
-		rcvBuf:        NewReceiveBuffer(1000),
+		rcv:        NewReceiveBuffer(1000),
 		sharedSecret: seed1[:],
 		streams:      NewLinkedMap[uint32, *Stream](),
 	}
@@ -141,7 +141,7 @@ func TestStreamEncodeDataTypes(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, output)
 	_, msgType, _ := decodeHeader(output)
-	assert.Equal(t, DataRot, msgType)
+	assert.Equal(t, DataRoll, msgType)
 
 	// Test regular Data message
 	connData := &Connection{
@@ -158,7 +158,7 @@ func TestStreamEncodeDataTypes(t *testing.T) {
 			pubKeyEpRcv: prvEpBob.PublicKey(),
 		},
 		listener:     &Listener{prvKeyId: prvIdAlice},
-		rcvBuf:        NewReceiveBuffer(1000),
+		rcv:        NewReceiveBuffer(1000),
 		sharedSecret: seed1[:],
 		streams:      NewLinkedMap[uint32, *Stream](),
 	}
@@ -200,8 +200,8 @@ func TestEndToEndCodec(t *testing.T) {
 				prvKeyEpSndRoll: prvEpAliceRoll,
 			},
 			listener: lAlice,
-			sndBuf:    NewSendBuffer(rcvBufferCapacity),
-			rcvBuf:    NewReceiveBuffer(12000),
+			snd:    NewSendBuffer(rcvBufferCapacity),
+			rcv:    NewReceiveBuffer(12000),
 			streams:  NewLinkedMap[uint32, *Stream](),
 		}
 		connId := binary.LittleEndian.Uint64(prvEpAlice.PublicKey().Bytes())
@@ -234,7 +234,7 @@ func TestEndToEndCodec(t *testing.T) {
 			require.NoError(t, err, fmt.Sprintf("Size %d", size))
 
 			if size > 0 {
-				_, rb := s.conn.rcvBuf.RemoveOldestInOrder(s.streamId)
+				_, rb := s.conn.rcv.RemoveOldestInOrder(s.streamID)
 				assert.Equal(t, testData, rb, fmt.Sprintf("Data mismatch for Size %d", size))
 			}
 		}
@@ -269,7 +269,7 @@ func TestFullHandshakeFlow(t *testing.T) {
 			prvKeyEpSndRoll: prvEpAliceRoll,
 		},
 		listener: lAlice,
-		rcvBuf:    NewReceiveBuffer(1000),
+		rcv:    NewReceiveBuffer(1000),
 		streams:  NewLinkedMap[uint32, *Stream](),
 	}
 	lAlice.connMap.Put(connAlice.connId, connAlice)
@@ -299,7 +299,7 @@ func TestFullHandshakeFlow(t *testing.T) {
 	require.NoError(t, err)
 	s, err := c.decode(m.PayloadRaw, 0, 0)
 	require.NoError(t, err)
-	_, rb := s.conn.rcvBuf.RemoveOldestInOrder(s.streamId)
+	_, rb := s.conn.rcv.RemoveOldestInOrder(s.streamID)
 	require.Equal(t, InitRcv, m.MsgType)
 	require.Equal(t, testData, rb)
 
@@ -331,7 +331,7 @@ func TestFullHandshakeFlow(t *testing.T) {
 
 	s, err = c.decode(msg.PayloadRaw, 0, 0)
 	require.NoError(t, err)
-	_, rb = s.conn.rcvBuf.RemoveOldestInOrder(s.streamId)
+	_, rb = s.conn.rcv.RemoveOldestInOrder(s.streamID)
 	require.Equal(t, dataMsg, rb)
 }
 
@@ -348,7 +348,7 @@ func TestStreamMsgType(t *testing.T) {
 		{false, true, false, false, InitCryptoRcv},
 		{false, false, true, false, InitSnd},
 		{false, false, false, false, InitRcv},
-		{true, false, false, true, DataRot},
+		{true, false, false, true, DataRoll},
 		{true, false, false, false, Data},
 	}
 

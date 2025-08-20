@@ -345,7 +345,7 @@ func TestBBR(t *testing.T) {
 	dataARemaining, err := streamA.Write(dataA)
 	assert.Nil(t, err)
 	assert.Equal(t, 1, len(dataARemaining))
-	assert.Equal(t, 16777216, streamA.conn.sndBuf.size)
+	assert.Equal(t, 16777216, streamA.conn.snd.size)
 	streamA.conn.listener.Flush(specificNano)
 
 	//send data

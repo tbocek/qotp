@@ -10,8 +10,8 @@ import (
 )
 
 func TestEncodeDecodeMinimalPayload(t *testing.T) {
-	original := &PayloadMeta{
-		StreamId:     12345,
+	original := &PayloadHeader{
+		StreamID:     12345,
 		StreamOffset: 0,
 	}
 
@@ -20,7 +20,7 @@ func TestEncodeDecodeMinimalPayload(t *testing.T) {
 	decoded, _, decodedData, err := DecodePayload(encoded)
 	require.NoError(t, err, "Failed to decode minimal payload")
 
-	assert.Equal(t, original.StreamId, decoded.StreamId, "StreamId mismatch")
+	assert.Equal(t, original.StreamID, decoded.StreamID, "StreamId mismatch")
 	assert.Equal(t, original.StreamOffset, decoded.StreamOffset, "StreamOffset mismatch")
 	assert.Empty(t, decodedData, "Data should be empty")
 }
@@ -38,13 +38,13 @@ func TestPayloadWithAllFeatures(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		original := &PayloadMeta{
+		original := &PayloadHeader{
 			IsClose:      tc.isClose,
 			IsSender:     true,
-			StreamId:     1,
+			StreamID:     1,
 			StreamOffset: 9999,
 			RcvWndSize:   tc.rcvWndSize,
-			Ack:          &Ack{streamId: 1, offset: 123456, len: 10},
+			Ack:          &Ack{streamID: 1, offset: 123456, len: 10},
 		}
 
 		originalData := []byte("test data")
@@ -54,7 +54,7 @@ func TestPayloadWithAllFeatures(t *testing.T) {
 		require.NoError(t, err, "Failed to decode payload")
 		assert.Equal(t, original.IsClose, decoded.IsClose)
 		assert.Equal(t, original.IsSender, decoded.IsSender)
-		assert.Equal(t, original.StreamId, decoded.StreamId)
+		assert.Equal(t, original.StreamID, decoded.StreamID)
 		assert.Equal(t, original.StreamOffset, decoded.StreamOffset)
 		assert.Equal(t, originalData, decodedData)
 		require.NotNil(t, decoded.Ack)
@@ -65,22 +65,22 @@ func TestPayloadWithAllFeatures(t *testing.T) {
 // Merged TestEmptyData and TestAckHandling into basic payload tests
 func TestPayloadBasicFeatures(t *testing.T) {
 	// Test empty data
-	emptyDataPayload := &PayloadMeta{
-		StreamId:     1,
+	emptyDataPayload := &PayloadHeader{
+		StreamID:     1,
 		StreamOffset: 100,
 	}
 	encoded, _ := EncodePayload(emptyDataPayload, []byte{})
 	decoded, _, decodedData, err := DecodePayload(encoded)
 	require.NoError(t, err)
-	assert.Equal(t, emptyDataPayload.StreamId, decoded.StreamId)
+	assert.Equal(t, emptyDataPayload.StreamID, decoded.StreamID)
 	assert.Equal(t, emptyDataPayload.StreamOffset, decoded.StreamOffset)
 	assert.Empty(t, decodedData)
 
 	// Test ACK handling
-	ackPayload := &PayloadMeta{
-		StreamId:     1,
+	ackPayload := &PayloadHeader{
+		StreamID:     1,
 		StreamOffset: 100,
-		Ack:          &Ack{streamId: 0, offset: 0, len: 0},
+		Ack:          &Ack{streamID: 0, offset: 0, len: 0},
 		RcvWndSize:   1000,
 	}
 	encoded, _ = EncodePayload(ackPayload, []byte("test"))
@@ -91,15 +91,15 @@ func TestPayloadBasicFeatures(t *testing.T) {
 
 func FuzzPayload(f *testing.F) {
 	// Add seed corpus with valid and edge case payloads
-	payloads := []*PayloadMeta{
+	payloads := []*PayloadHeader{
 		{
-			StreamId:     1,
+			StreamID:     1,
 			StreamOffset: 100,
 			RcvWndSize:   1000,
-			Ack:          &Ack{streamId: 10, offset: 200, len: 10},
+			Ack:          &Ack{streamID: 10, offset: 200, len: 10},
 		},
 		{
-			StreamId:     math.MaxUint32,
+			StreamID:     math.MaxUint32,
 			StreamOffset: math.MaxUint64,
 		},
 	}
@@ -266,20 +266,20 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 	testCases := []struct {
 		name        string
-		payload     *PayloadMeta
+		payload     *PayloadHeader
 		data        []byte
 		expectError bool
 	}{
 		{
 			name: "ACK only - no data",
-			payload: &PayloadMeta{
+			payload: &PayloadHeader{
 				IsSender:     false,
 				IsClose:      false,
 				RcvWndSize:   1000,
-				StreamId:     1,
+				StreamID:     1,
 				StreamOffset: 100,
 				Ack: &Ack{
-					streamId: 10,
+					streamID: 10,
 					offset:   200,
 					len:      300,
 				},
@@ -289,14 +289,14 @@ func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 		},
 		{
 			name: "ACK with data",
-			payload: &PayloadMeta{
+			payload: &PayloadHeader{
 				IsSender:     true,
 				IsClose:      false,
 				RcvWndSize:   2000,
-				StreamId:     2,
+				StreamID:     2,
 				StreamOffset: 500,
 				Ack: &Ack{
-					streamId: 20,
+					streamID: 20,
 					offset:   1000,
 					len:      1500,
 				},
@@ -306,11 +306,11 @@ func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 		},
 		{
 			name: "No ACK - data only",
-			payload: &PayloadMeta{
+			payload: &PayloadHeader{
 				IsSender:     true,
 				IsClose:      false,
 				RcvWndSize:   3000,
-				StreamId:     3,
+				StreamID:     3,
 				StreamOffset: 1000,
 				Ack:          nil,
 			},
@@ -319,14 +319,14 @@ func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 		},
 		{
 			name: "ACK with large offset (24-bit)",
-			payload: &PayloadMeta{
+			payload: &PayloadHeader{
 				IsSender:     false,
 				IsClose:      false,
 				RcvWndSize:   4000,
-				StreamId:     4,
+				StreamID:     4,
 				StreamOffset: 0xFFFFFE, // Just under 24-bit limit
 				Ack: &Ack{
-					streamId: 40,
+					streamID: 40,
 					offset:   0xFFFFFE,
 					len:      100,
 				},
@@ -336,14 +336,14 @@ func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 		},
 		{
 			name: "ACK with large offset (48-bit)",
-			payload: &PayloadMeta{
+			payload: &PayloadHeader{
 				IsSender:     false,
 				IsClose:      false,
 				RcvWndSize:   5000,
-				StreamId:     5,
+				StreamID:     5,
 				StreamOffset: 0x1000000, // Requires 48-bit
 				Ack: &Ack{
-					streamId: 50,
+					streamID: 50,
 					offset:   0x1000000,
 					len:      200,
 				},
@@ -353,14 +353,14 @@ func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 		},
 		{
 			name: "Multiple flags set with ACK",
-			payload: &PayloadMeta{
+			payload: &PayloadHeader{
 				IsSender:     true,
 				IsClose:      true,
 				RcvWndSize:   0, // Will be ignored due to IsClose
-				StreamId:     6,
+				StreamID:     6,
 				StreamOffset: 2000,
 				Ack: &Ack{
-					streamId: 60,
+					streamID: 60,
 					offset:   3000,
 					len:      400,
 				},
@@ -393,7 +393,7 @@ func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 			// Verify basic fields
 			assert.Equal(t, tc.payload.IsSender, decoded.IsSender, "IsSender mismatch")
 			assert.Equal(t, tc.payload.IsClose, decoded.IsClose, "IsClose mismatch")
-			assert.Equal(t, tc.payload.StreamId, decoded.StreamId, "StreamId mismatch")
+			assert.Equal(t, tc.payload.StreamID, decoded.StreamID, "StreamId mismatch")
 			assert.Equal(t, tc.payload.StreamOffset, decoded.StreamOffset, "StreamOffset mismatch")
 
 			// Verify RcvWndSize (only if not closing)
@@ -406,7 +406,7 @@ func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 			// Verify ACK
 			if tc.payload.Ack != nil {
 				assert.NotNil(t, decoded.Ack, "ACK should not be nil")
-				assert.Equal(t, tc.payload.Ack.streamId, decoded.Ack.streamId, "ACK streamId mismatch")
+				assert.Equal(t, tc.payload.Ack.streamID, decoded.Ack.streamID, "ACK streamId mismatch")
 				assert.Equal(t, tc.payload.Ack.offset, decoded.Ack.offset, "ACK offset mismatch")
 				assert.Equal(t, tc.payload.Ack.len, decoded.Ack.len, "ACK len mismatch")
 			} else {
@@ -423,11 +423,11 @@ func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 func TestAckEncodingEdgeCases(t *testing.T) {
 	t.Run("ACK flag bits", func(t *testing.T) {
 		// Test that ACK flag is properly set in flags byte
-		payload := &PayloadMeta{
-			StreamId:     1,
+		payload := &PayloadHeader{
+			StreamID:     1,
 			StreamOffset: 0,
 			Ack: &Ack{
-				streamId: 10,
+				streamID: 10,
 				offset:   0,
 				len:      100,
 			},
@@ -448,8 +448,8 @@ func TestAckEncodingEdgeCases(t *testing.T) {
 
 	t.Run("No ACK flag bits", func(t *testing.T) {
 		// Test that no ACK flag is properly set
-		payload := &PayloadMeta{
-			StreamId:     1,
+		payload := &PayloadHeader{
+			StreamID:     1,
 			StreamOffset: 0,
 			Ack:          nil,
 		}
@@ -489,14 +489,14 @@ func TestPayloadMinimumSizes(t *testing.T) {
 				offset = 0x1000000
 			}
 
-			payload := &PayloadMeta{
-				StreamId:     1,
+			payload := &PayloadHeader{
+				StreamID:     1,
 				StreamOffset: offset,
 			}
 
 			if tc.hasAck {
 				payload.Ack = &Ack{
-					streamId: 10,
+					streamID: 10,
 					offset:   offset,
 					len:      100,
 				}

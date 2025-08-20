@@ -27,22 +27,22 @@ func NewUDPNetworkConn(conn *net.UDPConn) NetworkConn {
 	}
 }
 
-func (c *UDPNetworkConn) ReadFromUDPAddrPort(p []byte, timeoutNano uint64, nowNano uint64) (int, netip.AddrPort, error) {
+func (c *UDPNetworkConn) ReadFromUDPAddrPort(p []byte, timeoutNano uint64, nowNano uint64) (n int, sourceAddress netip.AddrPort, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	deadline := time.Time{}
+	readDeadline := time.Time{}
 	if timeoutNano > 0 {
-		deadline = time.UnixMicro(int64(nowNano + timeoutNano))
+		readDeadline = time.UnixMicro(int64(nowNano + timeoutNano))
 	}
-	err := c.conn.SetReadDeadline(deadline)
+	err = c.conn.SetReadDeadline(readDeadline)
 	if err != nil {
 		return 0, netip.AddrPort{}, err
 	}
 
-	n, a, err := c.conn.ReadFromUDPAddrPort(p)
+	n, sourceAddress, err = c.conn.ReadFromUDPAddrPort(p)
 
-	return n, a, err
+	return n, sourceAddress, err
 }
 
 func (c *UDPNetworkConn) TimeoutReadNow() error {

@@ -11,24 +11,24 @@ const (
 	FlagRcvCloseShift = 3
 
 	MinProtoSize = 8
-	CloseNr      = 31
+	CloseFlag    = 31
 )
 
 var (
 	ErrPayloadTooSmall = errors.New("payload Size below minimum of 8 bytes")
 )
 
-type PayloadMeta struct {
+type PayloadHeader struct {
 	IsClose      bool
 	IsSender     bool
 	Ack          *Ack
 	RcvWndSize   uint64
-	StreamId     uint32
+	StreamID     uint32
 	StreamOffset uint64
 }
 
 type Ack struct {
-	streamId uint32
+	streamID uint32
 	offset   uint64
 	len      uint16
 }
@@ -140,7 +140,7 @@ func DecodePacketType(packetType uint8) (hasAck bool, needsExtended bool) {
 	}
 }
 
-func EncodePayload(p *PayloadMeta, payloadData []byte) (encoded []byte, offset int) {
+func EncodePayload(p *PayloadHeader, userData []byte) (encoded []byte, offset int) {
 
 	// Calculate flags
 	var flags uint8
@@ -159,7 +159,7 @@ func EncodePayload(p *PayloadMeta, payloadData []byte) (encoded []byte, offset i
 
 	var rcvClose uint8
 	if p.IsClose {
-		rcvClose = CloseNr
+		rcvClose = CloseFlag
 	} else {
 		rcvClose = EncodeRcvWindow(p.RcvWndSize)
 	}
@@ -169,7 +169,7 @@ func EncodePayload(p *PayloadMeta, payloadData []byte) (encoded []byte, offset i
 	o := &Overhead{ack: p.Ack, dataOffset: p.StreamOffset}
 	needExtend, overhead := o.CalcOverhead()
 	// Allocate buffer
-	dataLen := len(payloadData)
+	dataLen := len(userData)
 	encoded = make([]byte, int(overhead)+dataLen)
 
 	// Write header
@@ -179,7 +179,7 @@ func EncodePayload(p *PayloadMeta, payloadData []byte) (encoded []byte, offset i
 	// Write ACKs section if present
 	if p.Ack != nil {
 		// Write ACKs
-		offset += PutUint32(encoded[offset:], p.Ack.streamId)
+		offset += PutUint32(encoded[offset:], p.Ack.streamID)
 		if needExtend {
 			offset += PutUint48(encoded[offset:], p.Ack.offset)
 		} else {
@@ -189,7 +189,7 @@ func EncodePayload(p *PayloadMeta, payloadData []byte) (encoded []byte, offset i
 	}
 
 	// Write Data
-	offset += PutUint32(encoded[offset:], p.StreamId)
+	offset += PutUint32(encoded[offset:], p.StreamID)
 
 	if needExtend {
 		offset += PutUint48(encoded[offset:], p.StreamOffset)
@@ -198,20 +198,20 @@ func EncodePayload(p *PayloadMeta, payloadData []byte) (encoded []byte, offset i
 	}
 
 	if dataLen > 0 {
-		offset += copy(encoded[offset:], payloadData)
+		offset += copy(encoded[offset:], userData)
 	}
 
 	return encoded, offset
 }
 
-func DecodePayload(data []byte) (payload *PayloadMeta, offset int, payloadData []byte, err error) {
+func DecodePayload(data []byte) (payload *PayloadHeader, offset int, userData []byte, err error) {
 	dataLen := len(data)
 	if dataLen < MinProtoSize {
 		return nil, 0, nil, ErrPayloadTooSmall
 	}
 
 	offset = 0
-	payload = &PayloadMeta{}
+	payload = &PayloadHeader{}
 
 	// Flags (8 bits)
 	flags := data[offset]
@@ -226,7 +226,7 @@ func DecodePayload(data []byte) (payload *PayloadMeta, offset int, payloadData [
 	}
 
 	rcvClose := flags >> FlagRcvCloseShift
-	if rcvClose == CloseNr {
+	if rcvClose == CloseFlag {
 		payload.IsClose = true
 	} else {
 		payload.RcvWndSize = DecodeRcvWindow(rcvClose)
@@ -236,7 +236,7 @@ func DecodePayload(data []byte) (payload *PayloadMeta, offset int, payloadData [
 	// Decode ACKs if present
 	if ack {
 		payload.Ack = &Ack{}
-		payload.Ack.streamId = Uint32(data[offset:])
+		payload.Ack.streamID = Uint32(data[offset:])
 		offset += 4
 		if needsExtended {
 			payload.Ack.offset = Uint48(data[offset:])
@@ -251,7 +251,7 @@ func DecodePayload(data []byte) (payload *PayloadMeta, offset int, payloadData [
 
 	// Decode Data
 
-	payload.StreamId = Uint32(data[offset:])
+	payload.StreamID = Uint32(data[offset:])
 	offset += 4
 
 	if needsExtended {
@@ -263,12 +263,12 @@ func DecodePayload(data []byte) (payload *PayloadMeta, offset int, payloadData [
 	}
 
 	if dataLen > offset {
-		payloadData = make([]byte, dataLen-offset)
-		copy(payloadData, data[offset:dataLen])
+		userData = make([]byte, dataLen-offset)
+		copy(userData, data[offset:dataLen])
 		offset += dataLen
 	} else {
-		payloadData = make([]byte, 0)
+		userData = make([]byte, 0)
 	}
 
-	return payload, offset, payloadData, nil
+	return payload, offset, userData, nil
 }
