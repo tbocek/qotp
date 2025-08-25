@@ -3,11 +3,12 @@ package qotp
 import (
 	"crypto/ecdh"
 	"fmt"
-	"github.com/stretchr/testify/assert"
 	"net"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 var (
@@ -24,7 +25,10 @@ func TestNewListener(t *testing.T) {
 	// Test case 1: Create a new listener with a valid address
 	addr := "127.0.0.1:8080"
 	listener, err := ListenString(addr, WithSeed(testPrvSeed1))
-	defer listener.Close()
+	defer func() {
+		err := listener.Close()
+		assert.Nil(t, err)
+	}()
 	if err != nil {
 		t.Errorf("Expected no error, but got: %v", err)
 	}
@@ -43,7 +47,10 @@ func TestNewListener(t *testing.T) {
 func TestNewStream(t *testing.T) {
 	// Test case 1: Create a new multi-stream with a valid remote address
 	listener, err := ListenString("127.0.0.1:9080", WithSeed(testPrvSeed1))
-	defer listener.Close()
+	defer func() {
+		err := listener.Close()
+		assert.Nil(t, err)
+	}()
 	assert.Nil(t, err)
 	conn, err := listener.DialWithCryptoString("127.0.0.1:9081", hexPubKey1)
 	assert.Nil(t, err)
