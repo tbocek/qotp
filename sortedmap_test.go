@@ -12,7 +12,7 @@ type SortedHashMapTestSuite struct {
 }
 
 func (s *SortedHashMapTestSuite) SetupTest() {
-	s.shm = NewSortedMap[int, string](func(a, b int) bool { return a < b })
+	s.shm = NewSortedMap[int, string]()
 }
 
 func TestSortedHashMapSuite(t *testing.T) {
@@ -304,43 +304,6 @@ func (s *SortedHashMapTestSuite) TestConcurrentOperations() {
 	wg.Wait()
 }
 
-func (s *SortedHashMapTestSuite) TestCustomComparators() {
-	// Test with reverse order comparator
-	reverseMap := NewSortedMap[int, string](func(a, b int) bool { return a > b })
-	values := []int{5, 3, 7, 1, 9}
-	for _, v := range values {
-		reverseMap.Put(v, "value")
-	}
-
-	// Verify reverse order by traversing from min
-	expected := []int{9, 7, 5, 3, 1}
-	currentKey, _, ok := reverseMap.Min()
-	s.True(ok)
-	
-	for _, exp := range expected {
-		s.Equal(exp, currentKey)
-		if exp != 1 { // not the last element
-			currentKey, _, ok = reverseMap.Next(currentKey)
-			s.True(ok)
-		}
-	}
-
-	// Test with custom struct keys
-	type CustomKey struct {
-		value int
-	}
-	customMap := NewSortedMap[CustomKey, string](
-		func(a, b CustomKey) bool { return a.value < b.value },
-	)
-	customMap.Put(CustomKey{1}, "one")
-	customMap.Put(CustomKey{2}, "two")
-	
-	minKey, minVal, ok := customMap.Min()
-	s.True(ok)
-	s.Equal(CustomKey{1}, minKey)
-	s.Equal("one", minVal)
-}
-
 func (s *SortedHashMapTestSuite) TestEdgeCases() {
 	// Test updating value for existing key
 	s.shm.Put(1, "original")
@@ -367,4 +330,159 @@ func (s *SortedHashMapTestSuite) TestEdgeCases() {
 	s.True(removed)
 	s.Equal("five", removedVal)
 	s.False(s.shm.Contains(5))
+}
+
+func (s *SortedHashMapTestSuite) TestPrevOperations() {
+	// Test Prev on empty map
+	prevKey, prevVal, ok := s.shm.Prev(5)
+	s.False(ok)
+	s.Equal(0, prevKey)
+	s.Equal("", prevVal)
+
+	// Test Prev with single element
+	s.shm.Put(5, "five")
+	
+	// Should have no previous for the only element
+	prevKey, prevVal, ok = s.shm.Prev(5)
+	s.False(ok)
+	s.Equal(0, prevKey)
+	s.Equal("", prevVal)
+
+	// Test Prev with multiple elements
+	s.shm.Put(1, "one")
+	s.shm.Put(3, "three")
+	s.shm.Put(7, "seven")
+	s.shm.Put(9, "nine")
+
+	// Test reverse traversal using Prev
+	key, val, ok := s.shm.Prev(9)
+	s.True(ok)
+	s.Equal(7, key)
+	s.Equal("seven", val)
+	
+	key, val, ok = s.shm.Prev(key)
+	s.True(ok)
+	s.Equal(5, key)
+	s.Equal("five", val)
+	
+	key, val, ok = s.shm.Prev(key)
+	s.True(ok)
+	s.Equal(3, key)
+	s.Equal("three", val)
+	
+	key, val, ok = s.shm.Prev(key)
+	s.True(ok)
+	s.Equal(1, key)
+	s.Equal("one", val)
+	
+	// No more previous elements
+	key, val, ok = s.shm.Prev(key)
+	s.False(ok)
+	s.Equal(0, key)
+	s.Equal("", val)
+}
+
+func (s *SortedHashMapTestSuite) TestPrevFromKey() {
+	// Add some values
+	values := []int{1, 3, 5, 7, 9}
+	for _, v := range values {
+		s.shm.Put(v, "value")
+	}
+
+	// Test Prev from existing key
+	prevKey, prevValue, ok := s.shm.Prev(7)
+	s.True(ok)
+	s.Equal(5, prevKey)
+	s.Equal("value", prevValue)
+
+	// Test Prev from non-existing key - should find largest key smaller than target
+	prevKey, prevValue, ok = s.shm.Prev(6)
+	s.True(ok)
+	s.Equal(5, prevKey)
+	s.Equal("value", prevValue)
+
+	// Test Prev from first key (should return false)
+	prevKey, prevValue, ok = s.shm.Prev(1)
+	s.False(ok)
+	s.Equal(0, prevKey)
+	s.Equal("", prevValue)
+
+	// Test Prev from key smaller than all keys
+	prevKey, prevValue, ok = s.shm.Prev(0)
+	s.False(ok)
+	s.Equal(0, prevKey)
+	s.Equal("", prevValue)
+
+	// Test Prev from key larger than all keys - should find the largest key
+	prevKey, prevValue, ok = s.shm.Prev(15)
+	s.True(ok)
+	s.Equal(9, prevKey)
+	s.Equal("value", prevValue)
+}
+
+func (s *SortedHashMapTestSuite) TestPrevNextSymmetry() {
+	// Add test data
+	values := []int{2, 4, 6, 8, 10}
+	for _, v := range values {
+		s.shm.Put(v, "value")
+	}
+
+	// Test that Next and Prev are symmetric
+	// Start from middle element
+	currentKey := 6
+	
+	// Go to next
+	nextKey, _, ok := s.shm.Next(currentKey)
+	s.True(ok)
+	s.Equal(8, nextKey)
+	
+	// Go back with Prev
+	prevKey, _, ok := s.shm.Prev(nextKey)
+	s.True(ok)
+	s.Equal(6, prevKey) // Should return to original
+	
+	// Go to previous
+	prevKey, _, ok = s.shm.Prev(currentKey)
+	s.True(ok)
+	s.Equal(4, prevKey)
+	
+	// Go forward with Next
+	nextKey, _, ok = s.shm.Next(prevKey)
+	s.True(ok)
+	s.Equal(6, nextKey) // Should return to original
+}
+
+func (s *SortedHashMapTestSuite) TestPrevWithGaps() {
+	// Add values with gaps
+	values := []int{1, 5, 10, 20, 50}
+	for _, v := range values {
+		s.shm.Put(v, "value")
+	}
+
+	// Test Prev with gaps - should find the closest smaller key
+	prevKey, prevValue, ok := s.shm.Prev(15)
+	s.True(ok)
+	s.Equal(10, prevKey)
+	s.Equal("value", prevValue)
+
+	prevKey, prevValue, ok = s.shm.Prev(7)
+	s.True(ok)
+	s.Equal(5, prevKey)
+	s.Equal("value", prevValue)
+
+	prevKey, prevValue, ok = s.shm.Prev(3)
+	s.True(ok)
+	s.Equal(1, prevKey)
+	s.Equal("value", prevValue)
+
+	// Test boundary cases
+	prevKey, prevValue, ok = s.shm.Prev(51)
+	s.True(ok)
+	s.Equal(50, prevKey)
+	s.Equal("value", prevValue)
+
+	prevKey, prevValue, ok = s.shm.Prev(1)
+	s.False(ok)
+	s.Equal(0, prevKey)
+	s.Equal("", prevValue)
 }

@@ -23,6 +23,7 @@ type Stream struct {
 	streamID uint32
 	conn     *Connection
 	state    StreamState
+	callback func()
 	mu       sync.Mutex
 }
 
@@ -31,6 +32,13 @@ func (s *Stream) NotifyDataAvailable() error {
 	defer s.mu.Unlock()
 
 	return s.conn.listener.localConn.TimeoutReadNow()
+}
+
+func (s *Stream) CallbackOnWriteBufferAvailable(c func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.callback = c
 }
 
 func (s *Stream) Read() (userData []byte, err error) {

@@ -356,7 +356,7 @@ func (l *Listener) newConn(
 			withCrypto: withCrypto,
 		},
 		mtu:        startMtu,
-		snd:        NewSendBuffer(sndBufferCapacity),
+		snd:        NewSendBuffer(sndBufferCapacity, nil),
 		rcv:        NewReceiveBuffer(rcvBufferCapacity),
 		BBR:        NewBBR(),
 		rcvWndSize: rcvBufferCapacity, //initially our capacity, correct value will be sent to us in the 1st handshake

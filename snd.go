@@ -65,17 +65,18 @@ type SendBuffer struct {
 	lastReadToRetransmitStream uint32
 	capacity                   int //len(dataToSend) of all streams cannot become larger than capacity
 	size                       int //len(dataToSend) of all streams
+	callback                   func()
 	mu                         *sync.Mutex
 }
 
 func NewStreamBuffer() *StreamBuffer {
 	return &StreamBuffer{
-		userData:      []byte{},
+		userData:        []byte{},
 		dataInFlightMap: NewLinkedMap[packetKey, *SendInfo](),
 	}
 }
 
-func NewSendBuffer(capacity int) *SendBuffer {
+func NewSendBuffer(capacity int, callback func()) *SendBuffer {
 	return &SendBuffer{
 		streams:  make(map[uint32]*StreamBuffer),
 		capacity: capacity,
@@ -84,7 +85,7 @@ func NewSendBuffer(capacity int) *SendBuffer {
 }
 
 // QueueData stores the userData in the dataMap, does not send yet
-func (sb *SendBuffer) QueueData(streamID uint32, userData []byte) (inserted int, status InsertStatus) {
+func (sb *SendBuffer) QueueData(streamID uint32, userData []byte) (n int, status InsertStatus) {
 	remainingData := userData
 
 	if len(remainingData) <= 0 {
@@ -101,8 +102,15 @@ func (sb *SendBuffer) QueueData(streamID uint32, userData []byte) (inserted int,
 	}
 
 	// Calculate chunk size
-	inserted = min(len(remainingData), remainingCapacitySnd)
-	chunk := remainingData[:inserted]
+	chunk := remainingData
+	if len(remainingData) > remainingCapacitySnd {
+		chunk = remainingData[:remainingCapacitySnd]
+		status = InsertStatusSndFull
+		n = remainingCapacitySnd
+	} else {
+		status = InsertStatusOk
+		n = len(remainingData)
+	}
 
 	// Get or create stream buffer
 	stream := sb.streams[streamID]
@@ -113,12 +121,10 @@ func (sb *SendBuffer) QueueData(streamID uint32, userData []byte) (inserted int,
 
 	// Store chunk
 	stream.userData = append(stream.userData, chunk...)
-	stream.unsentOffset = stream.unsentOffset + uint64(inserted)
-	sb.size += inserted
+	stream.unsentOffset = stream.unsentOffset + uint64(n)
+	sb.size += n
 
-	// Update remaining dataToSend
-	remainingData = remainingData[inserted:]
-	return inserted, InsertStatusOk
+	return n, status
 }
 
 // ReadyToSend gets data from dataToSend and creates an entry in dataInFlightMap
@@ -289,5 +295,10 @@ func (sb *SendBuffer) AcknowledgeRange(ack *Ack) (status AckStatus, sentTimeNano
 		}
 	}
 	sb.mu.Unlock()
+
+	//notify that data can be send to the buffer again
+	if sb.callback != nil {
+		sb.callback()
+	}
 	return AckStatusOk, sentTimeNano
 }

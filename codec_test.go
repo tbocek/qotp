@@ -200,7 +200,7 @@ func TestEndToEndCodec(t *testing.T) {
 				prvKeyEpSndRoll: prvEpAliceRoll,
 			},
 			listener: lAlice,
-			snd:    NewSendBuffer(rcvBufferCapacity),
+			snd:    NewSendBuffer(rcvBufferCapacity, nil),
 			rcv:    NewReceiveBuffer(12000),
 			streams:  NewLinkedMap[uint32, *Stream](),
 		}

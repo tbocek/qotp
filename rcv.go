@@ -1,6 +1,7 @@
 package qotp
 
 import (
+	"bytes"
 	"log/slog"
 	"sync"
 )
@@ -14,13 +15,13 @@ const (
 )
 
 type RcvBuffer struct {
-	segments                   *SortedMap[packetKey, []byte]
+	segments                   *SortedMap[uint64, []byte]
 	nextInOrderOffsetToWaitFor uint64 // Next expected offset
 	closeAtOffset              *uint64
 }
 
 type RcvBufferAck struct {
-	segments                   *SortedMap[packetKey, *Ack]
+	segments                   *SortedMap[uint64, *Ack]
 	nextInOrderOffsetToWaitFor uint64 // Next expected offset
 }
 
@@ -35,14 +36,9 @@ type ReceiveBuffer struct {
 
 func NewRcvBuffer() *RcvBuffer {
 	return &RcvBuffer{
-		segments: NewSortedMap[packetKey, []byte](func(a, b packetKey) bool {
-			if a.less(b) {
-				return true
-			}
-			return false
-		}),
+		segments:                   NewSortedMap[uint64, []byte](),
 		nextInOrderOffsetToWaitFor: 0,
-		closeAtOffset: nil,
+		closeAtOffset:              nil,
 	}
 }
 
@@ -69,32 +65,135 @@ func (rb *ReceiveBuffer) Insert(streamID uint32, offset uint64, userData []byte)
 	}
 
 	if rb.size+dataLen > rb.capacity {
+		slog.Debug("Rcv/BufferFull", slog.Int("rb.size+dataLen", rb.size+dataLen), slog.Int("rb.capacity", rb.capacity))
 		return RcvInsertBufferFull
 	}
 
-	key := createPacketKey(offset, uint16(dataLen))
-
-	//now we need to add the ack to the list even if it's a duplicate,
-	//as the ack may have been lost, we need to send it again
+	// Now we need to add the ack to the list even if it's a duplicate,
+	// as the ack may have been lost, we need to send it again
 	rb.ackList = append(rb.ackList, &Ack{streamID: streamID, offset: offset, len: uint16(dataLen)})
-	
+
+	// Check if the incoming segment is completely before the next expected offset.
+	// This means all data in this segment has already been delivered to the user application.
+	// For example: if nextInOrderOffsetToWaitFor = 1000, and we receive data at offset 500-600,
+	// that data was already processed and delivered, so it's a duplicate we can safely ignore.
 	if offset+uint64(dataLen) <= stream.nextInOrderOffsetToWaitFor {
 		slog.Debug("Rcv/Duplicate/WithUser", slog.Uint64("offset", offset), slog.Int("len(data)", dataLen))
 		return RcvInsertDuplicate
 	}
 
-	if stream.segments.Contains(key) {
-		slog.Debug("Rcv/Duplicate/InMap", slog.Uint64("offset", offset), slog.Int("len(data)", dataLen))
-		return RcvInsertDuplicate
-	}
+	// Check if we already have a segment starting at this exact offset
+	if existingData, exists := stream.segments.Get(offset); exists {
+		existingLen := len(existingData)
 
-	stream.segments.Put(key, userData)
-	rb.size += dataLen
+		// If incoming data is smaller or equal in size, it's a duplicate - ignore it
+		// If incoming data is larger, replace the existing segment with the larger one
+		if dataLen <= existingLen {
+			slog.Debug("Rcv/Duplicate/SmallerOrEqual",
+				slog.Uint64("offset", offset),
+				slog.Int("incoming_len", dataLen),
+				slog.Int("existing_len", existingLen))
+			return RcvInsertDuplicate
+		} else {
+			// Incoming segment is larger - remove the smaller existing one
+			// and continue to insert the larger segment
+			stream.segments.Remove(offset)
+			rb.size -= existingLen
+			slog.Debug("Rcv/Replace/WithLarger",
+				slog.Uint64("offset", offset),
+				slog.Int("old_len", existingLen),
+				slog.Int("new_len", dataLen))
+		}
+
+		stream.segments.Put(offset, userData)
+		rb.size += dataLen
+	} else {
+		// first check if the previous is overlapping
+		finalOffset := offset
+		finalUserData := userData
+
+		if prevOffset, prevData, exists := stream.segments.Prev(offset); exists {
+			prevEnd := prevOffset + uint64(len(prevData))
+			// Check if the previous segment overlaps with our incoming segment
+			if prevEnd > offset {
+				//adjust our offset, move it foward, for testing, check that overlap is the same
+				overlapLen := prevOffset + uint64(len(prevData)) - offset
+				if overlapLen >= uint64(dataLen) {
+					// Completely overlapped by previous - this is a duplicate
+					slog.Debug("Rcv/Duplicate/CompletelyOverlappedByPrev",
+						slog.Uint64("offset", offset), slog.Int("len(data)", dataLen))
+					return RcvInsertDuplicate
+				}
+				existingOverlap := prevData[offset-prevOffset:]
+				incomingOverlap := userData[:overlapLen]
+				if !bytes.Equal(existingOverlap, incomingOverlap) {
+					panic("Previous segment overlap mismatch - data integrity violation")
+				}
+
+				// Adjust our offset and data slice
+				finalOffset = prevEnd
+				finalUserData = userData[overlapLen:]
+
+				slog.Debug("Rcv/AdjustForPrevOverlap",
+					slog.Uint64("original_offset", offset),
+					slog.Uint64("adjusted_offset", finalOffset),
+					slog.Int("overlap_len", int(overlapLen)))
+			}
+		}
+		if nextOffset, nextData, exists := stream.segments.Next(offset); exists {
+			ourEnd := finalOffset + uint64(len(finalUserData))
+			if ourEnd > nextOffset {
+				// We overlap with next segment
+				nextEnd := nextOffset + uint64(len(nextData))
+
+				if ourEnd >= nextEnd {
+					// We completely overlap the next segment - remove it since we have more data
+					stream.segments.Remove(nextOffset)
+					rb.size -= len(nextData)
+
+					// Assert that our overlapping portion matches the next segment data
+					ourOverlapStart := nextOffset - finalOffset
+					incomingOverlap := finalUserData[ourOverlapStart : ourOverlapStart+uint64(len(nextData))]
+					if !bytes.Equal(nextData, incomingOverlap) {
+						panic("Next segment complete overlap mismatch - data integrity violation")
+					}
+
+					slog.Debug("Rcv/ReplaceNext/CompleteOverlap",
+						slog.Uint64("next_offset", nextOffset),
+						slog.Int("next_len", len(nextData)),
+						slog.Uint64("our_offset", finalOffset),
+						slog.Int("our_len", len(finalUserData)))
+				} else {
+					// Partial overlap - shorten our data
+					overlapLen := ourEnd - nextOffset
+					ourOverlapStart := nextOffset - finalOffset
+					existingOverlap := nextData[:overlapLen]
+					incomingOverlap := finalUserData[ourOverlapStart:]
+					if !bytes.Equal(existingOverlap, incomingOverlap) {
+						panic("Next segment partial overlap mismatch - data integrity violation")
+					}
+
+					// Shorten our data to remove overlap
+					finalUserData = finalUserData[:ourOverlapStart]
+
+					slog.Debug("Rcv/AdjustForNextOverlap",
+						slog.Uint64("adjusted_offset", finalOffset),
+						slog.Int("original_len", len(userData)),
+						slog.Int("final_len", len(finalUserData)))
+				}
+			}
+		}
+
+		// Now we have the correct offset and data slice - store it
+		stream.segments.Put(finalOffset, finalUserData)
+		rb.size += len(finalUserData)
+
+	}
 
 	return RcvInsertOk
 }
 
-func (rb *ReceiveBuffer) CloseAt(streamID uint32, offset uint64)  {
+func (rb *ReceiveBuffer) CloseAt(streamID uint32, offset uint64) {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
@@ -107,7 +206,7 @@ func (rb *ReceiveBuffer) CloseAt(streamID uint32, offset uint64)  {
 	stream.closeAtOffset = &offset
 }
 
-func (rb *ReceiveBuffer) GetOffsetClosedAt(streamID uint32) (offset *uint64)  {
+func (rb *ReceiveBuffer) GetOffsetClosedAt(streamID uint32) (offset *uint64) {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
@@ -115,7 +214,7 @@ func (rb *ReceiveBuffer) GetOffsetClosedAt(streamID uint32) (offset *uint64)  {
 	if stream == nil {
 		return nil
 	}
-	
+
 	return stream.closeAtOffset
 }
 
@@ -133,25 +232,25 @@ func (rb *ReceiveBuffer) RemoveOldestInOrder(streamID uint32) (offset uint64, da
 	}
 
 	// Check if there is any dataToSend at all
-	oldestKey, oldestValue, ok := stream.segments.Min()
+	oldestOffset, oldestValue, ok := stream.segments.Min()
 	if !ok {
 		return 0, nil
 	}
 
-	if oldestKey.offset() == stream.nextInOrderOffsetToWaitFor {
-		stream.segments.Remove(oldestKey)
-		rb.size -= int(oldestKey.length())
+	if oldestOffset == stream.nextInOrderOffsetToWaitFor {
+		stream.segments.Remove(oldestOffset)
+		rb.size -= len(oldestValue)
 
-		off := oldestKey.offset()
-		if off < stream.nextInOrderOffsetToWaitFor {
-			diff := stream.nextInOrderOffsetToWaitFor - oldestKey.offset()
+		nextOffset := oldestOffset
+		if nextOffset < stream.nextInOrderOffsetToWaitFor {
+			diff := stream.nextInOrderOffsetToWaitFor - oldestOffset
 			oldestValue = oldestValue[diff:]
-			off = stream.nextInOrderOffsetToWaitFor
+			nextOffset = stream.nextInOrderOffsetToWaitFor
 		}
 
-		stream.nextInOrderOffsetToWaitFor = off + uint64(len(oldestValue))
-		return oldestKey.offset(), oldestValue
-	} else if oldestKey.offset() > stream.nextInOrderOffsetToWaitFor {
+		stream.nextInOrderOffsetToWaitFor = nextOffset + uint64(len(oldestValue))
+		return oldestOffset, oldestValue
+	} else if oldestOffset > stream.nextInOrderOffsetToWaitFor {
 		// Out of order; wait until segment offset available, signal that
 		return 0, nil
 	} else {

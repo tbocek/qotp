@@ -3,6 +3,7 @@
 package qotp
 
 import (
+	"cmp"
 	"sync"
 )
 
@@ -10,18 +11,17 @@ const maxLevel = 32     // Enough for 2^32 elements
 const nodesPerLevel = 4 // Every 4 nodes we add a level up
 
 // SortedMap implements a thread-safe skip list with O(1) lookups and O(1) Next() operations.
-type SortedMap[K comparable, V any] struct {
+type SortedMap[K cmp.Ordered, V any] struct {
 	items map[K]*smNode[K, V]
 	head  *smNode[K, V]
 	tail  *smNode[K, V] // Sentinel tail node
 	level int
 	size  int
 	mu    sync.RWMutex
-	less  func(K, K) bool
 }
 
 // node represents an internal node in the skip list.
-type smNode[K comparable, V any] struct {
+type smNode[K cmp.Ordered, V any] struct {
 	key   K
 	value V
 	next  []*smNode[K, V] // Skip list levels for fast search
@@ -30,11 +30,10 @@ type smNode[K comparable, V any] struct {
 }
 
 // NewSortedMap creates a new sorted map with the given key comparison function.
-func NewSortedMap[K comparable, V any](less func(K, K) bool) *SortedMap[K, V] {
+func NewSortedMap[K cmp.Ordered, V any]() *SortedMap[K, V] {
 	m := &SortedMap[K, V]{
 		items: make(map[K]*smNode[K, V]),
 		level: 1,
-		less:  less,
 	}
 	
 	// Create sentinel head and tail nodes
@@ -85,7 +84,7 @@ func (m *SortedMap[K, V]) Put(key K, value V) {
 	current := m.head
 
 	for i := m.level - 1; i >= 0; i-- {
-		for current.next[i] != nil && current.next[i] != m.tail && m.less(current.next[i].key, key) {
+		for current.next[i] != nil && current.next[i] != m.tail && current.next[i].key < key {
 			current = current.next[i]
 		}
 		update[i] = current
@@ -169,13 +168,48 @@ func (m *SortedMap[K, V]) Next(key K) (K, V, bool) {
 	// Slow path: key doesn't exist, need to search - O(log n)
 	current := m.head
 	for i := m.level - 1; i >= 0; i-- {
-		for current.next[i] != nil && current.next[i] != m.tail && !m.less(key, current.next[i].key) {
+		for current.next[i] != nil && current.next[i] != m.tail && key >= current.next[i].key {
 			current = current.next[i]
 		}
 	}
 
 	if current.after != m.tail {
 		return current.after.key, current.after.value, true
+	}
+
+	var zeroK K
+	var zeroV V
+	return zeroK, zeroV, false
+}
+
+// Prev finds the previous key that is strictly smaller than the given key.
+// This is O(1) if the key exists in the map!
+// Returns the previous key, its value, and a boolean indicating if a previous element exists.
+func (m *SortedMap[K, V]) Prev(key K) (K, V, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Fast path: if key exists in map, just follow the 'prev' pointer - O(1)!
+	if node, exists := m.items[key]; exists {
+		if node.prev != m.head {
+			return node.prev.key, node.prev.value, true
+		}
+		var zeroK K
+		var zeroV V
+		return zeroK, zeroV, false
+	}
+
+	// Slow path: key doesn't exist, need to search - O(log n)
+	current := m.head
+	for i := m.level - 1; i >= 0; i-- {
+		for current.next[i] != nil && current.next[i] != m.tail && current.next[i].key < key {
+			current = current.next[i]
+		}
+	}
+
+	// current is now the largest node with key < target key
+	if current != m.head {
+		return current.key, current.value, true
 	}
 
 	var zeroK K
@@ -216,7 +250,7 @@ func (m *SortedMap[K, V]) Remove(key K) (V, bool) {
 	current := m.head
 
 	for i := m.level - 1; i >= 0; i-- {
-		for current.next[i] != nil && current.next[i] != m.tail && m.less(current.next[i].key, key) {
+		for current.next[i] != nil && current.next[i] != m.tail && current.next[i].key < key {
 			current = current.next[i]
 		}
 		update[i] = current
