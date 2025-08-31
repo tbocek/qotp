@@ -22,7 +22,7 @@ only mentions 9 primary RFCs and 48 extensions and informational RFCs, totalling
 * https://github.com/skywind3000/kcp (no encryption)
 * https://github.com/johnsonjh/gfcp (golang version)
 * https://eprints.ost.ch/id/eprint/846/
-* https://eprints.ost.ch/id/eprint/879/
+* https://eprints.ost.ch/id/eprint/879/ (https://github.com/stalder-n/lrp2p-go)
 * https://eprints.ost.ch/id/eprint/979/
 
 ## Features / Limitations
