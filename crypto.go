@@ -535,11 +535,12 @@ func chainedDecrypt(isSender bool, epochCrypt uint64, sharedSecret []byte, heade
 
 	nonceDet := make([]byte, chacha20poly1305.NonceSize)
 
-	epochs := []uint64{
-		epochCrypt,     // Current epoch
-		epochCrypt - 1, // Previous epoch (very late packets)
-		epochCrypt + 1, // Next epoch (early packets)
+	epochs := []uint64{epochCrypt}
+	// Only try previous epoch if > 0
+	if epochCrypt > 0 {
+		epochs = append(epochs, epochCrypt-1)
 	}
+	epochs = append(epochs, epochCrypt+1)
 
 	aead, err := chacha20poly1305.New(sharedSecret)
 	if err != nil {

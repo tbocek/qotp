@@ -73,12 +73,6 @@ sequenceDiagram
     R->>S: InitRcv
     Note left of R: pubKeyIdSnd + pubKeyEpSnd<br/>Encrypted with ECDH shared secret
     
-    S->>R: DataRoll
-    Note right of S: New ephemeral key + encrypted data<br/>Key rotation
-    
-    R->>S: DataRoll
-    Note left of R: New ephemeral key + encrypted data<br/>Key rotation
-    
     S->>R: Data
     Note right of S: Encrypted data messages<br/>Using established shared secret
     
@@ -101,12 +95,6 @@ sequenceDiagram
     
     R->>S: InitCryptoRcv
     Note left of R: pubKeyEpSnd<br/>Encrypted (forward-secret)
-    
-    S->>R: DataRoll
-    Note right of S: New ephemeral key + encrypted data<br/>Key rotation
-    
-    R->>S: DataRoll
-    Note left of R: New ephemeral key + encrypted data<br/>Key rotation
     
     S->>R: Data
     Note right of S: Encrypted data messages<br/>Using forward-secret shared secret
@@ -501,18 +489,18 @@ Source Code LoC
 ===============================================================================
  Language            Files        Lines         Code     Comments       Blanks
 ===============================================================================
- Go                     17         3863         2925          317          621
- Markdown                1          458            0          363           95
+ Go                     17         3878         2926          338          614
+ Markdown                1          506            0          398          108
 ===============================================================================
- Total                  18         4321         2925          680          716
+ Total                  18         4384         2926          736          722
 ===============================================================================
 Test Code LoC
 ===============================================================================
  Language            Files        Lines         Code     Comments       Blanks
 ===============================================================================
- Go                     14         5577         4078          539          960
+ Go                     14         5753         4121          593         1039
 ===============================================================================
- Total                  14         5577         4078          539          960
+ Total                  14         5753         4121          593         1039
 ===============================================================================
 
 ```
