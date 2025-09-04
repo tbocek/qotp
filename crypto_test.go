@@ -6,7 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"testing"
-	
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
@@ -64,7 +64,7 @@ func (suite *EncryptionTestSuite) testDoubleEncryptDecrypt(sn uint64, data []byt
 		suite.T().Fatalf("Failed to generate shared secret: %v", err)
 	}
 
-	buf, err := chainedEncrypt(sn, true, sharedSecret, additionalData, data)
+	buf, err := chainedEncrypt(sn, 0, true, sharedSecret, additionalData, data)
 	// too short
 	if len(data) < MinPayloadSize {
 		assert.NotNil(suite.T(), err)
@@ -77,9 +77,10 @@ func (suite *EncryptionTestSuite) testDoubleEncryptDecrypt(sn uint64, data []byt
 	}
 	suite.T().Logf("Encrypted dataToSend: %s", hex.EncodeToString(buf))
 
-	decryptedSn, decryptedData, err := chainedDecrypt(false, sharedSecret, buf[0:len(additionalData)], buf[len(additionalData):])
+	decryptedSn, decryptedEpoch, decryptedData, err := chainedDecrypt(false, 0, sharedSecret, buf[0:len(additionalData)], buf[len(additionalData):])
 	assert.Nil(suite.T(), err)
 
+	assert.Equal(suite.T(), uint64(0), decryptedEpoch)
 	assert.Equal(suite.T(), sn, decryptedSn)
 	assert.Equal(suite.T(), data, decryptedData)
 }
@@ -127,7 +128,7 @@ func (suite *InitCryptoTestSuite) testEncodeDecodeInitCryptoSnd(payload []byte) 
 	bobPrvKeyId, _, err := generateTwoKeys()
 	assert.NoError(suite.T(), err)
 
-	buffer, err := EncodeInitCryptoSnd(bobPrvKeyId.PublicKey(), alicePrvKeyId.PublicKey(), alicePrvKeyEp, payload)
+	buffer, err := EncodeInitCryptoSnd(bobPrvKeyId.PublicKey(), alicePrvKeyId.PublicKey(), alicePrvKeyEp, 0, 0, payload)
 	assert.Nil(suite.T(), err)
 
 	_, _, m, err := DecodeInitCryptoSnd(buffer, bobPrvKeyId, alicePrvKeyEp)
@@ -150,19 +151,19 @@ func (suite *InitCryptoTestSuite) testEncodeDecodeInitCryptoRcv(payload []byte) 
 	assert.NoError(suite.T(), err)
 
 	// Alice -> Bob, Alice encodes
-	bufferInit, err := EncodeInitCryptoSnd(bobPrvKeyId.PublicKey(), alicePrvKeyId.PublicKey(), alicePrvKeyEp, payload)
+	bufferInit, err := EncodeInitCryptoSnd(bobPrvKeyId.PublicKey(), alicePrvKeyId.PublicKey(), alicePrvKeyEp, 0, 0, payload)
 	assert.Nil(suite.T(), err)
 
 	// Bob decodes message from Alice
-	_, _, m, err := DecodeInitCryptoSnd(bufferInit, bobPrvKeyId, bobPrvKeyEp)
+	_, _, m, err := DecodeInitCryptoSnd(bufferInit,  bobPrvKeyId, bobPrvKeyEp)
 	assert.Nil(suite.T(), err)
 
 	// Bob -> Alice
-	bufferInitReply, err := EncodeInitCryptoRcv(alicePrvKeyId.PublicKey(), bobPrvKeyId.PublicKey(), alicePrvKeyEp.PublicKey(), bobPrvKeyEp, payload)
+	bufferInitReply, err := EncodeInitCryptoRcv(alicePrvKeyId.PublicKey(), bobPrvKeyId.PublicKey(), alicePrvKeyEp.PublicKey(), bobPrvKeyEp, 0, 0, payload)
 	assert.Nil(suite.T(), err)
 
 	// Alice decodes message from Bob
-	_, m2, err := DecodeInitCryptoRcv(bufferInitReply, alicePrvKeyEp)
+	_, m2, err := DecodeInitCryptoRcv(bufferInitReply,  alicePrvKeyEp)
 	assert.Nil(suite.T(), err)
 	assert.Equal(suite.T(), payload, m2.PayloadRaw)
 
@@ -234,13 +235,14 @@ func (suite *InitHandshakeTestSuite) TestInitRcvBasicFlow() {
 		bobPrvKeyId.PublicKey(),
 		alicePrvKeyEp.PublicKey(),
 		bobPrvKeyEp,
+		0, 0,
 		rawData)
 
 	assert.NoError(suite.T(), err)
 
 	// Alice receives and decodes InitHandshakeR0
 	pubKeyIdRcv, pubKeyEpRcv, msg, err := DecodeInitRcv(
-		buffer,
+		buffer, 
 		alicePrvKeyEp)
 
 	// Verify the results
@@ -285,12 +287,12 @@ func (suite *InitHandshakeTestSuite) TestFullHandshakeFlow() {
 		alicePrvKeyId.PublicKey(),
 		bobPrvKeyId.PublicKey(),
 		alicePrvKeyEp.PublicKey(),
-		bobPrvKeyEp,
+		bobPrvKeyEp, 0, 0,
 		rawData)
 	assert.NoError(suite.T(), err)
 
 	// Step 4: Alice receives and decodes InitHandshakeR0
-	_, _, msgR0, err := DecodeInitRcv(bufferR0, alicePrvKeyEp)
+	_, _, msgR0, err := DecodeInitRcv(bufferR0,  alicePrvKeyEp)
 	assert.NoError(suite.T(), err)
 
 	// Verify shared secrets match
@@ -304,7 +306,7 @@ func (suite *InitHandshakeTestSuite) TestNilKeyHandling() {
 	})
 
 	assert.Panics(suite.T(), func() {
-		EncodeInitRcv(nil, nil, nil, nil, []byte("test"))
+		EncodeInitRcv(nil, nil, nil, nil, 0, 0, []byte("test"))
 	})
 
 	validBuffer := make([]byte, startMtu)
@@ -314,7 +316,7 @@ func (suite *InitHandshakeTestSuite) TestNilKeyHandling() {
 
 	validBuffer = make([]byte, startMtu)
 	assert.Panics(suite.T(), func() {
-		DecodeInitRcv(validBuffer, nil)
+		DecodeInitRcv(validBuffer,  nil)
 	})
 }
 

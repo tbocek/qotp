@@ -238,7 +238,7 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 				conn.state.isHandshakeDoneOnRcv = true
 			}
 		} else {
-			if m.MsgType == Data || m.MsgType == DataRoll {
+			if m.MsgType == Data {
 				conn.state.isHandshakeDoneOnRcv = true
 			}
 		}
@@ -332,11 +332,6 @@ func (l *Listener) newConn(
 		return nil, errors.New("conn already exists")
 	}
 
-	snCrypto := uint64(0)
-	if !isSender {
-		snCrypto = 1 << 47 // 2^47 (half of the space)
-	}
-
 	conn := &Connection{
 		connId:     connId,
 		streams:    NewLinkedMap[uint32, *Stream](),
@@ -353,7 +348,7 @@ func (l *Listener) newConn(
 			isSenderOnInit:     isSender,
 			isWithCryptoOnInit: withCrypto,
 		},
-		snCrypto:   snCrypto,
+		snCrypto:   0,
 		mtu:        startMtu,
 		snd:        NewSendBuffer(sndBufferCapacity, nil),
 		rcv:        NewReceiveBuffer(rcvBufferCapacity),

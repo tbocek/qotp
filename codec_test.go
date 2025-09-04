@@ -269,7 +269,7 @@ func TestFullHandshakeFlow(t *testing.T) {
 	c, msg, err := lBob.decode(encoded, remoteAddr)
 	require.NoError(t, err)
 	require.NotNil(t, c)
-	require.Equal(t, DataRoll, msg.MsgType)
+	require.Equal(t, Data, msg.MsgType)
 
 	s, err = c.decode(msg.PayloadRaw, 0, 0)
 	require.NoError(t, err)

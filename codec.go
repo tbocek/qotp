@@ -18,8 +18,6 @@ func (s *Stream) msgType() MsgType {
 		return InitSnd
 	case !s.conn.state.isHandshakeDoneOnRcv:
 		return InitRcv
-	case s.conn.state.isHandshakeDoneOnRcv && !s.conn.state.isDataRollSentOnSend || s.conn.snCrypto == 0:
-		return DataRoll
 	default:
 		return Data
 	}
@@ -57,8 +55,6 @@ func (o *Overhead) CalcMaxData() (overhead uint16) {
 		tmpOverhead += MinInitCryptoSndSizeHdr + FooterDataSize + MsgInitFillLenSize
 	case InitCryptoRcv:
 		tmpOverhead += MinInitCryptoRcvSizeHdr + FooterDataSize
-	case DataRoll:
-		tmpOverhead += MinDataRotSizeHdr + FooterDataSize
 	case Data:
 		tmpOverhead += MinDataSizeHdr + FooterDataSize
 	}
@@ -87,7 +83,8 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			getGoroutineID(),
 			s.debug(),
 			slog.Int("len(dataEnc)", len(encData)),
-			slog.Uint64("snCrypto", s.conn.snCrypto))
+			slog.Uint64("snCrypto", s.conn.snCrypto),
+			slog.Uint64("epochCrypto", s.conn.epochCrypto))
 		s.conn.snCrypto++
 		//here we cannot rollover
 		s.conn.state.isInitSentOnSnd = true
@@ -111,6 +108,8 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.conn.keys.pubKeyIdRcv,
 			s.conn.listener.prvKeyId.PublicKey(),
 			s.conn.keys.prvKeyEpSnd,
+			s.conn.snCrypto,
+			s.conn.epochCrypto,
 			packetData,
 		)
 		if err != nil {
@@ -122,13 +121,16 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.debug(),
 			slog.Int("len(dataProto)", len(packetData)),
 			slog.Int("len(dataEnc)", len(encData)),
-			slog.Uint64("snCrypto", s.conn.snCrypto))
+			slog.Uint64("snCrypto", s.conn.snCrypto),
+			slog.Uint64("epochCrypto", s.conn.epochCrypto))
 	case InitCryptoRcv:
 		encData, err = EncodeInitCryptoRcv(
 			s.conn.keys.pubKeyIdRcv,
 			s.conn.listener.prvKeyId.PublicKey(),
 			s.conn.keys.pubKeyEpRcv,
 			s.conn.keys.prvKeyEpSnd,
+			s.conn.snCrypto,
+			s.conn.epochCrypto,
 			packetData,
 		)
 		if err != nil {
@@ -140,13 +142,16 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.debug(),
 			slog.Int("len(dataProto)", len(packetData)),
 			slog.Int("len(dataEnc)", len(encData)),
-			slog.Uint64("snCrypto", s.conn.snCrypto))
+			slog.Uint64("snCrypto", s.conn.snCrypto),
+			slog.Uint64("epochCrypto", s.conn.epochCrypto))
 	case InitRcv:
 		encData, err = EncodeInitRcv(
 			s.conn.keys.pubKeyIdRcv,
 			s.conn.listener.prvKeyId.PublicKey(),
 			s.conn.keys.pubKeyEpRcv,
 			s.conn.keys.prvKeyEpSnd,
+			s.conn.snCrypto,
+			s.conn.epochCrypto,
 			packetData,
 		)
 		if err != nil {
@@ -158,25 +163,8 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.debug(),
 			slog.Int("len(dataProto)", len(packetData)),
 			slog.Int("len(dataEnc)", len(encData)),
-			slog.Uint64("snCrypto", s.conn.snCrypto))
-	case DataRoll:
-		encData, err = EncodeDataRot(
-			s.conn.keys.prvKeyEpSnd.PublicKey(),
-			s.conn.keys.pubKeyEpRcv,
-			s.conn.state.isSenderOnInit,
-			s.conn.keys.prvKeyEpSndRoll,
-			s.conn.sharedSecret,
-			packetData,
-		)
-		if err != nil {
-			return nil, err
-		}
-		slog.Debug("   Encode/DataRot",
-			getGoroutineID(),
-			s.debug(),
-			slog.Int("len(payRaw)", len(packetData)),
-			slog.Int("len(dataEnc)", len(encData)),
-			slog.Uint64("snCrypto", s.conn.snCrypto))
+			slog.Uint64("snCrypto", s.conn.snCrypto),
+			slog.Uint64("epochCrypto", s.conn.epochCrypto))
 	case Data:
 		encData, err = EncodeData(
 			s.conn.keys.prvKeyEpSnd.PublicKey(),
@@ -184,6 +172,7 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.conn.state.isSenderOnInit,
 			s.conn.sharedSecret,
 			s.conn.snCrypto,
+			s.conn.epochCrypto,
 			packetData,
 		)
 		if err != nil {
@@ -194,7 +183,8 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.debug(),
 			slog.Int("len(payRaw)", len(packetData)),
 			slog.Int("len(dataEnc)", len(encData)),
-			slog.Uint64("snCrypto", s.conn.snCrypto))
+			slog.Uint64("snCrypto", s.conn.snCrypto),
+			slog.Uint64("epochCrypto", s.conn.epochCrypto))
 	default:
 		return nil, fmt.Errorf("unknown message type: %v", msgType)
 	}
@@ -203,6 +193,11 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 	s.conn.snCrypto++
 	//rollover
 	if s.conn.snCrypto > (1<<48)-1 {
+		if s.conn.epochCrypto+1 > (1<<47)-1 {
+			//TODO: quic has key rotation (via bitflip), but this adds complexity and 2^96 bytes is a lot.
+			return nil, errors.New("exhausted 2^95 sn number, cannot continue, you just sent over 34'000'000 ZettaBytes. Now you need to reconnect manually.")
+		}
+		s.conn.epochCrypto++
 		s.conn.snCrypto = 0
 	}
 	return encData, nil
@@ -356,42 +351,6 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 
 		slog.Debug(" Decode/InitCryptoRcv", getGoroutineID(), l.debug())
 		return conn, message, nil
-	case DataRoll:
-		conn := l.connMap.Get(origConnId)
-		if conn == nil {
-			return nil, nil, errors.New("connection not found for Data0")
-		}
-
-		//only needs to be done right after the handshake
-		firstConnId := Uint64(conn.keys.pubKeyEpRcv.Bytes())
-		l.connMap.Remove(firstConnId)
-
-		// Decode Data0 message
-		pubKeyEpRoll, message, err := DecodeDataRot(buffer, conn.state.isSenderOnInit, conn.sharedSecret)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to decode Data0: %w", err)
-		}
-
-		conn.keys.pubKeyEpRcvRoll = pubKeyEpRoll
-		//now we can generate the rolloverSharedSecret
-		sharedSecretRoll, err := conn.keys.prvKeyEpSndRoll.ECDH(pubKeyEpRoll)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to ECDH Data0: %w", err)
-		}
-		if conn.sharedSecretRoll == nil {
-			conn.sharedSecretRoll = sharedSecretRoll
-		} else if conn.sharedSecretRollNext == nil {
-			conn.sharedSecretRollNext = sharedSecretRoll
-			//here we have received the DataRoll with cSn=0. This means, we can get rid of conn.sharedSecretRoll,
-		} else {
-			panic("this should never happen")
-		}
-
-		slog.Debug(" Decode/DataRot",
-			getGoroutineID(),
-			l.debug(),
-			slog.Int("len(buffer)", len(buffer)))
-		return conn, message, nil
 	case Data:
 		conn := l.connMap.Get(origConnId)
 		if conn == nil {
@@ -403,9 +362,14 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		l.connMap.Remove(firstConnId)
 
 		// Decode Data message
-		message, err := DecodeData(buffer, conn.state.isSenderOnInit, conn.sharedSecret)
+		message, err := DecodeData(buffer, conn.state.isSenderOnInit, conn.epochCrypto, conn.sharedSecret)
 		if err != nil {
 			return nil, nil, err
+		}
+		
+		//we decoded conn.epochCrypto + 1, that means we can safely move forward with the epoch
+		if message.currentEpochCrypt > conn.epochCrypto {
+			conn.epochCrypto = message.currentEpochCrypt
 		}
 
 		slog.Debug(" Decode/Data",

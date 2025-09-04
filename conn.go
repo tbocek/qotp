@@ -22,7 +22,6 @@ type ConnectionState struct {
 	isWithCryptoOnInit   bool
 	isHandshakeDoneOnRcv bool
 	isInitSentOnSnd      bool
-	isDataRollSentOnSend bool
 }
 
 type Connection struct {
@@ -39,9 +38,7 @@ type Connection struct {
 	keys ConnectionKeys
 
 	// Shared secrets
-	sharedSecret     []byte
-	sharedSecretRoll []byte
-	sharedSecretRollNext []byte
+	sharedSecret []byte
 
 	// Buffers and flow control
 	snd          *SendBuffer
@@ -56,20 +53,11 @@ type Connection struct {
 
 	// Crypto and performance
 	snCrypto    uint64 //this is 48bit
-	tmpRollover *tmpRollover
+	epochCrypto uint64 //this is 48bit
 	BBR
 	RTT
 
 	mu sync.Mutex
-}
-
-// tmpRollover is used during rollover to temporarily store new rollover material. In case of perfect rollover,
-// this is not needed. If you still have packets to send before the rollover and after, we need to temporarily store
-// the new values, until all packets from the before rollover are sent.
-type tmpRollover struct {
-	connIdRollover       uint64
-	prvKeyEpSndRollover  *ecdh.PrivateKey
-	sharedSecretRollover []byte
 }
 
 func (c *Connection) Close() {

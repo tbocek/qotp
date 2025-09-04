@@ -394,7 +394,7 @@ func TestBBR(t *testing.T) {
 	assert.Nil(t, err)
 	
 	//respect time
-	assert.Equal(t, uint64(0x655b3c51), specificNano)
+	assert.Equal(t, uint64(0x65ca62ad), specificNano)
 }
 
 func TestBBR2(t *testing.T) {
