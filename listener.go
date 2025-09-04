@@ -232,14 +232,14 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 	}
 
 	//Set state
-	if !conn.state.isHandshakeComplete {
-		if conn.state.isSender {
+	if !conn.state.isHandshakeDoneOnRcv {
+		if conn.state.isSenderOnInit {
 			if m.MsgType == InitRcv || m.MsgType == InitCryptoRcv {
-				conn.state.isHandshakeComplete = true
+				conn.state.isHandshakeDoneOnRcv = true
 			}
 		} else {
 			if m.MsgType == Data || m.MsgType == DataRoll {
-				conn.state.isHandshakeComplete = true
+				conn.state.isHandshakeDoneOnRcv = true
 			}
 		}
 	}
@@ -316,17 +316,12 @@ func (l *Listener) newConn(
 	prvKeyEpSndRollover *ecdh.PrivateKey,
 	pubKeyIdRcv *ecdh.PublicKey,
 	pubKeyEdRcv *ecdh.PublicKey,
-	pubKeyEpRcvRollover *ecdh.PublicKey,
 	isSender bool,
 	withCrypto bool) (*Connection, error) {
 
-	connId := binary.LittleEndian.Uint64(prvKeyEpSnd.PublicKey().Bytes())                 // prvKeyEpSnd is never nil
-	connIdRollover := binary.LittleEndian.Uint64(prvKeyEpSndRollover.PublicKey().Bytes()) // prvKeyEpSndRoll is never nil
+	connId := binary.LittleEndian.Uint64(prvKeyEpSnd.PublicKey().Bytes()) // prvKeyEpSnd is never nil
 	if pubKeyEdRcv != nil {
 		connId = connId ^ binary.LittleEndian.Uint64(pubKeyEdRcv.Bytes()) //this is the id for regular data flow
-	}
-	if pubKeyEpRcvRollover != nil {
-		connIdRollover = connIdRollover ^ binary.LittleEndian.Uint64(pubKeyEpRcvRollover.Bytes()) //this is the id for regular data flow
 	}
 
 	l.mu.Lock()
@@ -337,24 +332,28 @@ func (l *Listener) newConn(
 		return nil, errors.New("conn already exists")
 	}
 
+	snCrypto := uint64(0)
+	if !isSender {
+		snCrypto = 1 << 47 // 2^47 (half of the space)
+	}
+
 	conn := &Connection{
 		connId:     connId,
-		connIdRoll: connIdRollover,
 		streams:    NewLinkedMap[uint32, *Stream](),
 		remoteAddr: remoteAddr,
 		keys: ConnectionKeys{
 			pubKeyIdRcv:     pubKeyIdRcv,
 			prvKeyEpSnd:     prvKeyEpSnd,
 			prvKeyEpSndRoll: prvKeyEpSndRollover,
-			pubKeyEpRcvRoll: pubKeyEpRcvRollover,
 			pubKeyEpRcv:     pubKeyEdRcv,
 		},
 		mu:       sync.Mutex{},
 		listener: l,
 		state: ConnectionState{
-			isSender:   isSender,
-			withCrypto: withCrypto,
+			isSenderOnInit:     isSender,
+			isWithCryptoOnInit: withCrypto,
 		},
+		snCrypto:   snCrypto,
 		mtu:        startMtu,
 		snd:        NewSendBuffer(sndBufferCapacity, nil),
 		rcv:        NewReceiveBuffer(rcvBufferCapacity),

@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	FlagSenderShift   = 0
+	FlagPingShift   = 0
 	FlagAckPakShift   = 1
 	FlagRcvCloseShift = 3
 
@@ -20,7 +20,7 @@ var (
 
 type PayloadHeader struct {
 	IsClose      bool
-	IsSender     bool
+	IsPing     bool
 	Ack          *Ack
 	RcvWndSize   uint64
 	StreamID     uint32
@@ -145,8 +145,8 @@ func EncodePayload(p *PayloadHeader, userData []byte) (encoded []byte, offset in
 	// Calculate flags
 	var flags uint8
 
-	if p.IsSender {
-		flags = 1 << FlagSenderShift
+	if p.IsPing {
+		flags = 1 << FlagPingShift
 	}
 
 	var ackPak uint8
@@ -216,7 +216,7 @@ func DecodePayload(data []byte) (payload *PayloadHeader, offset int, userData []
 	// Flags (8 bits)
 	flags := data[offset]
 
-	payload.IsSender = flags&1 != 0
+	payload.IsPing = flags&1 != 0
 
 	ackPack := (flags >> FlagAckPakShift) & 3
 	ack, needsExtended := DecodePacketType(ackPack)

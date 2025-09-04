@@ -18,11 +18,11 @@ type ConnectionKeys struct {
 }
 
 type ConnectionState struct {
-	isSender              bool
-	isRoll                bool
-	isHandshakeComplete   bool
-	isFirstPacketProduced bool
-	withCrypto            bool
+	isSenderOnInit       bool
+	isWithCryptoOnInit   bool
+	isHandshakeDoneOnRcv bool
+	isInitSentOnSnd      bool
+	isDataRollSentOnSend bool
 }
 
 type Connection struct {
@@ -41,6 +41,7 @@ type Connection struct {
 	// Shared secrets
 	sharedSecret     []byte
 	sharedSecretRoll []byte
+	sharedSecretRollNext []byte
 
 	// Buffers and flow control
 	snd          *SendBuffer
@@ -260,7 +261,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 	}
 
 	//next check if we can send packets, during handshake we can only send 1 packet
-	if !c.state.isHandshakeComplete && !c.state.isFirstPacketProduced || c.state.isHandshakeComplete {
+	if c.state.isHandshakeDoneOnRcv || (!c.state.isHandshakeDoneOnRcv && !c.state.isInitSentOnSnd) {
 		splitData, m = c.snd.ReadyToSend(s.streamID, overhead, nowNano)
 		if m != nil && splitData != nil {
 			slog.Debug(" Flush/Send", getGoroutineID(), s.debug(), m.debug(), c.debug())
@@ -268,9 +269,9 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 			if err != nil {
 				return 0, 0, 0, err
 			}
-			m.msgType = s.msgType()
-			c.state.isFirstPacketProduced = true
 
+			//TODO: this is important to set the type, but make this more explicit
+			m.msgType = s.msgType()
 			raw, err := c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowNano)
 			if err != nil {
 				return 0, 0, 0, err

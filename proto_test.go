@@ -40,7 +40,7 @@ func TestPayloadWithAllFeatures(t *testing.T) {
 	for _, tc := range testCases {
 		original := &PayloadHeader{
 			IsClose:      tc.isClose,
-			IsSender:     true,
+			IsPing:     true,
 			StreamID:     1,
 			StreamOffset: 9999,
 			RcvWndSize:   tc.rcvWndSize,
@@ -53,7 +53,7 @@ func TestPayloadWithAllFeatures(t *testing.T) {
 
 		require.NoError(t, err, "Failed to decode payload")
 		assert.Equal(t, original.IsClose, decoded.IsClose)
-		assert.Equal(t, original.IsSender, decoded.IsSender)
+		assert.Equal(t, original.IsPing, decoded.IsPing)
 		assert.Equal(t, original.StreamID, decoded.StreamID)
 		assert.Equal(t, original.StreamOffset, decoded.StreamOffset)
 		assert.Equal(t, originalData, decodedData)
@@ -273,7 +273,7 @@ func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 		{
 			name: "ACK only - no data",
 			payload: &PayloadHeader{
-				IsSender:     false,
+				IsPing:     false,
 				IsClose:      false,
 				RcvWndSize:   1000,
 				StreamID:     1,
@@ -290,7 +290,7 @@ func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 		{
 			name: "ACK with data",
 			payload: &PayloadHeader{
-				IsSender:     true,
+				IsPing:     true,
 				IsClose:      false,
 				RcvWndSize:   2000,
 				StreamID:     2,
@@ -307,7 +307,7 @@ func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 		{
 			name: "No ACK - data only",
 			payload: &PayloadHeader{
-				IsSender:     true,
+				IsPing:     true,
 				IsClose:      false,
 				RcvWndSize:   3000,
 				StreamID:     3,
@@ -320,7 +320,7 @@ func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 		{
 			name: "ACK with large offset (24-bit)",
 			payload: &PayloadHeader{
-				IsSender:     false,
+				IsPing:     false,
 				IsClose:      false,
 				RcvWndSize:   4000,
 				StreamID:     4,
@@ -337,7 +337,7 @@ func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 		{
 			name: "ACK with large offset (48-bit)",
 			payload: &PayloadHeader{
-				IsSender:     false,
+				IsPing:     false,
 				IsClose:      false,
 				RcvWndSize:   5000,
 				StreamID:     5,
@@ -354,7 +354,7 @@ func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 		{
 			name: "Multiple flags set with ACK",
 			payload: &PayloadHeader{
-				IsSender:     true,
+				IsPing:     true,
 				IsClose:      true,
 				RcvWndSize:   0, // Will be ignored due to IsClose
 				StreamID:     6,
@@ -391,7 +391,7 @@ func TestEncodeDecodePayloadWithAcks(t *testing.T) {
 			assert.NotNil(t, decoded)
 
 			// Verify basic fields
-			assert.Equal(t, tc.payload.IsSender, decoded.IsSender, "IsSender mismatch")
+			assert.Equal(t, tc.payload.IsPing, decoded.IsPing, "IsSender mismatch")
 			assert.Equal(t, tc.payload.IsClose, decoded.IsClose, "IsClose mismatch")
 			assert.Equal(t, tc.payload.StreamID, decoded.StreamID, "StreamId mismatch")
 			assert.Equal(t, tc.payload.StreamOffset, decoded.StreamOffset, "StreamOffset mismatch")

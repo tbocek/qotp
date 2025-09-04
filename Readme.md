@@ -54,6 +54,66 @@ only mentions 9 primary RFCs and 48 extensions and informational RFCs, totalling
     * Current fastest speed: 22.9 Pb/s - multimode (https://newatlas.com/telecommunications/datat-transmission-record-20x-global-internet-traffic/)
     * Commercial: 402 Tb/s - singlemode (https://www.techspot.com/news/103584-blistering-402-tbs-fiber-optic-speeds-achieved-unlocking.html)
   So, 64bit should be enough for the foreseeable future.
+  
+## Message Flow
+
+```mermaid
+---
+title: "Message Flow: In-band Crypto Keys"
+---
+sequenceDiagram
+    participant S as Sender
+    participant R as Receiver
+
+    Note over S,R: Protocol Flow 1: Basic Handshake
+    
+    S->>R: InitSnd
+    Note right of S: pubKeyIdSnd + pubKeyEpSnd<br/>Unencrypted
+    
+    R->>S: InitRcv
+    Note left of R: pubKeyIdSnd + pubKeyEpSnd<br/>Encrypted with ECDH shared secret
+    
+    S->>R: DataRoll
+    Note right of S: New ephemeral key + encrypted data<br/>Key rotation
+    
+    R->>S: DataRoll
+    Note left of R: New ephemeral key + encrypted data<br/>Key rotation
+    
+    S->>R: Data
+    Note right of S: Encrypted data messages<br/>Using established shared secret
+    
+    R->>S: Data
+    Note left of R: Encrypted data messages<br/>Using established shared secret
+```
+
+```mermaid
+---
+title: "Message Flow: Out-of-band Crypto Keys"
+---
+sequenceDiagram
+    participant S as Sender
+    participant R as Receiver
+
+    Note over S,R: Protocol Flow 2: Crypto Handshake
+    
+    S->>R: InitCryptoSnd
+    Note right of S: pubKeyIdSnd + pubKeyEpSnd<br/>Encrypted (non-forward-secret)
+    
+    R->>S: InitCryptoRcv
+    Note left of R: pubKeyEpSnd<br/>Encrypted (forward-secret)
+    
+    S->>R: DataRoll
+    Note right of S: New ephemeral key + encrypted data<br/>Key rotation
+    
+    R->>S: DataRoll
+    Note left of R: New ephemeral key + encrypted data<br/>Key rotation
+    
+    S->>R: Data
+    Note right of S: Encrypted data messages<br/>Using forward-secret shared secret
+    
+    R->>S: Data
+    Note left of R: Encrypted data messages<br/>Using forward-secret shared secret
+```
 
 ## Messages Format (encryption layer)
 

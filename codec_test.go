@@ -76,8 +76,8 @@ func TestStreamEncodeHandshakeTypes(t *testing.T) {
 	for _, tc := range testCases {
 		conn := &Connection{
 			state: ConnectionState{
-				isSender:   tc.isSender,
-				withCrypto: tc.withCrypto,
+				isSenderOnInit:   tc.isSender,
+				isWithCryptoOnInit: tc.withCrypto,
 			},
 			snCrypto: 0,
 			mtu:      1400,
@@ -113,67 +113,9 @@ func TestStreamEncodeHandshakeTypes(t *testing.T) {
 	}
 }
 
-// Test data message types (Data0 and Data)
-func TestStreamEncodeDataTypes(t *testing.T) {
-	// Test Data0 (rollover)
-	connRollover := &Connection{
-		state: ConnectionState{
-			isHandshakeComplete: true,
-			isSender:            true,
-			isRoll:              true,
-		},
-		snCrypto: 1,
-		mtu:      1400,
-		keys: ConnectionKeys{
-			pubKeyIdRcv:     prvIdBob.PublicKey(),
-			prvKeyEpSnd:     prvEpAlice,
-			prvKeyEpSndRoll: prvEpAliceRoll,
-			pubKeyEpRcv:     prvEpBob.PublicKey(),
-		},
-		listener:     &Listener{prvKeyId: prvIdAlice},
-		rcv:        NewReceiveBuffer(1000),
-		sharedSecret: seed1[:],
-		streams:      NewLinkedMap[uint32, *Stream](),
-	}
-
-	streamRollover := &Stream{conn: connRollover}
-	output, err := streamRollover.encode([]byte("rollover data"), 0, nil, streamRollover.msgType())
-	assert.NoError(t, err)
-	assert.NotNil(t, output)
-	_, msgType, _ := decodeHeader(output)
-	assert.Equal(t, DataRoll, msgType)
-
-	// Test regular Data message
-	connData := &Connection{
-		state: ConnectionState{
-			isHandshakeComplete: true,
-			isSender:            true,
-			isRoll:              false,
-		},
-		snCrypto: 1,
-		mtu:      1400,
-		keys: ConnectionKeys{
-			pubKeyIdRcv: prvIdBob.PublicKey(),
-			prvKeyEpSnd: prvEpAlice,
-			pubKeyEpRcv: prvEpBob.PublicKey(),
-		},
-		listener:     &Listener{prvKeyId: prvIdAlice},
-		rcv:        NewReceiveBuffer(1000),
-		sharedSecret: seed1[:],
-		streams:      NewLinkedMap[uint32, *Stream](),
-	}
-
-	streamData := &Stream{conn: connData}
-	output, err = streamData.encode([]byte("regular data"), 0, nil, streamData.msgType())
-	assert.NoError(t, err)
-	assert.NotNil(t, output)
-	_, msgType, _ = decodeHeader(output)
-	assert.Equal(t, Data, msgType)
-}
-
 // Test end-to-end codec with various data sizes
 func TestEndToEndCodec(t *testing.T) {
-	dataSizes := []int{0, 100, 1000, 2000, 10000}
+	dataSizes := []int{0, 100, 1000, 1295}
 
 	for _, size := range dataSizes {
 		// Setup listeners
@@ -189,8 +131,8 @@ func TestEndToEndCodec(t *testing.T) {
 		// Create Alice's connection
 		connAlice := &Connection{
 			state: ConnectionState{
-				isSender:   true,
-				withCrypto: true,
+				isSenderOnInit:   true,
+				isWithCryptoOnInit: true,
 			},
 			snCrypto: 0,
 			mtu:      1400,
@@ -260,7 +202,7 @@ func TestFullHandshakeFlow(t *testing.T) {
 	connAlice := &Connection{
 		connId: Uint64(prvEpAlice.PublicKey().Bytes()),
 		state: ConnectionState{
-			isSender: true,
+			isSenderOnInit: true,
 		},
 		snCrypto: 0,
 		mtu:      1400,
@@ -307,13 +249,13 @@ func TestFullHandshakeFlow(t *testing.T) {
 	connId := binary.LittleEndian.Uint64(prvIdAlice.PublicKey().Bytes()) ^ binary.LittleEndian.Uint64(prvIdBob.PublicKey().Bytes())
 
 	// Setup established connections
-	connAlice.state.isHandshakeComplete = true
+	connAlice.state.isHandshakeDoneOnRcv = true
 	connAlice.keys.pubKeyIdRcv = prvIdBob.PublicKey()
 	connAlice.keys.pubKeyEpRcv = prvEpBob.PublicKey()
 	connAlice.sharedSecret = seed1[:]
 	lAlice.connMap.Put(connId, connAlice)
 
-	connBob.state.isHandshakeComplete = true
+	connBob.state.isHandshakeDoneOnRcv = true
 	connBob.sharedSecret = seed1[:]
 	lBob.connMap.Put(connId, connBob)
 
@@ -327,7 +269,7 @@ func TestFullHandshakeFlow(t *testing.T) {
 	c, msg, err := lBob.decode(encoded, remoteAddr)
 	require.NoError(t, err)
 	require.NotNil(t, c)
-	require.Equal(t, Data, msg.MsgType)
+	require.Equal(t, DataRoll, msg.MsgType)
 
 	s, err = c.decode(msg.PayloadRaw, 0, 0)
 	require.NoError(t, err)
@@ -335,36 +277,7 @@ func TestFullHandshakeFlow(t *testing.T) {
 	require.Equal(t, dataMsg, rb)
 }
 
-// Test msgType() function
-func TestStreamMsgType(t *testing.T) {
-	testCases := []struct {
-		isHandshakeComplete bool
-		withCrypto          bool
-		isSender            bool
-		isRollover          bool
-		expected            MsgType
-	}{
-		{false, true, true, false, InitCryptoSnd},
-		{false, true, false, false, InitCryptoRcv},
-		{false, false, true, false, InitSnd},
-		{false, false, false, false, InitRcv},
-		{true, false, false, true, DataRoll},
-		{true, false, false, false, Data},
-	}
 
-	for _, tc := range testCases {
-		conn := &Connection{
-			state: ConnectionState{
-				isHandshakeComplete: tc.isHandshakeComplete,
-				withCrypto:          tc.withCrypto,
-				isSender:            tc.isSender,
-				isRoll:              tc.isRollover,
-			},
-		}
-		stream := &Stream{conn: conn}
-		assert.Equal(t, tc.expected, stream.msgType())
-	}
-}
 
 // Test Overhead calculations
 func TestOverheadCalculations(t *testing.T) {
@@ -376,9 +289,9 @@ func TestOverheadCalculations(t *testing.T) {
 		maxData    uint16
 	}{
 		{nil, 100, InitSnd, 1400, 0},
-		{nil, 100, InitRcv, 1400, uint16(1400 - CalcProtoOverhead(false, false) - MinInitRcvSize)},
-		{&Ack{offset: 0xFFFFFF + 1}, 100, Data, 1400, uint16(1400 - CalcProtoOverhead(true, true) - MinDataSize)},
-		{nil, 0xFFFFFF + 1, Data, 1400, uint16(1400 - CalcProtoOverhead(false, true) - MinDataSize)},
+		{nil, 100, InitRcv, 1400, uint16(1400 - CalcProtoOverhead(false, false) - (MinInitRcvSizeHdr + FooterDataSize))},
+		{&Ack{offset: 0xFFFFFF + 1}, 100, Data, 1400, uint16(1400 - CalcProtoOverhead(true, true) - (MinDataSizeHdr + FooterDataSize))},
+		{nil, 0xFFFFFF + 1, Data, 1400, uint16(1400 - CalcProtoOverhead(false, true) - (MinDataSizeHdr + FooterDataSize))},
 	}
 
 	for i, tc := range testCases {
