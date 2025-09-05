@@ -55,8 +55,7 @@ type Connection struct {
 	snCrypto       uint64 //this is 48bit
 	epochCryptoSnd uint64 //this is 48bit
 	epochCryptoRcv uint64 //this is 48bit
-	BBR
-	RTT
+	Measurements
 
 	mu sync.Mutex
 }
@@ -97,7 +96,7 @@ func (c *Connection) Stream(streamID uint32) (s *Stream) {
 }
 
 func (c *Connection) decode(packetData []byte, rawLen int, nowNano uint64) (s *Stream, err error) {
-	p, _, userData, err := DecodePayload(packetData)
+	p, userData, err := DecodePayload(packetData)
 	if err != nil {
 		slog.Info("error in decoding payload from new connection", slog.Any("error", err))
 		return nil, err
@@ -114,10 +113,9 @@ func (c *Connection) decode(packetData []byte, rawLen int, nowNano uint64) (s *S
 			c.OnDuplicateAck()
 		}
 		if nowNano > sentTimeNano {
-			rttNano := nowNano - sentTimeNano
-			c.UpdateRTT(rttNano)
 			if ackStatus == AckStatusOk {
-				c.UpdateBBR(rttNano, uint64(p.Ack.len), nowNano)
+				rttNano := nowNano - sentTimeNano
+				c.UpdateMeasurements(rttNano, uint64(p.Ack.len), nowNano)
 			} else {
 				return nil, errors.New("stream does not exist")
 			}

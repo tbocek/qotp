@@ -39,6 +39,25 @@ func (o *Overhead) CalcOverhead() (needsExtend bool, overhead int) {
 	return needsExtend, overhead
 }
 
+func CalcProtoOverhead(ack bool, needsExtension bool) int {
+	overhead := 1 //header Size
+	if ack {
+		if !needsExtension {
+			overhead += 4 + 3 + 2 // StreamId, StreamOffset (24-bit), Len
+		} else {
+			overhead += 4 + 6 + 2 // StreamId, StreamOffset (48-bit), Len
+		}
+	}
+	if !needsExtension {
+		overhead += 4 + 3 // StreamId, StreamOffset (24-bit)
+	} else {
+		overhead += 4 + 6 // StreamId, StreamOffset (48-bit)
+	}
+
+	// now comes the data... -> but not calculated in overhead
+	return overhead
+}
+
 func (o *Overhead) CalcMaxData() (overhead uint16) {
 	if o.debug > 0 {
 		return o.debug

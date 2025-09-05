@@ -348,12 +348,12 @@ func (l *Listener) newConn(
 			isSenderOnInit:     isSender,
 			isWithCryptoOnInit: withCrypto,
 		},
-		snCrypto:   0,
-		mtu:        startMtu,
-		snd:        NewSendBuffer(sndBufferCapacity, nil),
-		rcv:        NewReceiveBuffer(rcvBufferCapacity),
-		BBR:        NewBBR(),
-		rcvWndSize: rcvBufferCapacity, //initially our capacity, correct value will be sent to us in the 1st handshake
+		snCrypto:     0,
+		mtu:          startMtu,
+		snd:          NewSendBuffer(sndBufferCapacity, nil),
+		rcv:          NewReceiveBuffer(rcvBufferCapacity),
+		Measurements: NewMeasurements(),
+		rcvWndSize:   rcvBufferCapacity, //initially our capacity, correct value will be sent to us in the 1st handshake
 	}
 
 	l.connMap.Put(connId, conn)

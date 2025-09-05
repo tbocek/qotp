@@ -6,21 +6,17 @@ import (
 )
 
 const (
-	FlagPingShift   = 0
+	FlagPingShift     = 0
 	FlagAckPakShift   = 1
 	FlagRcvCloseShift = 3
 
 	MinProtoSize = 8
-	CloseFlag    = 31
-)
-
-var (
-	ErrPayloadTooSmall = errors.New("payload Size below minimum of 8 bytes")
+	CloseFlag    = uint8(31)
 )
 
 type PayloadHeader struct {
 	IsClose      bool
-	IsPing     bool
+	IsPing       bool
 	Ack          *Ack
 	RcvWndSize   uint64
 	StreamID     uint32
@@ -31,25 +27,6 @@ type Ack struct {
 	streamID uint32
 	offset   uint64
 	len      uint16
-}
-
-func CalcProtoOverhead(ack bool, needsExtension bool) int {
-	overhead := 1 //header Size
-	if ack {
-		if !needsExtension {
-			overhead += 4 + 3 + 2 // StreamId, StreamOffset (24-bit), Len
-		} else {
-			overhead += 4 + 6 + 2 // StreamId, StreamOffset (48-bit), Len
-		}
-	}
-	if !needsExtension {
-		overhead += 4 + 3 // StreamId, StreamOffset (24-bit)
-	} else {
-		overhead += 4 + 6 // StreamId, StreamOffset (48-bit)
-	}
-
-	// now comes the data... -> but not calculated in overhead
-	return overhead
 }
 
 /*
@@ -87,12 +64,6 @@ encoded | actualBytes range        | decoded value (middle)
 29      | 137438953472-274877906943| 206158430208 (192GB)
 30      | 274877906944+            | 412316860416 (384GB)
 */
-func DecodeRcvWindow(encoded uint8) uint64 {
-	if encoded == 0 {
-		return 0
-	}
-	return 768 << (encoded - 1)
-}
 
 func EncodeRcvWindow(actualBytes uint64) uint8 {
 	if actualBytes < 512 {
@@ -105,26 +76,29 @@ func EncodeRcvWindow(actualBytes uint64) uint8 {
 	return uint8(highBit)
 }
 
-func EncodePacketType(hasAck bool, ackSeq uint64, dataSeq uint64) uint8 {
-	// Determine if we need extended (48-bit) encoding
-	needsExtended := ackSeq > 0xFFFFFF || dataSeq > 0xFFFFFF
-
-	// Handle the different cases more clearly
-	if !hasAck {
-		if needsExtended {
-			return 1 // No ACK/Data with 48bit
-		}
-		return 0 // No ACK/Data with 24bit
+func DecodeRcvWindow(encoded uint8) uint64 {
+	if encoded == 0 {
+		return 0
 	}
-
-	// hasAck is true
-	if needsExtended {
-		return 3 // ACK/Data with 48bit
-	}
-	return 2 // ACK/Data with 24bit
+	return 768 << (encoded - 1)
 }
 
-func DecodePacketType(packetType uint8) (hasAck bool, needsExtended bool) {
+// Determine if we need extended (48-bit) encoding
+func EncodePacketType(ack *Ack, dataSeq uint64) (flag uint8, isExtend bool) {
+	if ack == nil {
+		if dataSeq > 0xFFFFFF {
+			return 1, true // No ACK/Data with 48bit, 6 bytes overhead
+		}
+		return 0, false // No ACK/Data with 24bit, 3 bytes overhead
+	} else {
+		if dataSeq > 0xFFFFFF || ack.offset > 0xFFFFFF {
+			return 3, true // ACK/Data with 48bit, 6 bytes overhead
+		}
+		return 2, false // ACK/Data with 24bit, 3 bytes overhead
+	}
+}
+
+func DecodePacketType(packetType uint8) (isAck bool, isExtend bool) {
 	switch packetType {
 	case 0:
 		return false, false // No ACK/Data with 24bit
@@ -141,36 +115,30 @@ func DecodePacketType(packetType uint8) (hasAck bool, needsExtended bool) {
 }
 
 func EncodePayload(p *PayloadHeader, userData []byte) (encoded []byte, offset int) {
-
 	// Calculate flags
 	var flags uint8
-
+	
+	// Ping flag
 	if p.IsPing {
 		flags = 1 << FlagPingShift
 	}
 
-	var ackPak uint8
-	if p.Ack != nil {
-		ackPak = EncodePacketType(true, p.Ack.offset, p.StreamOffset)
-	} else {
-		ackPak = EncodePacketType(false, 0, p.StreamOffset)
-	}
+	// Ack flags
+	ackPak, isExtend := EncodePacketType(p.Ack, p.StreamOffset)
 	flags |= ackPak << FlagAckPakShift
-
-	var rcvClose uint8
+	
+	// Close / RcvWnd Flag
 	if p.IsClose {
-		rcvClose = CloseFlag
+		flags |= CloseFlag << FlagRcvCloseShift
 	} else {
-		rcvClose = EncodeRcvWindow(p.RcvWndSize)
+		rcvClose := EncodeRcvWindow(p.RcvWndSize)
+		flags |= rcvClose << FlagRcvCloseShift
 	}
-	flags |= rcvClose << FlagRcvCloseShift
 
-	// Calculate total size of header
-	o := &Overhead{ack: p.Ack, dataOffset: p.StreamOffset}
-	needExtend, overhead := o.CalcOverhead()
 	// Allocate buffer
-	dataLen := len(userData)
-	encoded = make([]byte, int(overhead)+dataLen)
+	userDataLen := len(userData)
+	overhead := overhead(p.Ack != nil, isExtend)
+	encoded = make([]byte, overhead+userDataLen)
 
 	// Write header
 	encoded[offset] = flags
@@ -180,7 +148,7 @@ func EncodePayload(p *PayloadHeader, userData []byte) (encoded []byte, offset in
 	if p.Ack != nil {
 		// Write ACKs
 		offset += PutUint32(encoded[offset:], p.Ack.streamID)
-		if needExtend {
+		if isExtend {
 			offset += PutUint48(encoded[offset:], p.Ack.offset)
 		} else {
 			offset += PutUint24(encoded[offset:], p.Ack.offset)
@@ -191,26 +159,26 @@ func EncodePayload(p *PayloadHeader, userData []byte) (encoded []byte, offset in
 	// Write Data
 	offset += PutUint32(encoded[offset:], p.StreamID)
 
-	if needExtend {
+	if isExtend {
 		offset += PutUint48(encoded[offset:], p.StreamOffset)
 	} else {
 		offset += PutUint24(encoded[offset:], p.StreamOffset)
 	}
 
-	if dataLen > 0 {
+	if userDataLen > 0 {
 		offset += copy(encoded[offset:], userData)
 	}
 
 	return encoded, offset
 }
 
-func DecodePayload(data []byte) (payload *PayloadHeader, offset int, userData []byte, err error) {
+func DecodePayload(data []byte) (payload *PayloadHeader, userData []byte, err error) {
 	dataLen := len(data)
 	if dataLen < MinProtoSize {
-		return nil, 0, nil, ErrPayloadTooSmall
+		return nil, nil, errors.New("payload Size below minimum of 8 bytes")
 	}
 
-	offset = 0
+	offset := 0
 	payload = &PayloadHeader{}
 
 	// Flags (8 bits)
@@ -219,11 +187,7 @@ func DecodePayload(data []byte) (payload *PayloadHeader, offset int, userData []
 	payload.IsPing = flags&1 != 0
 
 	ackPack := (flags >> FlagAckPakShift) & 3
-	ack, needsExtended := DecodePacketType(ackPack)
-	expectedSize := CalcProtoOverhead(ack, needsExtended)
-	if offset+expectedSize > dataLen {
-		return nil, 0, nil, ErrPayloadTooSmall
-	}
+	isAck, isExtend := DecodePacketType(ackPack)
 
 	rcvClose := flags >> FlagRcvCloseShift
 	if rcvClose == CloseFlag {
@@ -231,14 +195,20 @@ func DecodePayload(data []byte) (payload *PayloadHeader, offset int, userData []
 	} else {
 		payload.RcvWndSize = DecodeRcvWindow(rcvClose)
 	}
-	offset++
-
+	offset++ //we processed the header
+	
+	//now we know the correct header size, check again
+	overhead := overhead(isAck, isExtend)
+	if dataLen < overhead {
+		return nil, nil, errors.New("payload Size below minimum")
+	}
+	
 	// Decode ACKs if present
-	if ack {
+	if isAck {
 		payload.Ack = &Ack{}
 		payload.Ack.streamID = Uint32(data[offset:])
 		offset += 4
-		if needsExtended {
+		if isExtend {
 			payload.Ack.offset = Uint48(data[offset:])
 			offset += 6
 		} else {
@@ -250,11 +220,10 @@ func DecodePayload(data []byte) (payload *PayloadHeader, offset int, userData []
 	}
 
 	// Decode Data
-
 	payload.StreamID = Uint32(data[offset:])
 	offset += 4
 
-	if needsExtended {
+	if isExtend {
 		payload.StreamOffset = Uint48(data[offset:])
 		offset += 6
 	} else {
@@ -270,5 +239,19 @@ func DecodePayload(data []byte) (payload *PayloadHeader, offset int, userData []
 		userData = make([]byte, 0)
 	}
 
-	return payload, offset, userData, nil
+	return payload, userData, nil
+}
+
+func overhead(isAck, isExtend bool) int {
+	overhead := 1 + 4 + 3 //header + 32bit + 24bit
+	if isExtend {
+		overhead += 3 //in total 6 bytes for 48bit, we already counted 24bit, so just add 3
+	}
+	if isAck {
+		overhead += 4 + 3 + 2 //32bit + 24bit + 16bit
+		if isExtend {
+			overhead += 3 //in total 6 bytes for 48bit, we already counted 24bit, so just add 3
+		}
+	}
+	return overhead
 }
