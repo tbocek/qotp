@@ -52,8 +52,9 @@ type Connection struct {
 	nextWriteTime uint64
 
 	// Crypto and performance
-	snCrypto    uint64 //this is 48bit
-	epochCrypto uint64 //this is 48bit
+	snCrypto       uint64 //this is 48bit
+	epochCryptoSnd uint64 //this is 48bit
+	epochCryptoRcv uint64 //this is 48bit
 	BBR
 	RTT
 

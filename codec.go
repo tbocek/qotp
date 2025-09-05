@@ -84,7 +84,8 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.debug(),
 			slog.Int("len(dataEnc)", len(encData)),
 			slog.Uint64("snCrypto", s.conn.snCrypto),
-			slog.Uint64("epochCrypto", s.conn.epochCrypto))
+			slog.Uint64("epochCryptoSnd", s.conn.epochCryptoSnd),
+			slog.Uint64("epochCryptoRcv", s.conn.epochCryptoRcv))
 		s.conn.snCrypto++
 		//here we cannot rollover
 		s.conn.state.isInitSentOnSnd = true
@@ -109,7 +110,7 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.conn.listener.prvKeyId.PublicKey(),
 			s.conn.keys.prvKeyEpSnd,
 			s.conn.snCrypto,
-			s.conn.epochCrypto,
+			s.conn.epochCryptoSnd,
 			packetData,
 		)
 		if err != nil {
@@ -122,7 +123,8 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			slog.Int("len(dataProto)", len(packetData)),
 			slog.Int("len(dataEnc)", len(encData)),
 			slog.Uint64("snCrypto", s.conn.snCrypto),
-			slog.Uint64("epochCrypto", s.conn.epochCrypto))
+			slog.Uint64("epochCryptoSnd", s.conn.epochCryptoSnd),
+			slog.Uint64("epochCryptoRcv", s.conn.epochCryptoRcv))
 	case InitCryptoRcv:
 		encData, err = EncodeInitCryptoRcv(
 			s.conn.keys.pubKeyIdRcv,
@@ -130,7 +132,7 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.conn.keys.pubKeyEpRcv,
 			s.conn.keys.prvKeyEpSnd,
 			s.conn.snCrypto,
-			s.conn.epochCrypto,
+			s.conn.epochCryptoSnd,
 			packetData,
 		)
 		if err != nil {
@@ -143,7 +145,8 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			slog.Int("len(dataProto)", len(packetData)),
 			slog.Int("len(dataEnc)", len(encData)),
 			slog.Uint64("snCrypto", s.conn.snCrypto),
-			slog.Uint64("epochCrypto", s.conn.epochCrypto))
+			slog.Uint64("epochCryptoSnd", s.conn.epochCryptoSnd),
+			slog.Uint64("epochCryptoRcv", s.conn.epochCryptoRcv))
 	case InitRcv:
 		encData, err = EncodeInitRcv(
 			s.conn.keys.pubKeyIdRcv,
@@ -151,7 +154,7 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.conn.keys.pubKeyEpRcv,
 			s.conn.keys.prvKeyEpSnd,
 			s.conn.snCrypto,
-			s.conn.epochCrypto,
+			s.conn.epochCryptoSnd,
 			packetData,
 		)
 		if err != nil {
@@ -164,7 +167,8 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			slog.Int("len(dataProto)", len(packetData)),
 			slog.Int("len(dataEnc)", len(encData)),
 			slog.Uint64("snCrypto", s.conn.snCrypto),
-			slog.Uint64("epochCrypto", s.conn.epochCrypto))
+			slog.Uint64("epochCryptoSnd", s.conn.epochCryptoSnd),
+			slog.Uint64("epochCryptoRcv", s.conn.epochCryptoRcv))
 	case Data:
 		encData, err = EncodeData(
 			s.conn.keys.prvKeyEpSnd.PublicKey(),
@@ -172,7 +176,7 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.conn.state.isSenderOnInit,
 			s.conn.sharedSecret,
 			s.conn.snCrypto,
-			s.conn.epochCrypto,
+			s.conn.epochCryptoSnd,
 			packetData,
 		)
 		if err != nil {
@@ -184,7 +188,8 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			slog.Int("len(payRaw)", len(packetData)),
 			slog.Int("len(dataEnc)", len(encData)),
 			slog.Uint64("snCrypto", s.conn.snCrypto),
-			slog.Uint64("epochCrypto", s.conn.epochCrypto))
+			slog.Uint64("epochCryptoSnd", s.conn.epochCryptoSnd),
+			slog.Uint64("epochCryptoRcv", s.conn.epochCryptoRcv))
 	default:
 		return nil, fmt.Errorf("unknown message type: %v", msgType)
 	}
@@ -193,11 +198,11 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 	s.conn.snCrypto++
 	//rollover
 	if s.conn.snCrypto > (1<<48)-1 {
-		if s.conn.epochCrypto+1 > (1<<47)-1 {
+		if s.conn.epochCryptoSnd+1 > (1<<47)-1 {
 			//TODO: quic has key rotation (via bitflip), but this adds complexity and 2^96 bytes is a lot.
-			return nil, errors.New("exhausted 2^95 sn number, cannot continue, you just sent over 34'000'000 ZettaBytes. Now you need to reconnect manually.")
+			return nil, errors.New("exhausted 2^95 sn number, cannot continue, you just sent ~34'000'000 ZettaBytes. Now you need to reconnect manually. This is roughly 200'000 times all the data humanity has ever created!")
 		}
-		s.conn.epochCrypto++
+		s.conn.epochCryptoSnd++
 		s.conn.snCrypto = 0
 	}
 	return encData, nil
@@ -362,14 +367,14 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		l.connMap.Remove(firstConnId)
 
 		// Decode Data message
-		message, err := DecodeData(buffer, conn.state.isSenderOnInit, conn.epochCrypto, conn.sharedSecret)
+		message, err := DecodeData(buffer, conn.state.isSenderOnInit, conn.epochCryptoRcv, conn.sharedSecret)
 		if err != nil {
 			return nil, nil, err
 		}
 		
 		//we decoded conn.epochCrypto + 1, that means we can safely move forward with the epoch
-		if message.currentEpochCrypt > conn.epochCrypto {
-			conn.epochCrypto = message.currentEpochCrypt
+		if message.currentEpochCrypt > conn.epochCryptoRcv {
+			conn.epochCryptoRcv = message.currentEpochCrypt
 		}
 
 		slog.Debug(" Decode/Data",
