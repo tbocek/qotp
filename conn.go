@@ -12,9 +12,7 @@ import (
 type ConnectionKeys struct {
 	pubKeyIdRcv     *ecdh.PublicKey
 	prvKeyEpSnd     *ecdh.PrivateKey
-	prvKeyEpSndRoll *ecdh.PrivateKey
 	pubKeyEpRcv     *ecdh.PublicKey
-	pubKeyEpRcvRoll *ecdh.PublicKey
 }
 
 type ConnectionState struct {
@@ -27,7 +25,6 @@ type ConnectionState struct {
 type Connection struct {
 	// Connection identification
 	connId     uint64
-	connIdRoll uint64
 	remoteAddr netip.AddrPort
 
 	// Core components

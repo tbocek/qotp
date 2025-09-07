@@ -129,7 +129,6 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.conn.listener.prvKeyId.PublicKey(),
 			s.conn.keys.prvKeyEpSnd,
 			s.conn.snCrypto,
-			s.conn.epochCryptoSnd,
 			packetData,
 		)
 		if err != nil {
@@ -151,7 +150,6 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.conn.keys.pubKeyEpRcv,
 			s.conn.keys.prvKeyEpSnd,
 			s.conn.snCrypto,
-			s.conn.epochCryptoSnd,
 			packetData,
 		)
 		if err != nil {
@@ -173,7 +171,6 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 			s.conn.keys.pubKeyEpRcv,
 			s.conn.keys.prvKeyEpSnd,
 			s.conn.snCrypto,
-			s.conn.epochCryptoSnd,
 			packetData,
 		)
 		if err != nil {
@@ -241,15 +238,13 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		conn := l.connMap.Get(origConnId)
 
 		var prvKeyEpRcv *ecdh.PrivateKey
-		var prvKeyEpRcvRoll *ecdh.PrivateKey
 		if conn == nil {
-			prvKeyEpRcv, prvKeyEpRcvRoll, err = generateTwoKeys()
+			prvKeyEpRcv, err = generateKey()
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to generate keys: %w", err)
 			}
 		} else {
 			prvKeyEpRcv = conn.keys.prvKeyEpSnd
-			prvKeyEpRcvRoll = conn.keys.prvKeyEpSndRoll
 		}
 
 		// Decode S0 message
@@ -266,7 +261,6 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 			conn, err = l.newConn(
 				remoteAddr,
 				prvKeyEpRcv,
-				prvKeyEpRcvRoll,
 				pubKeyIdSnd,
 				pubKeyEpSnd,
 				false, false)
@@ -311,15 +305,13 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		conn := l.connMap.Get(origConnId)
 
 		var prvKeyEpRcv *ecdh.PrivateKey
-		var prvKeyEpRcvRoll *ecdh.PrivateKey
 		if conn == nil {
-			prvKeyEpRcv, prvKeyEpRcvRoll, err = generateTwoKeys()
+			prvKeyEpRcv, err = generateKey()
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to generate keys: %w", err)
 			}
 		} else {
 			prvKeyEpRcv = conn.keys.prvKeyEpSnd
-			prvKeyEpRcvRoll = conn.keys.prvKeyEpSndRoll
 		}
 
 		// Decode crypto S0 message
@@ -339,7 +331,6 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 			conn, err = l.newConn(
 				remoteAddr,
 				prvKeyEpRcv,
-				prvKeyEpRcvRoll,
 				pubKeyIdSnd,
 				pubKeyEpSnd,
 				false, true)

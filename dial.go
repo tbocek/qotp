@@ -29,19 +29,19 @@ func (l *Listener) DialWithCryptoString(remoteAddrString string, pubKeyIdRcvHex 
 }
 
 func (l *Listener) DialWithCrypto(remoteAddr netip.AddrPort, pubKeyIdRcv *ecdh.PublicKey) (*Connection, error) {
-	prvKeyEp, prvKeyEpRollover, err := generateTwoKeys()
+	prvKeyEp, err := generateKey()
 	if err != nil {
 		return nil, err
 	}
 
-	return l.newConn(remoteAddr, prvKeyEp, prvKeyEpRollover, pubKeyIdRcv, nil, true, true)
+	return l.newConn(remoteAddr, prvKeyEp, pubKeyIdRcv, nil, true, true)
 }
 
 func (l *Listener) Dial(remoteAddr netip.AddrPort) (*Connection, error) {
-	prvKeyEp, prvKeyEpRollover, err := generateTwoKeys()
+	prvKeyEp, err := generateKey()
 	if err != nil {
 		return nil, err
 	}
 
-	return l.newConn(remoteAddr, prvKeyEp, prvKeyEpRollover, nil, nil, true, false)
+	return l.newConn(remoteAddr, prvKeyEp, nil, nil, true, false)
 }

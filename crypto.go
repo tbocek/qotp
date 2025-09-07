@@ -92,7 +92,6 @@ func EncodeInitRcv(
 	pubKeyEpRcv *ecdh.PublicKey,
 	prvKeyEpSnd *ecdh.PrivateKey,
 	snCrypto uint64,
-	epochCrypto uint64,
 	packetData []byte) (encData []byte, err error) {
 
 	if pubKeyIdRcv == nil || pubKeyIdSnd == nil || pubKeyEpRcv == nil || prvKeyEpSnd == nil {
@@ -120,7 +119,7 @@ func EncodeInitRcv(
 	}
 
 	// Encrypt and write dataToSend
-	return chainedEncrypt(snCrypto, epochCrypto, false, sharedSecret, headerWithKeys, packetData)
+	return chainedEncrypt(snCrypto, 0, false, sharedSecret, headerWithKeys, packetData)
 
 }
 
@@ -129,7 +128,6 @@ func EncodeInitCryptoSnd(
 	pubKeyIdSnd *ecdh.PublicKey,
 	prvKeyEpSnd *ecdh.PrivateKey,
 	snCrypto uint64,
-	epochCrypto uint64,
 	packetData []byte) (encData []byte, err error) {
 
 	if pubKeyIdRcv == nil || pubKeyIdSnd == nil || prvKeyEpSnd == nil {
@@ -174,7 +172,7 @@ func EncodeInitCryptoSnd(
 		return nil, err
 	}
 
-	return chainedEncrypt(snCrypto, epochCrypto, true, nonForwardSecretKey, headerWithKeys, paddedPacketData)
+	return chainedEncrypt(snCrypto, 0, true, nonForwardSecretKey, headerWithKeys, paddedPacketData)
 }
 
 func EncodeInitCryptoRcv(
@@ -183,7 +181,6 @@ func EncodeInitCryptoRcv(
 	pubKeyEpRcv *ecdh.PublicKey,
 	prvKeyEpSnd *ecdh.PrivateKey,
 	snCrypto uint64,
-	epochCrypto uint64,
 	packetData []byte) (encData []byte, err error) {
 
 	if pubKeyIdRcv == nil || pubKeyIdSnd == nil || pubKeyEpRcv == nil || prvKeyEpSnd == nil {
@@ -210,7 +207,7 @@ func EncodeInitCryptoRcv(
 	}
 
 	// Encrypt and write dataToSend
-	return chainedEncrypt(snCrypto, epochCrypto, false, sharedSecret, headerWithKeys, packetData)
+	return chainedEncrypt(snCrypto, 0, false, sharedSecret, headerWithKeys, packetData)
 }
 
 func EncodeData(

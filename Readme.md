@@ -1,5 +1,7 @@
 # QOTP
 
+Warning: the protocol format is not final and may change!
+
 A UDP-based transport protocol that takes an "opinionated" approach, similar to QUIC but with a focus 
 on providing reasonable defaults rather than many options. The goal is to have lower complexity, 
 simplicity, and security, while still being reasonably performant.
@@ -111,8 +113,8 @@ The current version is 0. The available types are:
 * 001b: INIT_HANDSHAKE_R0
 * 010b: INIT_WITH_CRYPTO_S0
 * 011b: INIT_WITH_CRYPTO_R0
-* 100b: DATA_0 for rollover at crypto sequence number 0
-* 101b: DATA (everything else)
+* 100b: DATA (everything else)
+* 101b: not used
 * 110b: not used
 * 111b: not used
 
@@ -135,11 +137,10 @@ packet-beta
   8-71: "Connection Id (64bit), based on pub_key_ep_snd"
   72-327: "Public Key Sender Id (X25519)"
   328-583: "Public Key Sender Ephemeral (X25519)"
-  584-839: "Public Key Sender Ephemeral Rollover (X25519)"
-  840-841: "Fill up to 1400 bytes (example 1 byte)"
+  584-585: "(584-11200) fill up to 1400 bytes..."
 ```
 
-### Type INIT_HANDSHAKE_R0, min: 136 bytes (112 bytes until payload + min payload 8 bytes + 16 bytes MAC)
+### Type INIT_HANDSHAKE_R0, min: 103 bytes (79 bytes until payload + min payload 8 bytes + 16 bytes MAC)
 
 The reply can contain data as it can be encrypted with perfect forward secrecy. In order to get data, INIT_HANDSHAKE_S0
 needs to fill up so that we can get data here. R0 means, it's only sent by the receiver at sequence number 0. The
@@ -155,13 +156,12 @@ packet-beta
   8-71: "Connection Id (64bit), same as in INIT_HANDSHAKE_S0"
   72-327: "Public Key Receiver Id (X25519)"
   328-583: "Public Key Receiver Ephemeral (X25519)"
-  584-839: "Public Key Receiver Ephemeral Rollover (X25519)"
-  840-887: "Double Encrypted Crypto Sequence Number (48bit)"
-  888-951: "Data (variable, but min 8 bytes)"
-  952-1079: "MAC (HMAC-SHA256) (128bit)"
+  584-631: "Double Encrypted Crypto Sequence Number (48bit)"
+  632-695: "Data (variable, but min 8 bytes)"
+  696-824: "MAC (HMAC-SHA256) (128bit)"
 ```
 
-### Type INIT_WITH_CRYPTO_S0, min: 138 bytes (114 bytes until payload + min payload 8 bytes + 16 bytes MAC)
+### Type INIT_WITH_CRYPTO_S0, min: 1400 bytes (79 bytes until payload/fillel + min payload 8 bytes + 16 bytes MAC)
 
 If we have a crpyto key, we can already encrypet with the first message, but it will no non-perfect forward secrecy. The
 user can decide if he wants to send data. S0 means, it's only sent by the sender at sequence number 0.
@@ -176,15 +176,14 @@ packet-beta
   8-71: "Connection Id (64bit), based on pub_key_ep_snd"
   72-327: "Public Key Sender Id (X25519)"
   328-583: "Public Key Sender Ephemeral (X25519)"
-  584-839: "Public Key Sender Ephemeral Rollover (X25519)"
-  840-887: "Double Encrypted Crypto Sequence Number (48bit)"
-  888-903: "Filler length (16bit), example 1 byte"
-  904-911: "Fill, example 1 byte"
-  912-975: "Data (variable, but min 8 bytes)"
-  976-1103: "MAC (HMAC-SHA256)"
+  584-631: "Double Encrypted Crypto Sequence Number (48bit)"
+  632-647: "Filler length (16bit), example 1 byte"
+  648-655: "Fill, example 1 byte"
+  656-719: "Data (variable, but min 8 bytes)"
+  720-848: "MAC (HMAC-SHA256)"
 ```
 
-### Type INIT_WITH_CRYPTO_R0, min: 104 bytes (80 bytes until payload + min payload 8 bytes + 16 bytes MAC)
+### Type INIT_WITH_CRYPTO_R0, min: 71 bytes (47 bytes until payload + min payload 8 bytes + 16 bytes MAC)
 
 R0 means, it's only sent by the receiver at sequence number 0.
 
@@ -197,31 +196,12 @@ packet-beta
   5-7: "Type"
   8-71: "Connection Id (64bit), same as in INIT_WITH_CRYPTO_S0"
   72-327: "Public Key Receiver Ephemeral (X25519)"
-  328-583: "Public Key Receiver Ephemeral Rollover (X25519)"
-  584-631: "Double Encrypted Crypto Sequence Number (48bit)"
-  632-695: "Data (variable, but min 8 bytes)"
-  696-823: "MAC (HMAC-SHA256) (128bit)"
-```
-
-### Type DATA_0, min: 71 bytes (47 bytes until payload + min payload 8 bytes + 16 bytes MAC)
-
-0 means, it's only sent at sequence number 0.
-
-```mermaid
----
-title: "DATA_0 Packet"
----
-packet-beta
-  0-4: "Version"
-  5-7: "Type"
-  8-71: "Connection Id (64bit), old connection id, before rollover"
-  72-327: "Public Key Sender/Receiver Ephemeral Rollover (X25519)"
   328-375: "Double Encrypted Crypto Sequence Number (48bit)"
   376-439: "Data (variable, but min 8 bytes)"
-  440-567: "MAC (HMAC-SHA256) (128bit)"
+  440-568: "MAC (HMAC-SHA256) (128bit)"
 ```
 
-### Type DATA, min: 40 bytes (16 bytes until payload + min payload 8 bytes + 16 bytes MAC)
+### Type DATA, min: 39 bytes (15 bytes until payload + min payload 8 bytes + 16 bytes MAC)
 ```mermaid
 ---
 title: "DATA Packet"
@@ -232,37 +212,11 @@ packet-beta
   8-71: "Connection Id (64bit)"
   72-119: "Double Encrypted Crypto Sequence Number (48bit)"
   120-183: "Data (variable, min. 8 bytes)"
-  184-311: "MAC (HMAC-SHA256) (128bit)"
+  184-312: "MAC (HMAC-SHA256) (128bit)"
 ```
 
 The length of the complete INIT_R0 needs to be same or smaller INIT_S0, thus we need to fill up the INIT message. 
 The pubKeyIdShortRcv (first 64bit) XOR pukKeyIdShortSnd (first 64bit) identifies the connection Id (connId) for multi-homing.
-
-The connection establishmet works as follows. The notation:
-
-Id public key of Alice id: pub_id_alice
-Id private key of Alice id: prv_id_alice
-Ephemeral public key of Alice id: pub_ep_alice
-Ephemeral private key of Alice id: prv_ep_alice
-
-```mermaid
-sequenceDiagram
-  Note left of Sender: Alice gets the pub_id_receiver out of band
-  Sender->>Receiver: INIT_S0: send pub_id_sender, pub_ep_sender, encrypt with: prv_ep_sender, pub_id_receiver
-  Note right of Receiver: Bob creates a new prv_ep_receiver/pub_ep_receiver
-  Note right of Receiver: From here on we have perfect forward secrecy
-  Receiver->>Sender: INIT_R0, send pub_ep_receiver, encrypt with: pub_ep_sender, prv_ep_receiver
-  Note left of Sender: Sender creates a new prv_ep_receiver_rollover/pub_ep_receiver_rollover
-  Sender->>Receiver: INIT_S1: send pub_ep_sender_rollover, encrypt with: prv_ep_sender, pub_ep_receiver
-  Note right of Receiver: Receiver creates a new prv_ep_receiver_rollover/pub_ep_receiver_rollover
-  Receiver->>Sender: INIT_R1, send pub_ep_receiver_rollover, encrypt with: pub_ep_sender, prv_ep_receiver
-  Sender->>Receiver: DATA: send data, encrypt with: prv_ep_sender, pub_ep_receiver
-  Receiver->>Sender: DATA: send data, encrypt with: pub_ep_sender, prv_ep_receiver
-```
-
-We need to store 3 shared keys at most. During rollover, if we received rollover packets and waiting for non-rollover packets,
-we need to have both keys, and on rollover with the crypto sequence number 1, there will be new keys for the next rollover.
-Thus, we need to store at most 3. 
 
 ### Double Encryption with Encoded Sequence Number
 
@@ -321,7 +275,7 @@ To simplify the implementation, there is only one payload header.
 title: "TomTP Payload Packet"
 ---
 packet-beta
-  0: "S/R"
+  0: "P/M"
   1-2: "ACK/PAK"
   3-7: "RCV_WND_SIZE" 
   8-39: "Opt. ACKs: Example ACK: StreamId 32bit"
@@ -333,7 +287,7 @@ packet-beta
 ```
 The TomTP payload packet begins with a header byte containing several control bits:
 
-* Bit 0 is the "S/R" flag which distinguishes between sender and receiver roles.
+* Bit 0 is the "P/M" flag for MTU discovery, which is not implemented yet
 * Bits 1-2: 
   * 00: No ACK/Data with 24bit,
   * 01: No ACK/Data with 48bit,
@@ -489,18 +443,18 @@ Source Code LoC
 ===============================================================================
  Language            Files        Lines         Code     Comments       Blanks
 ===============================================================================
- Go                     17         3878         2926          338          614
- Markdown                1          506            0          398          108
+ Go                     16         3868         2929          327          612
+ Markdown                1          489            0          383          106
 ===============================================================================
- Total                  18         4384         2926          736          722
+ Total                  17         4357         2929          710          718
 ===============================================================================
 Test Code LoC
 ===============================================================================
  Language            Files        Lines         Code     Comments       Blanks
 ===============================================================================
- Go                     14         5753         4121          593         1039
+ Go                     14         6201         4338          694         1169
 ===============================================================================
- Total                  14         5753         4121          593         1039
+ Total                  14         6201         4338          694         1169
 ===============================================================================
 
 ```

@@ -36,7 +36,6 @@ func TestStreamEncodeClosedStates(t *testing.T) {
 			pubKeyEpRcv:     prvEpBob.PublicKey(),
 			prvKeyEpSnd:     prvEpAlice,
 			pubKeyIdRcv:     prvIdAlice.PublicKey(),
-			prvKeyEpSndRoll: prvEpAliceRoll,
 		},
 		sharedSecret: bytes.Repeat([]byte{1}, 32),
 		listener:     &Listener{prvKeyId: prvIdAlice},
@@ -84,7 +83,6 @@ func TestStreamEncodeHandshakeTypes(t *testing.T) {
 			keys: ConnectionKeys{
 				pubKeyIdRcv:     prvIdBob.PublicKey(),
 				prvKeyEpSnd:     prvEpAlice,
-				prvKeyEpSndRoll: prvEpAliceRoll,
 			},
 			listener: &Listener{prvKeyId: prvIdAlice},
 			rcv:    NewReceiveBuffer(1000),
@@ -139,7 +137,6 @@ func TestEndToEndCodec(t *testing.T) {
 			keys: ConnectionKeys{
 				pubKeyIdRcv:     prvIdBob.PublicKey(),
 				prvKeyEpSnd:     prvEpAlice,
-				prvKeyEpSndRoll: prvEpAliceRoll,
 			},
 			listener: lAlice,
 			snd:    NewSendBuffer(rcvBufferCapacity, nil),
@@ -208,7 +205,6 @@ func TestFullHandshakeFlow(t *testing.T) {
 		mtu:      1400,
 		keys: ConnectionKeys{
 			prvKeyEpSnd:     prvEpAlice,
-			prvKeyEpSndRoll: prvEpAliceRoll,
 		},
 		listener: lAlice,
 		rcv:    NewReceiveBuffer(1000),

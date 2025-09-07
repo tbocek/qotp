@@ -141,16 +141,12 @@ func decodeHexPubKey(pubKeyHex string) (pubKey *ecdh.PublicKey, err error) {
 	return pubKey, nil
 }
 
-func generateTwoKeys() (*ecdh.PrivateKey, *ecdh.PrivateKey, error) {
+func generateKey() (*ecdh.PrivateKey, error) {
 	prvKey1, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	prvKey2, err := ecdh.X25519().GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, nil, err
-	}
-	return prvKey1, prvKey2, nil
+	return prvKey1, nil
 }
 
 type packetKey [10]byte

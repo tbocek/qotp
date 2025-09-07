@@ -313,7 +313,6 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64, err error) {
 func (l *Listener) newConn(
 	remoteAddr netip.AddrPort,
 	prvKeyEpSnd *ecdh.PrivateKey,
-	prvKeyEpSndRollover *ecdh.PrivateKey,
 	pubKeyIdRcv *ecdh.PublicKey,
 	pubKeyEdRcv *ecdh.PublicKey,
 	isSender bool,
@@ -339,7 +338,6 @@ func (l *Listener) newConn(
 		keys: ConnectionKeys{
 			pubKeyIdRcv:     pubKeyIdRcv,
 			prvKeyEpSnd:     prvKeyEpSnd,
-			prvKeyEpSndRoll: prvKeyEpSndRollover,
 			pubKeyEpRcv:     pubKeyEdRcv,
 		},
 		mu:       sync.Mutex{},
