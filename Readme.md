@@ -29,15 +29,18 @@ only mentions 9 primary RFCs and 48 extensions and informational RFCs, totalling
 
 ## Features / Limitations
 
-* Public key of the recipient transfer is out of band (e.g., TXT field of DNS), or in band.
-* Always encrypted (curve25519/chacha20-poly1305) - renegotiate of shared key on crypto sequence number overflow
-* Support for streams, but flow and congestion control is done at the connection level
-* 0-RTT (first request always needs to be equal or larger than its reply -> fill up to MTU and no 
+* [x] Public key of the recipient transfer can be out of band (e.g., TXT field of DNS), or in band.
+* [x] Always encrypted (curve25519/chacha20-poly1305) - no renegotiate of keys
+* [x] Support for streams, but flow and congestion control is done at the connection level
+* [x] 0-RTT (first request always needs to be equal or larger than its reply -> fill up to MTU and no 
   perfect forward secrecy)
-* User decides on perfect forward secrecy. 2 options: a) no perfect forward secrecy for 1st message 
+* [x] User decides on perfect forward secrecy. 2 options: a) no perfect forward secrecy for 1st message 
   if payload is sent in first message (request and reply). b) perfect forward secrecy with empty first message  
-* FIN/ACK teardown with timeout (no 3-way teardown as in TCP)
-* Goal: less than 3k LoC
+* [x] Congestion control: BBR (Bottleneck Bandwidth and Round-trip propagation time) estimates network capacity by 
+  measuring bottleneck bandwidth and minimum round-trip time
+* [ ] FIN/ACK teardown with timeout (no 3-way teardown as in TCP) - not yet implemented
+* [ ] MTU detection - not yet implemented
+* [x] Goal: less than 3k LoC
 
 ## Assumptions
 
