@@ -214,9 +214,10 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 	s.conn.snCrypto++
 	//rollover
 	if s.conn.snCrypto > (1<<48)-1 {
-		if s.conn.epochCryptoSnd+1 > (1<<47)-1 {
-			//TODO: quic has key rotation (via bitflip), but this adds complexity and 2^96 bytes is a lot.
-			return nil, errors.New("exhausted 2^95 sn number, cannot continue, you just sent ~34'000'000 ZettaBytes. Now you need to reconnect manually. This is roughly 200'000 times all the data humanity has ever created!")
+		if s.conn.epochCryptoSnd+1 > (1<<48)-1 {
+			//TODO: quic has key rotation (via bitflip)
+			return nil, errors.New("exhausted 2^96 sn number, cannot continue, you just sent ~10 billion ZettaBytes. "+
+				"Now you need to reconnect manually. This is roughly 57 million times all the data humanity has ever created.")
 		}
 		s.conn.epochCryptoSnd++
 		s.conn.snCrypto = 0
