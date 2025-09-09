@@ -3,7 +3,7 @@ package qotp
 import (
 	"testing"
 
-	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/assert"
 )
 
 // Helper function to create string pointer
@@ -17,64 +17,46 @@ type ConnectionTest struct {
 	streams *LinkedMap[string, *string]
 }
 
-// NestedIteratorTestSuite test suite
-type NestedIteratorTestSuite struct {
-	suite.Suite
-	connMap *LinkedMap[string, *ConnectionTest]
-	iter    *NestedIterator[string, string, *ConnectionTest, *string]
-	c1, c2, c3 *ConnectionTest
-}
-
-func (suite *NestedIteratorTestSuite) SetupTest() {
-	suite.connMap = NewLinkedMap[string, *ConnectionTest]()
+func TestNestedIterator_StatefulIteration(t *testing.T) {
+	connMap := NewLinkedMap[string, *ConnectionTest]()
 	
 	// Create test connections with streams
 	// c1 with s1, s2
-	suite.c1 = &ConnectionTest{
+	c1 := &ConnectionTest{
 		id:      "c1",
 		streams: NewLinkedMap[string, *string](),
 	}
 	s1 := "s1"
 	s2 := "s2"
-	suite.c1.streams.Put("s1", &s1)
-	suite.c1.streams.Put("s2", &s2)
+	c1.streams.Put("s1", &s1)
+	c1.streams.Put("s2", &s2)
 	
 	// c2 with s1, s2, s3
-	suite.c2 = &ConnectionTest{
+	c2 := &ConnectionTest{
 		id:      "c2",
 		streams: NewLinkedMap[string, *string](),
 	}
 	s2_1 := "s1"
 	s2_2 := "s2"
 	s2_3 := "s3"
-	suite.c2.streams.Put("s1", &s2_1)
-	suite.c2.streams.Put("s2", &s2_2)
-	suite.c2.streams.Put("s3", &s2_3)
+	c2.streams.Put("s1", &s2_1)
+	c2.streams.Put("s2", &s2_2)
+	c2.streams.Put("s3", &s2_3)
 	
 	// c3 with s1
-	suite.c3 = &ConnectionTest{
+	c3 := &ConnectionTest{
 		id:      "c3",
 		streams: NewLinkedMap[string, *string](),
 	}
 	s3_1 := "s1"
-	suite.c3.streams.Put("s1", &s3_1)
+	c3.streams.Put("s1", &s3_1)
 	
 	// Add connections to map in order
-	suite.connMap.Put("c1", suite.c1)
-	suite.connMap.Put("c2", suite.c2)
-	suite.connMap.Put("c3", suite.c3)
+	connMap.Put("c1", c1)
+	connMap.Put("c2", c2)
+	connMap.Put("c3", c3)
 	
-	// Create iterator
-	suite.iter = NewNestedIterator(
-		suite.connMap,
-		func(conn *ConnectionTest) *LinkedMap[string, *string] {
-			return conn.streams
-		},
-	)
-}
-
-func (suite *NestedIteratorTestSuite) TestNext_StatefulIteration() {
-	// Test complete iteration cycle - iterator maintains state
+	// Test complete iteration cycle
 	expectedSequence := []struct {
 		connID, streamID string
 	}{
@@ -84,34 +66,39 @@ func (suite *NestedIteratorTestSuite) TestNext_StatefulIteration() {
 		{"c2", "s2"},
 		{"c2", "s3"},
 		{"c3", "s1"},
-		{"c1", "s1"}, // wrap around
-		{"c1", "s2"}, // continues cycling
 	}
 	
-	for i, expected := range expectedSequence {
-		currentV1, currentV2 := suite.iter.Next()
-		suite.Equal(expected.connID, currentV1.id, "Wrong connection at step %d", i)
-		suite.NotNil(currentV2, "Stream should not be nil at step %d", i)
-		suite.Equal(expected.streamID, *currentV2, "Wrong stream at step %d", i)
+	i := 0
+	for conn, stream := range NestedIterator(connMap, func(conn *ConnectionTest) *LinkedMap[string, *string] {
+		return conn.streams
+	}) {
+		if i >= len(expectedSequence) {
+			break // Stop after one full cycle
+		}
+		assert.Equal(t, expectedSequence[i].connID, conn.id, "Wrong connection at step %d", i)
+		assert.NotNil(t, stream, "Stream should not be nil at step %d", i)
+		assert.Equal(t, expectedSequence[i].streamID, *stream, "Wrong stream at step %d", i)
+		i++
 	}
+	assert.Equal(t, len(expectedSequence), i, "Should have iterated through all expected items")
 }
 
-func (suite *NestedIteratorTestSuite) TestNext_EmptyMaps() {
+func TestNestedIterator_EmptyMaps(t *testing.T) {
 	// Create empty maps
 	emptyConnMap := NewLinkedMap[string, *ConnectionTest]()
-	emptyIter := NewNestedIterator(
-		emptyConnMap,
-		func(conn *ConnectionTest) *LinkedMap[string, *string] {
-			return conn.streams
-		},
-	)
 	
-	currentV1, currentV2 := emptyIter.Next()
-	suite.Nil(currentV1)
-	suite.Nil(currentV2)
+	count := 0
+	for conn, stream := range NestedIterator(emptyConnMap, func(conn *ConnectionTest) *LinkedMap[string, *string] {
+		return conn.streams
+	}) {
+		_ = conn
+		_ = stream
+		count++
+	}
+	assert.Equal(t, 0, count, "Should not iterate over empty map")
 }
 
-func (suite *NestedIteratorTestSuite) TestNext_ConnectionWithNoStreams() {
+func TestNestedIterator_ConnectionWithNoStreams(t *testing.T) {
 	// Create connection with no streams
 	emptyConn := &ConnectionTest{
 		id:      "empty",
@@ -122,21 +109,19 @@ func (suite *NestedIteratorTestSuite) TestNext_ConnectionWithNoStreams() {
 	emptyConnMap := NewLinkedMap[string, *ConnectionTest]()
 	emptyConnMap.Put("empty", emptyConn)
 	
-	emptyIter := NewNestedIterator(
-		emptyConnMap,
-		func(conn *ConnectionTest) *LinkedMap[string, *string] {
-			return conn.streams
-		},
-	)
-	
-	currentV1, currentV2 := emptyIter.Next()
-	// New behavior: returns connection even when it has no streams
-	suite.NotNil(currentV1)  // Connection exists
-	suite.Nil(currentV2)     // But no stream
-	suite.Equal("empty", currentV1.id)
+	count := 0
+	for conn, stream := range NestedIterator(emptyConnMap, func(conn *ConnectionTest) *LinkedMap[string, *string] {
+		return conn.streams
+	}) {
+		_ = conn
+		_ = stream
+		count++
+	}
+	// With the new iterator, empty inner maps are skipped
+	assert.Equal(t, 0, count, "Should skip connections with no streams")
 }
 
-func (suite *NestedIteratorTestSuite) TestNext_SingleConnectionSingleStream() {
+func TestNestedIterator_SingleConnectionSingleStream(t *testing.T) {
 	// Test with only one connection and one stream
 	singleConnMap := NewLinkedMap[string, *ConnectionTest]()
 	singleConn := &ConnectionTest{
@@ -147,23 +132,58 @@ func (suite *NestedIteratorTestSuite) TestNext_SingleConnectionSingleStream() {
 	singleConn.streams.Put("s1", &s1)
 	singleConnMap.Put("single", singleConn)
 	
-	singleIter := NewNestedIterator(
-		singleConnMap,
-		func(conn *ConnectionTest) *LinkedMap[string, *string] {
-			return conn.streams
-		},
-	)
-	
-	// Should cycle on the same position
-	for i := 0; i < 3; i++ {
-		currentV1, currentV2 := singleIter.Next()
-		suite.Equal("single", currentV1.id)
-		suite.NotNil(currentV2)
-		suite.Equal("s1", *currentV2)
+	count := 0
+	for conn, stream := range NestedIterator(singleConnMap, func(conn *ConnectionTest) *LinkedMap[string, *string] {
+		return conn.streams
+	}) {
+		assert.Equal(t, "single", conn.id)
+		assert.NotNil(t, stream)
+		assert.Equal(t, "s1", *stream)
+		count++
+		if count >= 3 {
+			break // Test that we can iterate multiple times (but stop after 3 for testing)
+		}
 	}
+	assert.Equal(t, 1, count, "Should iterate once over single item")
 }
 
-func (suite *NestedIteratorTestSuite) TestNext_MultipleConnections() {
+func TestNestedIterator_MultipleConnections(t *testing.T) {
+	connMap := NewLinkedMap[string, *ConnectionTest]()
+	
+	// c1 with s1, s2
+	c1 := &ConnectionTest{
+		id:      "c1",
+		streams: NewLinkedMap[string, *string](),
+	}
+	s1 := "s1"
+	s2 := "s2"
+	c1.streams.Put("s1", &s1)
+	c1.streams.Put("s2", &s2)
+	
+	// c2 with s1, s2, s3
+	c2 := &ConnectionTest{
+		id:      "c2",
+		streams: NewLinkedMap[string, *string](),
+	}
+	s2_1 := "s1"
+	s2_2 := "s2"
+	s2_3 := "s3"
+	c2.streams.Put("s1", &s2_1)
+	c2.streams.Put("s2", &s2_2)
+	c2.streams.Put("s3", &s2_3)
+	
+	// c3 with s1
+	c3 := &ConnectionTest{
+		id:      "c3",
+		streams: NewLinkedMap[string, *string](),
+	}
+	s3_1 := "s1"
+	c3.streams.Put("s1", &s3_1)
+	
+	connMap.Put("c1", c1)
+	connMap.Put("c2", c2)
+	connMap.Put("c3", c3)
+	
 	// Test iteration through multiple connections
 	positions := []struct {
 		expectedConn, expectedStream string
@@ -174,18 +194,24 @@ func (suite *NestedIteratorTestSuite) TestNext_MultipleConnections() {
 		{"c2", "s2"},
 		{"c2", "s3"},
 		{"c3", "s1"},
-		{"c1", "s1"}, // wrap around
 	}
 	
-	for i, expected := range positions {
-		currentV1, currentV2 := suite.iter.Next()
-		suite.Equal(expected.expectedConn, currentV1.id, "Wrong connection at iteration %d", i)
-		suite.NotNil(currentV2, "Stream should not be nil at iteration %d", i)
-		suite.Equal(expected.expectedStream, *currentV2, "Wrong stream at iteration %d", i)
+	i := 0
+	for conn, stream := range NestedIterator(connMap, func(conn *ConnectionTest) *LinkedMap[string, *string] {
+		return conn.streams
+	}) {
+		if i >= len(positions) {
+			break
+		}
+		assert.Equal(t, positions[i].expectedConn, conn.id, "Wrong connection at iteration %d", i)
+		assert.NotNil(t, stream, "Stream should not be nil at iteration %d", i)
+		assert.Equal(t, positions[i].expectedStream, *stream, "Wrong stream at iteration %d", i)
+		i++
 	}
+	assert.Equal(t, len(positions), i, "Should iterate through all positions")
 }
 
-func (suite *NestedIteratorTestSuite) TestNext_SkipsEmptyConnections() {
+func TestNestedIterator_SkipsEmptyConnections(t *testing.T) {
 	// Create a new setup with an empty connection in the middle
 	mixedConnMap := NewLinkedMap[string, *ConnectionTest]()
 	
@@ -215,58 +241,197 @@ func (suite *NestedIteratorTestSuite) TestNext_SkipsEmptyConnections() {
 	mixedConnMap.Put("c2", c2Empty)
 	mixedConnMap.Put("c3", c3)
 	
-	mixedIter := NewNestedIterator(
-		mixedConnMap,
-		func(conn *ConnectionTest) *LinkedMap[string, *string] {
-			return conn.streams
-		},
-	)
-	
-	// Let's see what actually happens - log the first few iterations
-	for i := 0; i < 5; i++ {
-		currentV1, currentV2 := mixedIter.Next()
-		
-		if currentV1 != nil {
-			if currentV2 != nil {
-				suite.T().Logf("Iteration %d: %s/%s", i, currentV1.id, *currentV2)
-			} else {
-				suite.T().Logf("Iteration %d: %s/nil", i, currentV1.id)
-			}
+	// Collect results
+	var results []string
+	for conn, stream := range NestedIterator(mixedConnMap, func(conn *ConnectionTest) *LinkedMap[string, *string] {
+		return conn.streams
+	}) {
+		if stream != nil {
+			results = append(results, conn.id+"/"+*stream)
 		} else {
-			suite.T().Logf("Iteration %d: nil/nil", i)
+			results = append(results, conn.id+"/nil")
 		}
-		
-		// For the first iteration, make some basic assertions to understand the pattern
-		if i == 0 {
-			suite.NotNil(currentV1, "First iteration should return a connection")
-			// Don't assert about stream yet, let's see what happens
+		if len(results) >= 5 {
+			break // Stop after 5 iterations for testing
 		}
 	}
+	
+	// With the new iterator, empty connections are skipped
+	expected := []string{"c1/s1", "c3/s1"}
+	assert.Equal(t, expected, results[:len(expected)], "Should skip empty connection c2")
 }
 
-func (suite *NestedIteratorTestSuite) TestNext_ConsistentState() {
-	// Test that the iterator maintains consistent internal state
+func TestNestedIterator_ConsistentState(t *testing.T) {
+	connMap := NewLinkedMap[string, *ConnectionTest]()
 	
-	// First call should return c1/s1
-	currentV1, currentV2 := suite.iter.Next()
-	suite.Equal("c1", currentV1.id)
-	suite.NotNil(currentV2)
-	suite.Equal("s1", *currentV2)
+	// c1 with s1, s2
+	c1 := &ConnectionTest{
+		id:      "c1",
+		streams: NewLinkedMap[string, *string](),
+	}
+	s1 := "s1"
+	s2 := "s2"
+	c1.streams.Put("s1", &s1)
+	c1.streams.Put("s2", &s2)
 	
-	// Second call should return c1/s2 (next stream in same connection)
-	currentV1, currentV2 = suite.iter.Next()
-	suite.Equal("c1", currentV1.id)
-	suite.NotNil(currentV2)
-	suite.Equal("s2", *currentV2)
+	// c2 with s1, s2, s3
+	c2 := &ConnectionTest{
+		id:      "c2",
+		streams: NewLinkedMap[string, *string](),
+	}
+	s2_1 := "s1"
+	s2_2 := "s2"
+	s2_3 := "s3"
+	c2.streams.Put("s1", &s2_1)
+	c2.streams.Put("s2", &s2_2)
+	c2.streams.Put("s3", &s2_3)
 	
-	// Third call should move to next connection: c2/s1
-	currentV1, currentV2 = suite.iter.Next()
-	suite.Equal("c2", currentV1.id)
-	suite.NotNil(currentV2)
-	suite.Equal("s1", *currentV2)
+	connMap.Put("c1", c1)
+	connMap.Put("c2", c2)
+	
+	// Test that the iterator maintains consistent order
+	var results []string
+	count := 0
+	for conn, stream := range NestedIterator(connMap, func(conn *ConnectionTest) *LinkedMap[string, *string] {
+		return conn.streams
+	}) {
+		results = append(results, conn.id+"/"+*stream)
+		count++
+		if count >= 5 {
+			break
+		}
+	}
+	
+	expected := []string{
+		"c1/s1",
+		"c1/s2",
+		"c2/s1",
+		"c2/s2",
+		"c2/s3",
+	}
+	assert.Equal(t, expected, results, "Should maintain consistent iteration order")
 }
 
-// Run the test suite
-func TestNestedIteratorTestSuite(t *testing.T) {
-	suite.Run(t, new(NestedIteratorTestSuite))
+func TestNestedIterator_BreakEarly(t *testing.T) {
+	connMap := NewLinkedMap[string, *ConnectionTest]()
+	
+	// Create multiple connections
+	for i := 0; i < 3; i++ {
+		conn := &ConnectionTest{
+			id:      string(rune('a' + i)),
+			streams: NewLinkedMap[string, *string](),
+		}
+		for j := 0; j < 3; j++ {
+			s := string(rune('0' + j))
+			conn.streams.Put(s, &s)
+		}
+		connMap.Put(conn.id, conn)
+	}
+	
+	// Test early break
+	count := 0
+	for conn, stream := range NestedIterator(connMap, func(conn *ConnectionTest) *LinkedMap[string, *string] {
+		return conn.streams
+	}) {
+		_ = conn
+		_ = stream
+		count++
+		if count == 5 {
+			break
+		}
+	}
+	assert.Equal(t, 5, count, "Should be able to break early from iteration")
+}
+
+func TestNestedIterator_NilInnerMap(t *testing.T) {
+	connMap := NewLinkedMap[string, *ConnectionTest]()
+	
+	// Create connections, some with nil streams map
+	c1 := &ConnectionTest{
+		id:      "c1",
+		streams: NewLinkedMap[string, *string](),
+	}
+	s1 := "s1"
+	c1.streams.Put("s1", &s1)
+	
+	c2 := &ConnectionTest{
+		id:      "c2",
+		streams: nil, // nil streams map
+	}
+	
+	c3 := &ConnectionTest{
+		id:      "c3",
+		streams: NewLinkedMap[string, *string](),
+	}
+	s3 := "s1"
+	c3.streams.Put("s1", &s3)
+	
+	connMap.Put("c1", c1)
+	connMap.Put("c2", c2)
+	connMap.Put("c3", c3)
+	
+	// Should handle nil inner maps gracefully
+	var results []string
+	for conn, stream := range NestedIterator(connMap, func(conn *ConnectionTest) *LinkedMap[string, *string] {
+		return conn.streams
+	}) {
+		results = append(results, conn.id+"/"+*stream)
+	}
+	
+	// Should skip c2 which has nil streams
+	expected := []string{"c1/s1", "c3/s1"}
+	assert.Equal(t, expected, results, "Should skip connections with nil inner map")
+}
+
+func TestNestedIterator_ComplexNesting(t *testing.T) {
+	// Test with more complex data structure
+	type Department struct {
+		name      string
+		employees *LinkedMap[string, *string]
+	}
+	
+	deptMap := NewLinkedMap[string, *Department]()
+	
+	// Engineering department
+	eng := &Department{
+		name:      "Engineering",
+		employees: NewLinkedMap[string, *string](),
+	}
+	alice := "Alice"
+	bob := "Bob"
+	eng.employees.Put("e1", &alice)
+	eng.employees.Put("e2", &bob)
+	
+	// Marketing department
+	mkt := &Department{
+		name:      "Marketing",
+		employees: NewLinkedMap[string, *string](),
+	}
+	charlie := "Charlie"
+	mkt.employees.Put("m1", &charlie)
+	
+	// HR department (empty)
+	hr := &Department{
+		name:      "HR",
+		employees: NewLinkedMap[string, *string](),
+	}
+	
+	deptMap.Put("eng", eng)
+	deptMap.Put("mkt", mkt)
+	deptMap.Put("hr", hr)
+	
+	// Collect all employees
+	var employees []string
+	for dept, emp := range NestedIterator(deptMap, func(d *Department) *LinkedMap[string, *string] {
+		return d.employees
+	}) {
+		employees = append(employees, dept.name+":"+*emp)
+	}
+	
+	expected := []string{
+		"Engineering:Alice",
+		"Engineering:Bob",
+		"Marketing:Charlie",
+	}
+	assert.Equal(t, expected, employees, "Should iterate through all departments and employees")
 }

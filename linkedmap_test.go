@@ -6,1032 +6,855 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/assert"
 )
 
-type LinkedMapTestSuite struct {
-	suite.Suite
-	lm *LinkedMap[string, int] // Changed from *string to string
-}
-
-func (suite *LinkedMapTestSuite) SetupTest() {
-	suite.lm = NewLinkedMap[string, int]()
-}
-
-func TestLinkedMapTestSuite(t *testing.T) {
-	suite.Run(t, new(LinkedMapTestSuite))
-}
-
-// Test NewLinkedMap
-func (suite *LinkedMapTestSuite) TestNewLinkedMap() {
+func TestLinkedMap_NewLinkedMap(t *testing.T) {
 	lm := NewLinkedMap[string, int]()
-	suite.NotNil(lm)
-	suite.NotNil(lm.items)
-	suite.NotNil(lm.head)
-	suite.NotNil(lm.tail)
-	suite.Equal(0, lm.size)
-	suite.Equal(lm.tail, lm.head.next)
-	suite.Equal(lm.head, lm.tail.prev)
+	assert.NotNil(t, lm)
+	assert.NotNil(t, lm.items)
+	assert.NotNil(t, lm.head)
+	assert.NotNil(t, lm.tail)
+	assert.Equal(t, 0, lm.size)
+	assert.Equal(t, lm.tail, lm.head.next)
+	assert.Equal(t, lm.head, lm.tail.prev)
 }
 
-// Test Size function
-func (suite *LinkedMapTestSuite) TestSize_Empty() {
-	suite.Equal(0, suite.lm.Size())
+func TestLinkedMap_Size_Empty(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
+	assert.Equal(t, 0, lm.Size())
 }
 
-func (suite *LinkedMapTestSuite) TestSize_WithElements() {
-	suite.lm.Put("a", 1)
-	suite.Equal(1, suite.lm.Size())
+func TestLinkedMap_Size_WithElements(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
+	lm.Put("a", 1)
+	assert.Equal(t, 1, lm.Size())
 	
-	suite.lm.Put("b", 2)
-	suite.Equal(2, suite.lm.Size())
+	lm.Put("b", 2)
+	assert.Equal(t, 2, lm.Size())
 	
-	suite.lm.Put("c", 3)
-	suite.Equal(3, suite.lm.Size())
+	lm.Put("c", 3)
+	assert.Equal(t, 3, lm.Size())
 }
 
-func (suite *LinkedMapTestSuite) TestSize_AfterRemoval() {
-	suite.lm.Put("a", 1)
-	suite.lm.Put("b", 2)
-	suite.Equal(2, suite.lm.Size())
+func TestLinkedMap_Size_AfterRemoval(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
+	lm.Put("a", 1)
+	lm.Put("b", 2)
+	assert.Equal(t, 2, lm.Size())
 	
-	_, ok := suite.lm.Remove("a")
-	suite.True(ok)
-	suite.Equal(1, suite.lm.Size())
+	_, ok := lm.Remove("a")
+	assert.True(t, ok)
+	assert.Equal(t, 1, lm.Size())
 	
-	_, ok = suite.lm.Remove("b")
-	suite.True(ok)
-	suite.Equal(0, suite.lm.Size())
+	_, ok = lm.Remove("b")
+	assert.True(t, ok)
+	assert.Equal(t, 0, lm.Size())
 }
 
-// Test Put function
-func (suite *LinkedMapTestSuite) TestPut_NewKey() {
+func TestLinkedMap_Put_NewKey(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	key1 := "key1"
-	suite.lm.Put(key1, 100)
-	suite.Equal(1, suite.lm.Size())
-	suite.Equal(100, suite.lm.Get(key1))
+	lm.Put(key1, 100)
+	assert.Equal(t, 1, lm.Size())
+	assert.Equal(t, 100, lm.Get(key1))
 }
 
-func (suite *LinkedMapTestSuite) TestPut_UpdateExistingKey() {
+func TestLinkedMap_Put_UpdateExistingKey(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	key1 := "key1"
-	suite.lm.Put(key1, 100)
-	suite.lm.Put(key1, 200) // Update existing key
+	lm.Put(key1, 100)
+	lm.Put(key1, 200) // Update existing key
 	
-	suite.Equal(1, suite.lm.Size()) // Size should remain the same
-	suite.Equal(200, suite.lm.Get(key1))
+	assert.Equal(t, 1, lm.Size()) // Size should remain the same
+	assert.Equal(t, 200, lm.Get(key1))
 }
 
-func (suite *LinkedMapTestSuite) TestPut_MultipleKeys() {
+func TestLinkedMap_Put_MultipleKeys(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	a := "a"
 	b := "b"
 	c := "c"
 	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	suite.lm.Put(c, 3)
+	lm.Put(a, 1)
+	lm.Put(b, 2)
+	lm.Put(c, 3)
 	
-	suite.Equal(3, suite.lm.Size())
-	suite.Equal(1, suite.lm.Get(a))
-	suite.Equal(2, suite.lm.Get(b))
-	suite.Equal(3, suite.lm.Get(c))
+	assert.Equal(t, 3, lm.Size())
+	assert.Equal(t, 1, lm.Get(a))
+	assert.Equal(t, 2, lm.Get(b))
+	assert.Equal(t, 3, lm.Get(c))
 }
 
-func (suite *LinkedMapTestSuite) TestPut_InsertionOrder() {
+func TestLinkedMap_Put_InsertionOrder(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	first := "first"
 	second := "second"
 	third := "third"
 	
-	suite.lm.Put(first, 1)
-	suite.lm.Put(second, 2)
-	suite.lm.Put(third, 3)
+	lm.Put(first, 1)
+	lm.Put(second, 2)
+	lm.Put(third, 3)
 	
 	// Check insertion order using First and Next
-	key, value, ok := suite.lm.First()
-	suite.True(ok)
-	suite.Equal(first, key)
-	suite.Equal(1, value)
+	key, value, ok := lm.First()
+	assert.True(t, ok)
+	assert.Equal(t, first, key)
+	assert.Equal(t, 1, value)
 	
-	key, value, ok = suite.lm.Next(first)
-	suite.True(ok)
-	suite.Equal(second, key)
-	suite.Equal(2, value)
+	key, value, ok = lm.Next(first)
+	assert.True(t, ok)
+	assert.Equal(t, second, key)
+	assert.Equal(t, 2, value)
 	
-	key, value, ok = suite.lm.Next(second)
-	suite.True(ok)
-	suite.Equal(third, key)
-	suite.Equal(3, value)
+	key, value, ok = lm.Next(second)
+	assert.True(t, ok)
+	assert.Equal(t, third, key)
+	assert.Equal(t, 3, value)
 }
 
-func (suite *LinkedMapTestSuite) TestPut_UpdateDoesNotChangeOrder() {
+func TestLinkedMap_Put_UpdateDoesNotChangeOrder(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	first := "first"
 	second := "second"
 	third := "third"
 	
-	suite.lm.Put(first, 1)
-	suite.lm.Put(second, 2)
-	suite.lm.Put(third, 3)
+	lm.Put(first, 1)
+	lm.Put(second, 2)
+	lm.Put(third, 3)
 	
 	// Update second element
-	suite.lm.Put(second, 200)
+	lm.Put(second, 200)
 	
 	// Order should remain the same
-	key, value, ok := suite.lm.First()
-	suite.True(ok)
-	suite.Equal(first, key)
-	suite.Equal(1, value)
+	key, value, ok := lm.First()
+	assert.True(t, ok)
+	assert.Equal(t, first, key)
+	assert.Equal(t, 1, value)
 	
-	key, value, ok = suite.lm.Next(first)
-	suite.True(ok)
-	suite.Equal(second, key)
-	suite.Equal(200, value) // Updated value
+	key, value, ok = lm.Next(first)
+	assert.True(t, ok)
+	assert.Equal(t, second, key)
+	assert.Equal(t, 200, value) // Updated value
 	
-	key, value, ok = suite.lm.Next(second)
-	suite.True(ok)
-	suite.Equal(third, key)
-	suite.Equal(3, value)
+	key, value, ok = lm.Next(second)
+	assert.True(t, ok)
+	assert.Equal(t, third, key)
+	assert.Equal(t, 3, value)
 }
 
-// Test Get function
-func (suite *LinkedMapTestSuite) TestGet_ExistingKey() {
+func TestLinkedMap_Get_ExistingKey(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	key1 := "key1"
-	suite.lm.Put(key1, 42)
-	value := suite.lm.Get(key1)
-	suite.Equal(42, value)
+	lm.Put(key1, 42)
+	value := lm.Get(key1)
+	assert.Equal(t, 42, value)
 }
 
-func (suite *LinkedMapTestSuite) TestGet_NonExistentKey() {
-	value := suite.lm.Get("nonexistent")
-	suite.Equal(0, value) // Should return zero value for int
+func TestLinkedMap_Get_NonExistentKey(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
+	value := lm.Get("nonexistent")
+	assert.Equal(t, 0, value) // Should return zero value for int
 }
 
-func (suite *LinkedMapTestSuite) TestGet_EmptyMap() {
-	value := suite.lm.Get("any")
-	suite.Equal(0, value)
+func TestLinkedMap_Get_EmptyMap(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
+	value := lm.Get("any")
+	assert.Equal(t, 0, value)
 }
 
-func (suite *LinkedMapTestSuite) TestGet_ZeroValue() {
+func TestLinkedMap_Get_ZeroValue(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	zero := "zero"
-	suite.lm.Put(zero, 0)
-	value := suite.lm.Get(zero)
-	suite.Equal(0, value)
+	lm.Put(zero, 0)
+	value := lm.Get(zero)
+	assert.Equal(t, 0, value)
 }
 
-// Test Contains function
-func (suite *LinkedMapTestSuite) TestContains_ExistingKey() {
+func TestLinkedMap_Contains_ExistingKey(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	key1 := "key1"
-	suite.lm.Put(key1, 42)
-	suite.True(suite.lm.Contains(key1))
+	lm.Put(key1, 42)
+	assert.True(t, lm.Contains(key1))
 }
 
-func (suite *LinkedMapTestSuite) TestContains_NonExistentKey() {
-	suite.False(suite.lm.Contains("nonexistent"))
+func TestLinkedMap_Contains_NonExistentKey(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
+	assert.False(t, lm.Contains("nonexistent"))
 }
 
-func (suite *LinkedMapTestSuite) TestContains_EmptyMap() {
-	suite.False(suite.lm.Contains("any"))
+func TestLinkedMap_Contains_EmptyMap(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
+	assert.False(t, lm.Contains("any"))
 }
 
-func (suite *LinkedMapTestSuite) TestContains_ZeroValue() {
+func TestLinkedMap_Contains_ZeroValue(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	zero := "zero"
-	suite.lm.Put(zero, 0)
-	suite.True(suite.lm.Contains(zero))
+	lm.Put(zero, 0)
+	assert.True(t, lm.Contains(zero))
 }
 
-func (suite *LinkedMapTestSuite) TestContains_AfterRemoval() {
+func TestLinkedMap_Contains_AfterRemoval(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	key1 := "key1"
-	suite.lm.Put(key1, 42)
-	suite.True(suite.lm.Contains(key1))
+	lm.Put(key1, 42)
+	assert.True(t, lm.Contains(key1))
 	
-	_, ok := suite.lm.Remove(key1)
-	suite.True(ok)
-	suite.False(suite.lm.Contains(key1))
+	_, ok := lm.Remove(key1)
+	assert.True(t, ok)
+	assert.False(t, lm.Contains(key1))
 }
 
-// Test Remove function
-func (suite *LinkedMapTestSuite) TestRemove_ExistingKey() {
+func TestLinkedMap_Remove_ExistingKey(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	key1 := "key1"
-	suite.lm.Put(key1, 42)
-	removedValue, ok := suite.lm.Remove(key1)
+	lm.Put(key1, 42)
+	removedValue, ok := lm.Remove(key1)
 	
-	suite.True(ok)
-	suite.Equal(42, removedValue)
-	suite.Equal(0, suite.lm.Size())
-	suite.False(suite.lm.Contains(key1))
+	assert.True(t, ok)
+	assert.Equal(t, 42, removedValue)
+	assert.Equal(t, 0, lm.Size())
+	assert.False(t, lm.Contains(key1))
 }
 
-func (suite *LinkedMapTestSuite) TestRemove_NonExistentKey() {
-	removedValue, ok := suite.lm.Remove("nonexistent")
-	suite.False(ok)
-	suite.Equal(0, removedValue) // Should return zero value
-	suite.Equal(0, suite.lm.Size())
+func TestLinkedMap_Remove_NonExistentKey(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
+	removedValue, ok := lm.Remove("nonexistent")
+	assert.False(t, ok)
+	assert.Equal(t, 0, removedValue) // Should return zero value
+	assert.Equal(t, 0, lm.Size())
 }
 
-func (suite *LinkedMapTestSuite) TestRemove_EmptyMap() {
-	removedValue, ok := suite.lm.Remove("any")
-	suite.False(ok)
-	suite.Equal(0, removedValue)
-	suite.Equal(0, suite.lm.Size())
+func TestLinkedMap_Remove_EmptyMap(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
+	removedValue, ok := lm.Remove("any")
+	assert.False(t, ok)
+	assert.Equal(t, 0, removedValue)
+	assert.Equal(t, 0, lm.Size())
 }
 
-func (suite *LinkedMapTestSuite) TestRemove_MultipleElements() {
+func TestLinkedMap_Remove_MultipleElements(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	a := "a"
 	b := "b"
 	c := "c"
 	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	suite.lm.Put(c, 3)
+	lm.Put(a, 1)
+	lm.Put(b, 2)
+	lm.Put(c, 3)
 	
 	// Remove middle element
-	removedValue, ok := suite.lm.Remove(b)
-	suite.True(ok)
-	suite.Equal(2, removedValue)
-	suite.Equal(2, suite.lm.Size())
+	removedValue, ok := lm.Remove(b)
+	assert.True(t, ok)
+	assert.Equal(t, 2, removedValue)
+	assert.Equal(t, 2, lm.Size())
 	
 	// Check that order is maintained for remaining elements
-	key, value, ok := suite.lm.First()
-	suite.True(ok)
-	suite.Equal(a, key)
-	suite.Equal(1, value)
+	key, value, ok := lm.First()
+	assert.True(t, ok)
+	assert.Equal(t, a, key)
+	assert.Equal(t, 1, value)
 	
-	key, value, ok = suite.lm.Next(a)
-	suite.True(ok)
-	suite.Equal(c, key)
-	suite.Equal(3, value)
+	key, value, ok = lm.Next(a)
+	assert.True(t, ok)
+	assert.Equal(t, c, key)
+	assert.Equal(t, 3, value)
 }
 
-func (suite *LinkedMapTestSuite) TestRemove_FirstElement() {
+func TestLinkedMap_Remove_FirstElement(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	first := "first"
 	second := "second"
 	
-	suite.lm.Put(first, 1)
-	suite.lm.Put(second, 2)
+	lm.Put(first, 1)
+	lm.Put(second, 2)
 	
-	removedValue, ok := suite.lm.Remove(first)
-	suite.True(ok)
-	suite.Equal(1, removedValue)
+	removedValue, ok := lm.Remove(first)
+	assert.True(t, ok)
+	assert.Equal(t, 1, removedValue)
 	
-	key, value, ok := suite.lm.First()
-	suite.True(ok)
-	suite.Equal(second, key)
-	suite.Equal(2, value)
+	key, value, ok := lm.First()
+	assert.True(t, ok)
+	assert.Equal(t, second, key)
+	assert.Equal(t, 2, value)
 }
 
-func (suite *LinkedMapTestSuite) TestRemove_LastElement() {
+func TestLinkedMap_Remove_LastElement(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	first := "first"
 	last := "last"
 	
-	suite.lm.Put(first, 1)
-	suite.lm.Put(last, 2)
+	lm.Put(first, 1)
+	lm.Put(last, 2)
 	
-	removedValue, ok := suite.lm.Remove(last)
-	suite.True(ok)
-	suite.Equal(2, removedValue)
+	removedValue, ok := lm.Remove(last)
+	assert.True(t, ok)
+	assert.Equal(t, 2, removedValue)
 	
-	key, value, ok := suite.lm.First()
-	suite.True(ok)
-	suite.Equal(first, key)
-	suite.Equal(1, value)
-	
+	key, value, ok := lm.First()
+	assert.True(t, ok)
+	assert.Equal(t, first, key)
+	assert.Equal(t, 1, value)
 }
 
-// Test First function
-func (suite *LinkedMapTestSuite) TestFirst_EmptyMap() {
-	key, value, ok := suite.lm.First()
-	suite.False(ok)
-	suite.Equal("", key) // Zero value for string
-	suite.Equal(0, value) // Zero value for int
+func TestLinkedMap_First_EmptyMap(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
+	key, value, ok := lm.First()
+	assert.False(t, ok)
+	assert.Equal(t, "", key) // Zero value for string
+	assert.Equal(t, 0, value) // Zero value for int
 }
 
-func (suite *LinkedMapTestSuite) TestFirst_SingleElement() {
+func TestLinkedMap_First_SingleElement(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	only := "only"
-	suite.lm.Put(only, 42)
-	key, value, ok := suite.lm.First()
-	suite.True(ok)
-	suite.Equal(only, key)
-	suite.Equal(42, value)
+	lm.Put(only, 42)
+	key, value, ok := lm.First()
+	assert.True(t, ok)
+	assert.Equal(t, only, key)
+	assert.Equal(t, 42, value)
 }
 
-func (suite *LinkedMapTestSuite) TestFirst_MultipleElements() {
+func TestLinkedMap_First_MultipleElements(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	first := "first"
 	second := "second"
 	third := "third"
 	
-	suite.lm.Put(first, 1)
-	suite.lm.Put(second, 2)
-	suite.lm.Put(third, 3)
+	lm.Put(first, 1)
+	lm.Put(second, 2)
+	lm.Put(third, 3)
 	
-	key, value, ok := suite.lm.First()
-	suite.True(ok)
-	suite.Equal(first, key)
-	suite.Equal(1, value)
+	key, value, ok := lm.First()
+	assert.True(t, ok)
+	assert.Equal(t, first, key)
+	assert.Equal(t, 1, value)
 }
 
-// Test Next function
-func (suite *LinkedMapTestSuite) TestNext_ExistingKey() {
+func TestLinkedMap_Next_ExistingKey(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	a := "a"
 	b := "b"
 	c := "c"
 	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	suite.lm.Put(c, 3)
+	lm.Put(a, 1)
+	lm.Put(b, 2)
+	lm.Put(c, 3)
 	
-	key, value, ok := suite.lm.Next(a)
-	suite.True(ok)
-	suite.Equal(b, key)
-	suite.Equal(2, value)
+	key, value, ok := lm.Next(a)
+	assert.True(t, ok)
+	assert.Equal(t, b, key)
+	assert.Equal(t, 2, value)
 	
-	key, value, ok = suite.lm.Next(b)
-	suite.True(ok)
-	suite.Equal(c, key)
-	suite.Equal(3, value)
+	key, value, ok = lm.Next(b)
+	assert.True(t, ok)
+	assert.Equal(t, c, key)
+	assert.Equal(t, 3, value)
 }
 
-func (suite *LinkedMapTestSuite) TestNext_LastElement() {
+func TestLinkedMap_Next_LastElement(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	a := "a"
 	b := "b"
 	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
+	lm.Put(a, 1)
+	lm.Put(b, 2)
 	
-	key, value, ok := suite.lm.Next(b) // Last element
-	suite.False(ok)
-	suite.Equal("", key) // Zero value for string
-	suite.Equal(0, value) // Zero value for int
+	key, value, ok := lm.Next(b) // Last element
+	assert.False(t, ok)
+	assert.Equal(t, "", key) // Zero value for string
+	assert.Equal(t, 0, value) // Zero value for int
 }
 
-func (suite *LinkedMapTestSuite) TestNext_NonExistentKey() {
+func TestLinkedMap_Next_NonExistentKey(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	a := "a"
-	suite.lm.Put(a, 1)
+	lm.Put(a, 1)
 	
-	key, value, ok := suite.lm.Next("nonexistent")
-	suite.False(ok)
-	suite.Equal("", key)
-	suite.Equal(0, value)
+	key, value, ok := lm.Next("nonexistent")
+	assert.False(t, ok)
+	assert.Equal(t, "", key)
+	assert.Equal(t, 0, value)
 }
 
-func (suite *LinkedMapTestSuite) TestNext_EmptyMap() {
-	key, value, ok := suite.lm.Next("any")
-	suite.False(ok)
-	suite.Equal("", key)
-	suite.Equal(0, value)
+func TestLinkedMap_Next_EmptyMap(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
+	key, value, ok := lm.Next("any")
+	assert.False(t, ok)
+	assert.Equal(t, "", key)
+	assert.Equal(t, 0, value)
 }
 
-func (suite *LinkedMapTestSuite) TestNext_SingleElement() {
+func TestLinkedMap_Next_SingleElement(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	only := "only"
-	suite.lm.Put(only, 42)
+	lm.Put(only, 42)
 	
-	key, value, ok := suite.lm.Next(only)
-	suite.False(ok)
-	suite.Equal("", key)
-	suite.Equal(0, value)
+	key, value, ok := lm.Next(only)
+	assert.False(t, ok)
+	assert.Equal(t, "", key)
+	assert.Equal(t, 0, value)
 }
 
-// Test HasNext function
-func (suite *LinkedMapTestSuite) TestHasNext_ExistingKeyWithNext() {
-	a := "a"
-	b := "b"
-	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	
-}
-
-func (suite *LinkedMapTestSuite) TestHasNext_LastElement() {
-	a := "a"
-	b := "b"
-	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	
-}
-
-func (suite *LinkedMapTestSuite) TestHasNext_NonExistentKey() {
-	a := "a"
-	suite.lm.Put(a, 1)
-	
-}
-
-func (suite *LinkedMapTestSuite) TestHasNext_SingleElement() {
-	only := "only"
-	suite.lm.Put(only, 42)
-	
-}
-
-// Test Previous function
-func (suite *LinkedMapTestSuite) TestPrevious_ExistingKey() {
+func TestLinkedMap_Previous_ExistingKey(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	a := "a"
 	b := "b"
 	c := "c"
 	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	suite.lm.Put(c, 3)
+	lm.Put(a, 1)
+	lm.Put(b, 2)
+	lm.Put(c, 3)
 	
-	key, value, ok := suite.lm.Previous(c)
-	suite.True(ok)
-	suite.Equal(b, key)
-	suite.Equal(2, value)
+	key, value, ok := lm.Previous(c)
+	assert.True(t, ok)
+	assert.Equal(t, b, key)
+	assert.Equal(t, 2, value)
 	
-	key, value, ok = suite.lm.Previous(b)
-	suite.True(ok)
-	suite.Equal(a, key)
-	suite.Equal(1, value)
+	key, value, ok = lm.Previous(b)
+	assert.True(t, ok)
+	assert.Equal(t, a, key)
+	assert.Equal(t, 1, value)
 }
 
-func (suite *LinkedMapTestSuite) TestPrevious_FirstElement() {
+func TestLinkedMap_Previous_FirstElement(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	a := "a"
 	b := "b"
 	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
+	lm.Put(a, 1)
+	lm.Put(b, 2)
 	
-	key, value, ok := suite.lm.Previous(a) // First element
-	suite.False(ok)
-	suite.Equal("", key) // Zero value for string
-	suite.Equal(0, value) // Zero value for int
+	key, value, ok := lm.Previous(a) // First element
+	assert.False(t, ok)
+	assert.Equal(t, "", key) // Zero value for string
+	assert.Equal(t, 0, value) // Zero value for int
 }
 
-func (suite *LinkedMapTestSuite) TestPrevious_NonExistentKey() {
+func TestLinkedMap_Previous_NonExistentKey(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	a := "a"
-	suite.lm.Put(a, 1)
+	lm.Put(a, 1)
 	
-	key, value, ok := suite.lm.Previous("nonexistent")
-	suite.False(ok)
-	suite.Equal("", key)
-	suite.Equal(0, value)
+	key, value, ok := lm.Previous("nonexistent")
+	assert.False(t, ok)
+	assert.Equal(t, "", key)
+	assert.Equal(t, 0, value)
 }
 
-func (suite *LinkedMapTestSuite) TestPrevious_EmptyMap() {
-	key, value, ok := suite.lm.Previous("any")
-	suite.False(ok)
-	suite.Equal("", key)
-	suite.Equal(0, value)
+func TestLinkedMap_Previous_EmptyMap(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
+	key, value, ok := lm.Previous("any")
+	assert.False(t, ok)
+	assert.Equal(t, "", key)
+	assert.Equal(t, 0, value)
 }
 
-func (suite *LinkedMapTestSuite) TestPrevious_SingleElement() {
+func TestLinkedMap_Previous_SingleElement(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	only := "only"
-	suite.lm.Put(only, 42)
+	lm.Put(only, 42)
 	
-	key, value, ok := suite.lm.Previous(only)
-	suite.False(ok)
-	suite.Equal("", key)
-	suite.Equal(0, value)
+	key, value, ok := lm.Previous(only)
+	assert.False(t, ok)
+	assert.Equal(t, "", key)
+	assert.Equal(t, 0, value)
 }
 
-// Test HasPrevious function
-func (suite *LinkedMapTestSuite) TestHasPrevious_ExistingKeyWithPrevious() {
-	a := "a"
-	b := "b"
-	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-}
-
-func (suite *LinkedMapTestSuite) TestHasPrevious_FirstElement() {
-	a := "a"
-	b := "b"
-	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-}
-
-func (suite *LinkedMapTestSuite) TestHasPrevious_NonExistentKey() {
-	a := "a"
-	suite.lm.Put(a, 1)
-	
-}
-
-func (suite *LinkedMapTestSuite) TestHasPrevious_SingleElement() {
-	only := "only"
-	suite.lm.Put(only, 42)
-	
-}
-
-// Test Replace function
-func (suite *LinkedMapTestSuite) TestReplace_ExistingOldKey() {
+func TestLinkedMap_Replace_ExistingOldKey(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	old := "old"
 	middle := "middle"
 	end := "end"
 	newKey := "new"
 	
-	suite.lm.Put(old, 1)
-	suite.lm.Put(middle, 2)
-	suite.lm.Put(end, 3)
+	lm.Put(old, 1)
+	lm.Put(middle, 2)
+	lm.Put(end, 3)
 	
-	success := suite.lm.Replace(old, newKey, 100)
+	success := lm.Replace(old, newKey, 100)
 	
-	suite.True(success)
-	suite.False(suite.lm.Contains(old))
-	suite.True(suite.lm.Contains(newKey))
-	suite.Equal(100, suite.lm.Get(newKey))
-	suite.Equal(3, suite.lm.Size())
+	assert.True(t, success)
+	assert.False(t, lm.Contains(old))
+	assert.True(t, lm.Contains(newKey))
+	assert.Equal(t, 100, lm.Get(newKey))
+	assert.Equal(t, 3, lm.Size())
 	
 	// Check that order is maintained
-	key, value, ok := suite.lm.First()
-	suite.True(ok)
-	suite.Equal(newKey, key)
-	suite.Equal(100, value)
+	key, value, ok := lm.First()
+	assert.True(t, ok)
+	assert.Equal(t, newKey, key)
+	assert.Equal(t, 100, value)
 	
-	key, value, ok = suite.lm.Next(newKey)
-	suite.True(ok)
-	suite.Equal(middle, key)
-	suite.Equal(2, value)
+	key, value, ok = lm.Next(newKey)
+	assert.True(t, ok)
+	assert.Equal(t, middle, key)
+	assert.Equal(t, 2, value)
 }
 
-func (suite *LinkedMapTestSuite) TestReplace_NonExistentOldKey() {
+func TestLinkedMap_Replace_NonExistentOldKey(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	existing := "existing"
 	newKey := "new"
 	
-	suite.lm.Put(existing, 1)
+	lm.Put(existing, 1)
 	
-	success := suite.lm.Replace("nonexistent", newKey, 100)
+	success := lm.Replace("nonexistent", newKey, 100)
 	
-	suite.False(success)
-	suite.True(suite.lm.Contains(existing))
-	suite.False(suite.lm.Contains(newKey))
-	suite.Equal(1, suite.lm.Size())
+	assert.False(t, success)
+	assert.True(t, lm.Contains(existing))
+	assert.False(t, lm.Contains(newKey))
+	assert.Equal(t, 1, lm.Size())
 }
 
-func (suite *LinkedMapTestSuite) TestReplace_NewKeyAlreadyExists() {
+func TestLinkedMap_Replace_NewKeyAlreadyExists(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	key1 := "key1"
 	key2 := "key2"
 	
-	suite.lm.Put(key1, 1)
-	suite.lm.Put(key2, 2)
+	lm.Put(key1, 1)
+	lm.Put(key2, 2)
 	
-	success := suite.lm.Replace(key1, key2, 100)
+	success := lm.Replace(key1, key2, 100)
 	
-	suite.False(success)
-	suite.True(suite.lm.Contains(key1))
-	suite.True(suite.lm.Contains(key2))
-	suite.Equal(1, suite.lm.Get(key1)) // Unchanged
-	suite.Equal(2, suite.lm.Get(key2)) // Unchanged
-	suite.Equal(2, suite.lm.Size())
+	assert.False(t, success)
+	assert.True(t, lm.Contains(key1))
+	assert.True(t, lm.Contains(key2))
+	assert.Equal(t, 1, lm.Get(key1)) // Unchanged
+	assert.Equal(t, 2, lm.Get(key2)) // Unchanged
+	assert.Equal(t, 2, lm.Size())
 }
 
-func (suite *LinkedMapTestSuite) TestReplace_SameKey() {
+func TestLinkedMap_Replace_SameKey(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	key := "key"
 	
-	suite.lm.Put(key, 1)
+	lm.Put(key, 1)
 	
-	success := suite.lm.Replace(key, key, 100)
+	success := lm.Replace(key, key, 100)
 	
-	suite.True(success)
-	suite.True(suite.lm.Contains(key))
-	suite.Equal(100, suite.lm.Get(key))
-	suite.Equal(1, suite.lm.Size())
+	assert.True(t, success)
+	assert.True(t, lm.Contains(key))
+	assert.Equal(t, 100, lm.Get(key))
+	assert.Equal(t, 1, lm.Size())
 }
 
-func (suite *LinkedMapTestSuite) TestReplace_EmptyMap() {
+func TestLinkedMap_Replace_EmptyMap(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	old := "old"
 	newKey := "new"
 	
-	success := suite.lm.Replace(old, newKey, 100)
+	success := lm.Replace(old, newKey, 100)
 	
-	suite.False(success)
-	suite.Equal(0, suite.lm.Size())
+	assert.False(t, success)
+	assert.Equal(t, 0, lm.Size())
 }
 
-func (suite *LinkedMapTestSuite) TestReplace_PreservesOrder() {
+func TestLinkedMap_Replace_PreservesOrder(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	a := "a"
 	b := "b"
 	c := "c"
 	B := "B"
 	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	suite.lm.Put(c, 3)
+	lm.Put(a, 1)
+	lm.Put(b, 2)
+	lm.Put(c, 3)
 	
 	// Replace middle element
-	success := suite.lm.Replace(b, B, 200)
+	success := lm.Replace(b, B, 200)
 	
-	suite.True(success)
+	assert.True(t, success)
 	
 	// Check order is preserved
-	key, value, ok := suite.lm.First()
-	suite.True(ok)
-	suite.Equal(a, key)
-	suite.Equal(1, value)
+	key, value, ok := lm.First()
+	assert.True(t, ok)
+	assert.Equal(t, a, key)
+	assert.Equal(t, 1, value)
 	
-	key, value, ok = suite.lm.Next(a)
-	suite.True(ok)
-	suite.Equal(B, key)
-	suite.Equal(200, value)
+	key, value, ok = lm.Next(a)
+	assert.True(t, ok)
+	assert.Equal(t, B, key)
+	assert.Equal(t, 200, value)
 	
-	key, value, ok = suite.lm.Next(B)
-	suite.True(ok)
-	suite.Equal(c, key)
-	suite.Equal(3, value)
+	key, value, ok = lm.Next(B)
+	assert.True(t, ok)
+	assert.Equal(t, c, key)
+	assert.Equal(t, 3, value)
 }
 
-// Test Iterator function
-func (suite *LinkedMapTestSuite) TestIterator_EmptyMap() {
-	iter := suite.lm.Iterator()
-	suite.NotNil(iter)
-	suite.Nil(iter.curr)
-	suite.Equal(suite.lm, iter.m)
+func TestLinkedMap_Iterator_EmptyMap(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
+	count := 0
+	for range lm.Iterator() {
+		count++
+	}
+	assert.Equal(t, 0, count)
 }
 
-func (suite *LinkedMapTestSuite) TestIterator_SingleElement() {
+func TestLinkedMap_Iterator_SingleElement(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	single := "single"
-	suite.lm.Put(single, 42)
+	lm.Put(single, 42)
 	
-	iter := suite.lm.Iterator()
-	suite.NotNil(iter)
-	suite.NotNil(iter.curr)
-	suite.Equal(suite.lm, iter.m)
-	suite.Equal(single, iter.curr.key)
-	suite.Equal(42, iter.curr.value)
+	count := 0
+	for key, value := range lm.Iterator() {
+		assert.Equal(t, single, key)
+		assert.Equal(t, 42, value)
+		count++
+	}
+	assert.Equal(t, 1, count)
 }
 
-func (suite *LinkedMapTestSuite) TestIterator_MultipleElements() {
-	a := "a"
-	b := "b"
-	c := "c"
-	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	suite.lm.Put(c, 3)
-	
-	iter := suite.lm.Iterator()
-	suite.NotNil(iter)
-	suite.NotNil(iter.curr)
-	suite.Equal(a, iter.curr.key)
-	suite.Equal(1, iter.curr.value)
-}
-
-// Test Iterator.Next function
-func (suite *LinkedMapTestSuite) TestIteratorNext_EmptyMap() {
-	iter := suite.lm.Iterator()
-	
-	key, value, ok := iter.Next()
-	suite.False(ok)
-	suite.Equal("", key)
-	suite.Equal(0, value)
-}
-
-func (suite *LinkedMapTestSuite) TestIteratorNext_SingleElement() {
-	single := "single"
-	suite.lm.Put(single, 42)
-	
-	iter := suite.lm.Iterator()
-	key, value, ok := iter.Next()
-	
-	suite.True(ok)
-	suite.Equal(single, key)
-	suite.Equal(42, value)
-	
-	// Next call should return false
-	key, value, ok = iter.Next()
-	suite.False(ok)
-	suite.Equal("", key)
-	suite.Equal(0, value)
-}
-
-func (suite *LinkedMapTestSuite) TestIteratorNext_MultipleElements() {
+func TestLinkedMap_Iterator_MultipleElements(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	first := "first"
 	second := "second"
 	third := "third"
 	
-	suite.lm.Put(first, 1)
-	suite.lm.Put(second, 2)
-	suite.lm.Put(third, 3)
+	lm.Put(first, 1)
+	lm.Put(second, 2)
+	lm.Put(third, 3)
 	
-	iter := suite.lm.Iterator()
+	expected := []struct{ key string; value int }{
+		{first, 1},
+		{second, 2},
+		{third, 3},
+	}
 	
-	// First element
-	key, value, ok := iter.Next()
-	suite.True(ok)
-	suite.Equal(first, key)
-	suite.Equal(1, value)
-	
-	// Second element
-	key, value, ok = iter.Next()
-	suite.True(ok)
-	suite.Equal(second, key)
-	suite.Equal(2, value)
-	
-	// Third element
-	key, value, ok = iter.Next()
-	suite.True(ok)
-	suite.Equal(third, key)
-	suite.Equal(3, value)
-	
-	// End of iteration
-	key, value, ok = iter.Next()
-	suite.False(ok)
-	suite.Equal("", key)
-	suite.Equal(0, value)
+	i := 0
+	for key, value := range lm.Iterator() {
+		assert.Equal(t, expected[i].key, key)
+		assert.Equal(t, expected[i].value, value)
+		i++
+	}
+	assert.Equal(t, 3, i)
 }
 
-func (suite *LinkedMapTestSuite) TestIteratorNext_PreservesInsertionOrder() {
+func TestLinkedMap_Iterator_PreservesInsertionOrder(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	// Add elements in specific order
 	z := "z"
 	a := "a"
 	m := "m"
 	
-	suite.lm.Put(z, 26)
-	suite.lm.Put(a, 1)
-	suite.lm.Put(m, 13)
-	
-	iter := suite.lm.Iterator()
+	lm.Put(z, 26)
+	lm.Put(a, 1)
+	lm.Put(m, 13)
 	
 	// Should iterate in insertion order, not alphabetical
-	key, value, ok := iter.Next()
-	suite.True(ok)
-	suite.Equal(z, key)
-	suite.Equal(26, value)
+	expected := []struct{ key string; value int }{
+		{z, 26},
+		{a, 1},
+		{m, 13},
+	}
 	
-	key, value, ok = iter.Next()
-	suite.True(ok)
-	suite.Equal(a, key)
-	suite.Equal(1, value)
-	
-	key, value, ok = iter.Next()
-	suite.True(ok)
-	suite.Equal(m, key)
-	suite.Equal(13, value)
-	
-	key, value, ok = iter.Next()
-	suite.False(ok)
-	suite.Equal("", key)
+	i := 0
+	for key, value := range lm.Iterator() {
+		assert.Equal(t, expected[i].key, key)
+		assert.Equal(t, expected[i].value, value)
+		i++
+	}
+	assert.Equal(t, 3, i)
 }
 
-func (suite *LinkedMapTestSuite) TestIteratorNext_AfterUpdates() {
+func TestLinkedMap_Iterator_AfterUpdates(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	a := "a"
 	b := "b"
 	c := "c"
 	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	suite.lm.Put(c, 3)
+	lm.Put(a, 1)
+	lm.Put(b, 2)
+	lm.Put(c, 3)
 	
 	// Update middle element (should not change order)
-	suite.lm.Put(b, 200)
+	lm.Put(b, 200)
 	
-	iter := suite.lm.Iterator()
+	expected := []struct{ key string; value int }{
+		{a, 1},
+		{b, 200}, // Updated value
+		{c, 3},
+	}
 	
-	key, value, ok := iter.Next()
-	suite.True(ok)
-	suite.Equal(a, key)
-	suite.Equal(1, value)
-	
-	key, value, ok = iter.Next()
-	suite.True(ok)
-	suite.Equal(b, key)
-	suite.Equal(200, value) // Updated value
-	
-	key, value, ok = iter.Next()
-	suite.True(ok)
-	suite.Equal(c, key)
-	suite.Equal(3, value)
+	i := 0
+	for key, value := range lm.Iterator() {
+		assert.Equal(t, expected[i].key, key)
+		assert.Equal(t, expected[i].value, value)
+		i++
+	}
+	assert.Equal(t, 3, i)
 }
 
-func (suite *LinkedMapTestSuite) TestIteratorNext_AfterRemovals() {
+func TestLinkedMap_Iterator_AfterRemovals(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	a := "a"
 	b := "b"
 	c := "c"
 	d := "d"
 	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	suite.lm.Put(c, 3)
-	suite.lm.Put(d, 4)
-	
-	// Verify initial order
-	firstKey, firstValue, ok := suite.lm.First()
-	suite.True(ok)
-	suite.Equal(a, firstKey)
-	suite.Equal(1, firstValue)
+	lm.Put(a, 1)
+	lm.Put(b, 2)
+	lm.Put(c, 3)
+	lm.Put(d, 4)
 	
 	// Remove middle elements
-	_, ok = suite.lm.Remove(b)
-	suite.True(ok)
-	_, ok = suite.lm.Remove(c)
-	suite.True(ok)
+	_, ok := lm.Remove(b)
+	assert.True(t, ok)
+	_, ok = lm.Remove(c)
+	assert.True(t, ok)
 	
-	// Verify order after removal using First/Next
-	key, value, ok := suite.lm.First()
-	suite.True(ok)
-	suite.Equal(a, key)
-	suite.Equal(1, value)
+	expected := []struct{ key string; value int }{
+		{a, 1},
+		{d, 4},
+	}
 	
-	key, value, ok = suite.lm.Next(a)
-	suite.True(ok)
-	suite.Equal(d, key)
-	suite.Equal(4, value)
-	
-	// Now test iterator
-	iter := suite.lm.Iterator()
-	
-	// Should get 'a' first
-	key, value, ok = iter.Next()
-	suite.True(ok)
-	suite.Equal(a, key)
-	suite.Equal(1, value)
-	
-	// Should get 'd' second
-	key, value, ok = iter.Next()
-	suite.True(ok)
-	suite.Equal(d, key)
-	suite.Equal(4, value)
-	
-	// Should be at end
-	key, value, ok = iter.Next()
-	suite.False(ok)
-	suite.Equal("", key)
-	suite.Equal(0, value)
+	i := 0
+	for key, value := range lm.Iterator() {
+		assert.Equal(t, expected[i].key, key)
+		assert.Equal(t, expected[i].value, value)
+		i++
+	}
+	assert.Equal(t, 2, i)
 }
 
-func (suite *LinkedMapTestSuite) TestIteratorNext_AfterReplace() {
+func TestLinkedMap_Iterator_AfterReplace(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	first := "first"
 	second := "second"
 	third := "third"
 	SECOND := "SECOND"
 	
-	suite.lm.Put(first, 1)
-	suite.lm.Put(second, 2)
-	suite.lm.Put(third, 3)
+	lm.Put(first, 1)
+	lm.Put(second, 2)
+	lm.Put(third, 3)
 	
 	// Replace middle element
-	suite.lm.Replace(second, SECOND, 200)
+	lm.Replace(second, SECOND, 200)
 	
-	iter := suite.lm.Iterator()
+	expected := []struct{ key string; value int }{
+		{first, 1},
+		{SECOND, 200},
+		{third, 3},
+	}
 	
-	key, value, ok := iter.Next()
-	suite.True(ok)
-	suite.Equal(first, key)
-	suite.Equal(1, value)
-	
-	key, value, ok = iter.Next()
-	suite.True(ok)
-	suite.Equal(SECOND, key)
-	suite.Equal(200, value)
-	
-	key, value, ok = iter.Next()
-	suite.True(ok)
-	suite.Equal(third, key)
-	suite.Equal(3, value)
+	i := 0
+	for key, value := range lm.Iterator() {
+		assert.Equal(t, expected[i].key, key)
+		assert.Equal(t, expected[i].value, value)
+		i++
+	}
+	assert.Equal(t, 3, i)
 }
 
-func (suite *LinkedMapTestSuite) TestIterator_MultipleIterators() {
-	a := "a"
-	b := "b"
+func TestLinkedMap_Iterator_BreakEarly(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
+	for i := 0; i < 10; i++ {
+		lm.Put(strconv.Itoa(i), i)
+	}
 	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	
-	// Create two independent iterators
-	iter1 := suite.lm.Iterator()
-	iter2 := suite.lm.Iterator()
-	
-	// Advance first iterator
-	key1, value1, ok := iter1.Next()
-	suite.True(ok)
-	suite.Equal(a, key1)
-	suite.Equal(1, value1)
-	
-	// Second iterator should still be at the beginning
-	key2, value2, ok := iter2.Next()
-	suite.True(ok)
-	suite.Equal(a, key2)
-	suite.Equal(1, value2)
-	
-	// Continue with first iterator
-	key1, value1, ok = iter1.Next()
-	suite.True(ok)
-	suite.Equal(b, key1)
-	suite.Equal(2, value1)
-	
-	// Second iterator should be independent
-	key2, value2, ok = iter2.Next()
-	suite.True(ok)
-	suite.Equal(b, key2)
-	suite.Equal(2, value2)
+	count := 0
+	for key, value := range lm.Iterator() {
+		_ = key
+		_ = value
+		count++
+		if count == 5 {
+			break // Test early break
+		}
+	}
+	assert.Equal(t, 5, count)
 }
 
-func (suite *LinkedMapTestSuite) TestIterator_FullTraversal() {
+func TestLinkedMap_Iterator_FullTraversal(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	// Add many elements
 	expected := make(map[string]int)
 	keys := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
 	
 	for i, key := range keys {
 		value := (i + 1) * 10
-		suite.lm.Put(key, value)
+		lm.Put(key, value)
 		expected[key] = value
 	}
 	
 	// Traverse with iterator
-	iter := suite.lm.Iterator()
 	collected := make(map[string]int)
 	collectedOrder := make([]string, 0)
 	
-	for {
-		key, value, ok := iter.Next()
-		if !ok {
-			break
-		}
+	for key, value := range lm.Iterator() {
 		collected[key] = value
 		collectedOrder = append(collectedOrder, key)
 	}
 	
 	// Verify all elements collected
-	suite.Equal(len(expected), len(collected))
+	assert.Equal(t, len(expected), len(collected))
 	for key, expectedValue := range expected {
 		actualValue, exists := collected[key]
-		suite.True(exists, "Key %s should exist", key)
-		suite.Equal(expectedValue, actualValue, "Value for key %s", key)
+		assert.True(t, exists, "Key %s should exist", key)
+		assert.Equal(t, expectedValue, actualValue, "Value for key %s", key)
 	}
 	
 	// Verify order matches insertion order
-	suite.Equal(keys, collectedOrder)
+	assert.Equal(t, keys, collectedOrder)
 }
 
-func (suite *LinkedMapTestSuite) TestIterator_ConcurrentReadSafety() {
-	a := "a"
-	b := "b"
-	c := "c"
-	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	suite.lm.Put(c, 3)
-	
-	iter := suite.lm.Iterator()
-	
-	// Read operations during iteration should be safe
-	key, value, ok := iter.Next()
-	suite.True(ok)
-	suite.Equal(a, key)
-	
-	// Concurrent reads
-	suite.True(suite.lm.Contains(b))
-	suite.Equal(2, suite.lm.Get(b))
-	suite.Equal(3, suite.lm.Size())
-	
-	// Continue iteration
-	key, value, ok = iter.Next()
-	suite.True(ok)
-	suite.Equal(b, key)
-	suite.Equal(2, value)
-}
-
-// Integration tests
-func (suite *LinkedMapTestSuite) TestComplexOperations() {
+func TestLinkedMap_ComplexOperations(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	// Add some elements
 	a := "a"
 	b := "b"
 	c := "c"
 	d := "d"
 	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	suite.lm.Put(c, 3)
+	lm.Put(a, 1)
+	lm.Put(b, 2)
+	lm.Put(c, 3)
 	
 	// Update one
-	suite.lm.Put(b, 20)
+	lm.Put(b, 20)
 	
 	// Remove one
-	_, ok := suite.lm.Remove(a)
-	suite.True(ok)
+	_, ok := lm.Remove(a)
+	assert.True(t, ok)
 	
 	// Add another
-	suite.lm.Put(d, 4)
+	lm.Put(d, 4)
 	
 	// Check final state
-	suite.Equal(3, suite.lm.Size())
+	assert.Equal(t, 3, lm.Size())
 	
-	key, value, ok := suite.lm.First()
-	suite.True(ok)
-	suite.Equal(b, key)
-	suite.Equal(20, value)
+	key, value, ok := lm.First()
+	assert.True(t, ok)
+	assert.Equal(t, b, key)
+	assert.Equal(t, 20, value)
 	
-	key, value, ok = suite.lm.Next(b)
-	suite.True(ok)
-	suite.Equal(c, key)
-	suite.Equal(3, value)
+	key, value, ok = lm.Next(b)
+	assert.True(t, ok)
+	assert.Equal(t, c, key)
+	assert.Equal(t, 3, value)
 	
-	key, value, ok = suite.lm.Next(c)
-	suite.True(ok)
-	suite.Equal(d, key)
-	suite.Equal(4, value)
+	key, value, ok = lm.Next(c)
+	assert.True(t, ok)
+	assert.Equal(t, d, key)
+	assert.Equal(t, 4, value)
 }
 
-func (suite *LinkedMapTestSuite) TestTraversalAfterOperations() {
+func TestLinkedMap_TraversalAfterOperations(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	// Build a sequence
 	keys := make([]string, 5)
 	for i := 0; i < 5; i++ {
 		key := string(rune('a' + i))
 		keys[i] = key
-		suite.lm.Put(key, i)
+		lm.Put(key, i)
 	}
 	
 	// Remove some elements
-	_, ok := suite.lm.Remove(keys[1]) // Remove second (b)
-	suite.True(ok)
-	_, ok = suite.lm.Remove(keys[3]) // Remove fourth (d)
-	suite.True(ok)
+	_, ok := lm.Remove(keys[1]) // Remove second (b)
+	assert.True(t, ok)
+	_, ok = lm.Remove(keys[3]) // Remove fourth (d)
+	assert.True(t, ok)
 	
 	// Expected order: a(0), c(2), e(4)
 	expected := []struct{ key string; value int }{
@@ -1041,21 +864,20 @@ func (suite *LinkedMapTestSuite) TestTraversalAfterOperations() {
 	}
 	
 	// Traverse and verify
-	key, value, ok := suite.lm.First()
-	suite.True(ok)
+	key, value, ok := lm.First()
+	assert.True(t, ok)
 	for i, exp := range expected {
-		suite.Equal(exp.key, key, "Position %d", i)
-		suite.Equal(exp.value, value, "Position %d", i)
+		assert.Equal(t, exp.key, key, "Position %d", i)
+		assert.Equal(t, exp.value, value, "Position %d", i)
 		
 		if i < len(expected)-1 {
-			key, value, ok = suite.lm.Next(key)
-			suite.True(ok)
+			key, value, ok = lm.Next(key)
+			assert.True(t, ok)
 		}
 	}
 }
 
-// Test with different types
-func (suite *LinkedMapTestSuite) TestWithStringKeys() {
+func TestLinkedMap_WithStringKeys(t *testing.T) {
 	strMap := NewLinkedMap[string, string]()
 	
 	hello := "hello"
@@ -1064,167 +886,144 @@ func (suite *LinkedMapTestSuite) TestWithStringKeys() {
 	strMap.Put(hello, "world")
 	strMap.Put(foo, "bar")
 	
-	suite.Equal("world", strMap.Get(hello))
-	suite.Equal("bar", strMap.Get(foo))
-	suite.True(strMap.Contains(hello))
-	suite.Equal(2, strMap.Size())
+	assert.Equal(t, "world", strMap.Get(hello))
+	assert.Equal(t, "bar", strMap.Get(foo))
+	assert.True(t, strMap.Contains(hello))
+	assert.Equal(t, 2, strMap.Size())
 }
 
-// Edge case: Operations on single element map
-func (suite *LinkedMapTestSuite) TestSingleElementOperations() {
+func TestLinkedMap_SingleElementOperations(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	single := "single"
 	replaced := "replaced"
 	
-	suite.lm.Put(single, 42)
+	lm.Put(single, 42)
 	
 	// Test all operations
-	suite.Equal(1, suite.lm.Size())
-	suite.True(suite.lm.Contains(single))
-	suite.Equal(42, suite.lm.Get(single))
+	assert.Equal(t, 1, lm.Size())
+	assert.True(t, lm.Contains(single))
+	assert.Equal(t, 42, lm.Get(single))
 	
-	key, value, ok := suite.lm.First()
-	suite.True(ok)
-	suite.Equal(single, key)
-	suite.Equal(42, value)
+	key, value, ok := lm.First()
+	assert.True(t, ok)
+	assert.Equal(t, single, key)
+	assert.Equal(t, 42, value)
 	
-	
-	nextKey, nextValue, ok := suite.lm.Next(single)
-	suite.False(ok)
-	suite.Equal("", nextKey)
-	suite.Equal(0, nextValue)
+	nextKey, nextValue, ok := lm.Next(single)
+	assert.False(t, ok)
+	assert.Equal(t, "", nextKey)
+	assert.Equal(t, 0, nextValue)
 	
 	// Replace
-	suite.True(suite.lm.Replace(single, replaced, 100))
-	suite.False(suite.lm.Contains(single))
-	suite.True(suite.lm.Contains(replaced))
+	assert.True(t, lm.Replace(single, replaced, 100))
+	assert.False(t, lm.Contains(single))
+	assert.True(t, lm.Contains(replaced))
 	
 	// Remove
-	removedValue, ok := suite.lm.Remove(replaced)
-	suite.True(ok)
-	suite.Equal(100, removedValue)
-	suite.Equal(0, suite.lm.Size())
+	removedValue, ok := lm.Remove(replaced)
+	assert.True(t, ok)
+	assert.Equal(t, 100, removedValue)
+	assert.Equal(t, 0, lm.Size())
 }
 
-// Edge case: Iterator behavior after map becomes empty
-func (suite *LinkedMapTestSuite) TestIterator_EmptyAfterRemoval() {
-	temp := "temp"
-	suite.lm.Put(temp, 1)
-	
-	iter := suite.lm.Iterator()
-	suite.NotNil(iter.curr)
-	
-	// Remove the only element
-	_, ok := suite.lm.Remove(temp)
-	suite.True(ok)
-	
-	// Iterator should handle this gracefully - the iterator's curr might now be stale
-	// This tests that the iterator doesn't crash when the underlying data changes
-	key, value, ok := iter.Next()
-	// The behavior here depends on your implementation - it might return the stale data
-	// or handle it gracefully. Let's just ensure it doesn't crash.
-	_ = key
-	_ = value
-	_ = ok
-}
-
-// Test bidirectional traversal
-func (suite *LinkedMapTestSuite) TestBidirectionalTraversal() {
+func TestLinkedMap_BidirectionalTraversal(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	a := "a"
 	b := "b"
 	c := "c"
 	d := "d"
 	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	suite.lm.Put(c, 3)
-	suite.lm.Put(d, 4)
+	lm.Put(a, 1)
+	lm.Put(b, 2)
+	lm.Put(c, 3)
+	lm.Put(d, 4)
 	
 	// Forward traversal
-	key, value, ok := suite.lm.First()
-	suite.True(ok)
-	suite.Equal(a, key)
-	suite.Equal(1, value)
+	key, value, ok := lm.First()
+	assert.True(t, ok)
+	assert.Equal(t, a, key)
+	assert.Equal(t, 1, value)
 	
-	key, value, ok = suite.lm.Next(a)
-	suite.True(ok)
-	suite.Equal(b, key)
-	suite.Equal(2, value)
+	key, value, ok = lm.Next(a)
+	assert.True(t, ok)
+	assert.Equal(t, b, key)
+	assert.Equal(t, 2, value)
 	
-	key, value, ok = suite.lm.Next(b)
-	suite.True(ok)
-	suite.Equal(c, key)
-	suite.Equal(3, value)
+	key, value, ok = lm.Next(b)
+	assert.True(t, ok)
+	assert.Equal(t, c, key)
+	assert.Equal(t, 3, value)
 	
 	// Backward traversal from current position
-	key, value, ok = suite.lm.Previous(c)
-	suite.True(ok)
-	suite.Equal(b, key)
-	suite.Equal(2, value)
+	key, value, ok = lm.Previous(c)
+	assert.True(t, ok)
+	assert.Equal(t, b, key)
+	assert.Equal(t, 2, value)
 	
-	key, value, ok = suite.lm.Previous(b)
-	suite.True(ok)
-	suite.Equal(a, key)
-	suite.Equal(1, value)
+	key, value, ok = lm.Previous(b)
+	assert.True(t, ok)
+	assert.Equal(t, a, key)
+	assert.Equal(t, 1, value)
 }
 
-// Test edge cases with Previous and HasPrevious after modifications
-func (suite *LinkedMapTestSuite) TestPreviousAfterOperations() {
+func TestLinkedMap_PreviousAfterOperations(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	a := "a"
 	b := "b"
 	c := "c"
 	d := "d"
 	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	suite.lm.Put(c, 3)
-	suite.lm.Put(d, 4)
+	lm.Put(a, 1)
+	lm.Put(b, 2)
+	lm.Put(c, 3)
+	lm.Put(d, 4)
 	
 	// Remove middle element
-	_, ok := suite.lm.Remove(b)
-	suite.True(ok)
+	_, ok := lm.Remove(b)
+	assert.True(t, ok)
 	
 	// Check that previous relationships are updated correctly
-	key, value, ok := suite.lm.Previous(c)
-	suite.True(ok)
-	suite.Equal(a, key)
-	suite.Equal(1, value)
-	
+	key, value, ok := lm.Previous(c)
+	assert.True(t, ok)
+	assert.Equal(t, a, key)
+	assert.Equal(t, 1, value)
 }
 
-func (suite *LinkedMapTestSuite) TestPreviousAfterReplace() {
+func TestLinkedMap_PreviousAfterReplace(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	first := "first"
 	second := "second"
 	third := "third"
 	SECOND := "SECOND"
 	
-	suite.lm.Put(first, 1)
-	suite.lm.Put(second, 2)
-	suite.lm.Put(third, 3)
+	lm.Put(first, 1)
+	lm.Put(second, 2)
+	lm.Put(third, 3)
 	
 	// Replace middle element
-	success := suite.lm.Replace(second, SECOND, 200)
-	suite.True(success)
+	success := lm.Replace(second, SECOND, 200)
+	assert.True(t, success)
 	
 	// Check previous relationships are maintained
-	key, value, ok := suite.lm.Previous(third)
-	suite.True(ok)
-	suite.Equal(SECOND, key)
-	suite.Equal(200, value)
+	key, value, ok := lm.Previous(third)
+	assert.True(t, ok)
+	assert.Equal(t, SECOND, key)
+	assert.Equal(t, 200, value)
 	
-	key, value, ok = suite.lm.Previous(SECOND)
-	suite.True(ok)
-	suite.Equal(first, key)
-	suite.Equal(1, value)
+	key, value, ok = lm.Previous(SECOND)
+	assert.True(t, ok)
+	assert.Equal(t, first, key)
+	assert.Equal(t, 1, value)
 }
 
-// Test thread safety with concurrent operations
-func (suite *LinkedMapTestSuite) TestConcurrentReadOperations() {
+func TestLinkedMap_ConcurrentReadOperations(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	// Populate map
 	keys := make([]string, 100)
 	for i := 0; i < 100; i++ {
 		key := string(rune('a'+i%26)) + strconv.Itoa(i)
 		keys[i] = key
-		suite.lm.Put(key, i)
+		lm.Put(key, i)
 	}
 	
 	var wg sync.WaitGroup
@@ -1239,16 +1038,16 @@ func (suite *LinkedMapTestSuite) TestConcurrentReadOperations() {
 			for j := 0; j < 50; j++ {
 				key := keys[j]
 				
-				_ = suite.lm.Get(key)
-				_ = suite.lm.Contains(key)
-				_ = suite.lm.Size()
+				_ = lm.Get(key)
+				_ = lm.Contains(key)
+				_ = lm.Size()
 				
-				if suite.lm.Contains(key) {
-					_, _, _ = suite.lm.Next(key)
-					_, _, _ = suite.lm.Previous(key)
+				if lm.Contains(key) {
+					_, _, _ = lm.Next(key)
+					_, _, _ = lm.Previous(key)
 				}
 				
-				_, _, _ = suite.lm.First()
+				_, _, _ = lm.First()
 			}
 		}(i)
 	}
@@ -1256,10 +1055,11 @@ func (suite *LinkedMapTestSuite) TestConcurrentReadOperations() {
 	wg.Wait()
 	
 	// Verify map integrity
-	suite.Equal(100, suite.lm.Size())
+	assert.Equal(t, 100, lm.Size())
 }
 
-func (suite *LinkedMapTestSuite) TestConcurrentWriteOperations() {
+func TestLinkedMap_ConcurrentWriteOperations(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	var wg sync.WaitGroup
 	numGoroutines := 5
 	
@@ -1272,7 +1072,7 @@ func (suite *LinkedMapTestSuite) TestConcurrentWriteOperations() {
 			baseKey := string(rune('a' + id))
 			for j := 0; j < 20; j++ {
 				key := baseKey + strconv.Itoa(j)
-				suite.lm.Put(key, id*1000+j)
+				lm.Put(key, id*1000+j)
 			}
 		}(i)
 	}
@@ -1280,16 +1080,17 @@ func (suite *LinkedMapTestSuite) TestConcurrentWriteOperations() {
 	wg.Wait()
 	
 	// Verify all elements were added
-	suite.Equal(100, suite.lm.Size())
+	assert.Equal(t, 100, lm.Size())
 }
 
-func (suite *LinkedMapTestSuite) TestConcurrentMixedOperations() {
+func TestLinkedMap_ConcurrentMixedOperations(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	// Pre-populate with some data
 	keys := make([]string, 50)
 	for i := 0; i < 50; i++ {
 		key := string(rune('a'+i%26)) + strconv.Itoa(i)
 		keys[i] = key
-		suite.lm.Put(key, i)
+		lm.Put(key, i)
 	}
 	
 	var wg sync.WaitGroup
@@ -1301,8 +1102,8 @@ func (suite *LinkedMapTestSuite) TestConcurrentMixedOperations() {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
 				key := keys[j%50]
-				_ = suite.lm.Get(key)
-				_ = suite.lm.Contains(key)
+				_ = lm.Get(key)
+				_ = lm.Contains(key)
 				if j%10 == 0 {
 					time.Sleep(time.Microsecond)
 				}
@@ -1318,7 +1119,7 @@ func (suite *LinkedMapTestSuite) TestConcurrentMixedOperations() {
 			baseOffset := (id + 1) * 1000
 			for j := 0; j < 30; j++ {
 				key := "writer" + strconv.Itoa(id) + "_" + strconv.Itoa(j)
-				suite.lm.Put(key, baseOffset+j)
+				lm.Put(key, baseOffset+j)
 				if j%5 == 0 {
 					time.Sleep(time.Microsecond)
 				}
@@ -1329,45 +1130,11 @@ func (suite *LinkedMapTestSuite) TestConcurrentMixedOperations() {
 	wg.Wait()
 	
 	// Verify final state
-	suite.True(suite.lm.Size() >= 50) // At least original elements
-	suite.True(suite.lm.Size() <= 110) // Original + new elements
+	assert.True(t, lm.Size() >= 50) // At least original elements
+	assert.True(t, lm.Size() <= 110) // Original + new elements
 }
 
-// Test Iterator edge cases and boundary conditions
-func (suite *LinkedMapTestSuite) TestIterator_BoundaryConditions() {
-	// Test iterator when curr is at tail boundary
-	a := "a"
-	suite.lm.Put(a, 1)
-	
-	iter := suite.lm.Iterator()
-	
-	// Advance to the only element
-	key, value, ok := iter.Next()
-	suite.True(ok)
-	suite.Equal(a, key)
-	suite.Equal(1, value)
-	
-	// Now curr should be pointing to "a" node
-	// Next call should check if curr.next == tail
-	key, value, ok = iter.Next()
-	suite.False(ok)
-	suite.Equal("", key)
-	suite.Equal(0, value)
-}
-
-func (suite *LinkedMapTestSuite) TestIterator_CurrIsNil() {
-	// Test when iterator curr is nil (empty map case)
-	iter := suite.lm.Iterator()
-	suite.Nil(iter.curr)
-	
-	key, value, ok := iter.Next()
-	suite.False(ok)
-	suite.Equal("", key)
-	suite.Equal(0, value)
-}
-
-// Test with different data types to ensure generics work correctly
-func (suite *LinkedMapTestSuite) TestWithIntegerKeys() {
+func TestLinkedMap_WithIntegerKeys(t *testing.T) {
 	intMap := NewLinkedMap[int, string]()
 	
 	one := 1
@@ -1378,29 +1145,29 @@ func (suite *LinkedMapTestSuite) TestWithIntegerKeys() {
 	intMap.Put(two, "two")
 	intMap.Put(three, "three")
 	
-	suite.Equal("one", intMap.Get(one))
-	suite.Equal("two", intMap.Get(two))
-	suite.Equal("three", intMap.Get(three))
-	suite.Equal(3, intMap.Size())
+	assert.Equal(t, "one", intMap.Get(one))
+	assert.Equal(t, "two", intMap.Get(two))
+	assert.Equal(t, "three", intMap.Get(three))
+	assert.Equal(t, 3, intMap.Size())
 	
 	// Test traversal
 	key, value, ok := intMap.First()
-	suite.True(ok)
-	suite.Equal(one, key)
-	suite.Equal("one", value)
+	assert.True(t, ok)
+	assert.Equal(t, one, key)
+	assert.Equal(t, "one", value)
 	
 	key, value, ok = intMap.Next(one)
-	suite.True(ok)
-	suite.Equal(two, key)
-	suite.Equal("two", value)
+	assert.True(t, ok)
+	assert.Equal(t, two, key)
+	assert.Equal(t, "two", value)
 	
 	key, value, ok = intMap.Previous(two)
-	suite.True(ok)
-	suite.Equal(one, key)
-	suite.Equal("one", value)
+	assert.True(t, ok)
+	assert.Equal(t, one, key)
+	assert.Equal(t, "one", value)
 }
 
-func (suite *LinkedMapTestSuite) TestWithStructValues() {
+func TestLinkedMap_WithStructValues(t *testing.T) {
 	type Person struct {
 		Name string
 		Age  int
@@ -1418,17 +1185,16 @@ func (suite *LinkedMapTestSuite) TestWithStructValues() {
 	personMap.Put(bob, p2)
 	
 	retrievedP1 := personMap.Get(alice)
-	suite.Equal("Alice", retrievedP1.Name)
-	suite.Equal(30, retrievedP1.Age)
+	assert.Equal(t, "Alice", retrievedP1.Name)
+	assert.Equal(t, 30, retrievedP1.Age)
 	
 	// Test zero value
 	nonExistent := personMap.Get("charlie")
-	suite.Equal("", nonExistent.Name)
-	suite.Equal(0, nonExistent.Age)
+	assert.Equal(t, "", nonExistent.Name)
+	assert.Equal(t, 0, nonExistent.Age)
 }
 
-// Test Replace function edge cases
-func (suite *LinkedMapTestSuite) TestReplace_WithDifferentTypes() {
+func TestLinkedMap_Replace_WithDifferentTypes(t *testing.T) {
 	boolMap := NewLinkedMap[string, bool]()
 	
 	trueKey := "true"
@@ -1439,130 +1205,130 @@ func (suite *LinkedMapTestSuite) TestReplace_WithDifferentTypes() {
 	boolMap.Put(falseKey, false)
 	
 	success := boolMap.Replace(trueKey, TRUE, false)
-	suite.True(success)
-	suite.False(boolMap.Get(TRUE))
-	suite.False(boolMap.Contains(trueKey))
+	assert.True(t, success)
+	assert.False(t, boolMap.Get(TRUE))
+	assert.False(t, boolMap.Contains(trueKey))
 }
 
-// Test memory cleanup and node isolation after Remove
-func (suite *LinkedMapTestSuite) TestRemove_NodeIsolation() {
+func TestLinkedMap_Remove_NodeIsolation(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	a := "a"
 	b := "b"
 	c := "c"
 	
-	suite.lm.Put(a, 1)
-	suite.lm.Put(b, 2)
-	suite.lm.Put(c, 3)
+	lm.Put(a, 1)
+	lm.Put(b, 2)
+	lm.Put(c, 3)
 	
 	// Get references before removal
-	firstKey, _, ok := suite.lm.First()
-	suite.True(ok)
-	suite.Equal(a, firstKey)
+	firstKey, _, ok := lm.First()
+	assert.True(t, ok)
+	assert.Equal(t, a, firstKey)
 	
 	// Remove middle element
-	removedValue, ok := suite.lm.Remove(b)
-	suite.True(ok)
-	suite.Equal(2, removedValue)
+	removedValue, ok := lm.Remove(b)
+	assert.True(t, ok)
+	assert.Equal(t, 2, removedValue)
 	
 	// Verify links are properly updated
-	key, value, ok := suite.lm.Next(a)
-	suite.True(ok)
-	suite.Equal(c, key)
-	suite.Equal(3, value)
+	key, value, ok := lm.Next(a)
+	assert.True(t, ok)
+	assert.Equal(t, c, key)
+	assert.Equal(t, 3, value)
 	
-	key, value, ok = suite.lm.Previous(c)
-	suite.True(ok)
-	suite.Equal(a, key)
-	suite.Equal(1, value)
+	key, value, ok = lm.Previous(c)
+	assert.True(t, ok)
+	assert.Equal(t, a, key)
+	assert.Equal(t, 1, value)
 }
 
-// Test size consistency across all operations
-func (suite *LinkedMapTestSuite) TestSizeConsistency() {
+func TestLinkedMap_SizeConsistency(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	// Start empty
-	suite.Equal(0, suite.lm.Size())
+	assert.Equal(t, 0, lm.Size())
 	
 	a := "a"
 	b := "b"
 	A := "A"
 	
 	// Add elements
-	suite.lm.Put(a, 1)
-	suite.Equal(1, suite.lm.Size())
+	lm.Put(a, 1)
+	assert.Equal(t, 1, lm.Size())
 	
-	suite.lm.Put(b, 2)
-	suite.Equal(2, suite.lm.Size())
+	lm.Put(b, 2)
+	assert.Equal(t, 2, lm.Size())
 	
 	// Update existing (size should not change)
-	suite.lm.Put(a, 10)
-	suite.Equal(2, suite.lm.Size())
+	lm.Put(a, 10)
+	assert.Equal(t, 2, lm.Size())
 	
 	// Replace (size should not change)
-	suite.lm.Replace(a, A, 100)
-	suite.Equal(2, suite.lm.Size())
+	lm.Replace(a, A, 100)
+	assert.Equal(t, 2, lm.Size())
 	
 	// Remove
-	_, ok := suite.lm.Remove(A)
-	suite.True(ok)
-	suite.Equal(1, suite.lm.Size())
+	_, ok := lm.Remove(A)
+	assert.True(t, ok)
+	assert.Equal(t, 1, lm.Size())
 	
-	_, ok = suite.lm.Remove(b)
-	suite.True(ok)
-	suite.Equal(0, suite.lm.Size())
+	_, ok = lm.Remove(b)
+	assert.True(t, ok)
+	assert.Equal(t, 0, lm.Size())
 	
 	// Remove non-existent (size should not change)
-	_, ok = suite.lm.Remove("nonexistent")
-	suite.False(ok)
-	suite.Equal(0, suite.lm.Size())
+	_, ok = lm.Remove("nonexistent")
+	assert.False(t, ok)
+	assert.Equal(t, 0, lm.Size())
 }
 
-// Test that all zero values are handled correctly
-func (suite *LinkedMapTestSuite) TestZeroValueHandling() {
+func TestLinkedMap_ZeroValueHandling(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	// Test with zero values for different types
 	
 	// Empty string key
 	empty := ""
 	zero := "zero"
 	
-	suite.lm.Put(empty, 42) // Empty string key
-	suite.True(suite.lm.Contains(empty))
-	suite.Equal(42, suite.lm.Get(empty))
+	lm.Put(empty, 42) // Empty string key
+	assert.True(t, lm.Contains(empty))
+	assert.Equal(t, 42, lm.Get(empty))
 	
 	// Int zero value
-	suite.lm.Put(zero, 0) // Zero value
-	suite.True(suite.lm.Contains(zero))
-	suite.Equal(0, suite.lm.Get(zero))
+	lm.Put(zero, 0) // Zero value
+	assert.True(t, lm.Contains(zero))
+	assert.Equal(t, 0, lm.Get(zero))
 	
 	// Test operations with zero values
-	key, value, ok := suite.lm.First()
-	suite.True(ok)
+	key, value, ok := lm.First()
+	assert.True(t, ok)
 	if key == "" {
-		suite.Equal(42, value)
+		assert.Equal(t, 42, value)
 	} else {
-		suite.Equal(zero, key)
-		suite.Equal(0, value)
+		assert.Equal(t, zero, key)
+		assert.Equal(t, 0, value)
 	}
 }
 
-// Test comprehensive traversal integrity
-func (suite *LinkedMapTestSuite) TestTraversalIntegrity() {
+func TestLinkedMap_TraversalIntegrity(t *testing.T) {
+	lm := NewLinkedMap[string, int]()
 	// Build a map with known order
 	keyStrs := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
 	keys := make([]string, len(keyStrs))
 	for i, keyStr := range keyStrs {
 		keys[i] = keyStr
-		suite.lm.Put(keys[i], i*10)
+		lm.Put(keys[i], i*10)
 	}
 	
 	// Forward traversal
-	currentKey, currentValue, ok := suite.lm.First()
-	suite.True(ok)
+	currentKey, currentValue, ok := lm.First()
+	assert.True(t, ok)
 	for i, expectedKey := range keys {
-		suite.Equal(expectedKey, currentKey, "Forward traversal at position %d", i)
-		suite.Equal(i*10, currentValue, "Forward traversal value at position %d", i)
+		assert.Equal(t, expectedKey, currentKey, "Forward traversal at position %d", i)
+		assert.Equal(t, i*10, currentValue, "Forward traversal value at position %d", i)
 		
 		if i < len(keys)-1 {
-			currentKey, currentValue, ok = suite.lm.Next(currentKey)
-			suite.True(ok)
+			currentKey, currentValue, ok = lm.Next(currentKey)
+			assert.True(t, ok)
 		}
 	}
 	
@@ -1570,11 +1336,11 @@ func (suite *LinkedMapTestSuite) TestTraversalIntegrity() {
 	currentKey = keys[len(keys)-1]
 	for i := len(keys) - 1; i >= 0; i-- {
 		expectedKey := keys[i]
-		suite.Equal(expectedKey, currentKey, "Backward traversal at position %d", i)
+		assert.Equal(t, expectedKey, currentKey, "Backward traversal at position %d", i)
 		
 		if i > 0 {
-			currentKey, _, ok = suite.lm.Previous(currentKey)
-			suite.True(ok)
+			currentKey, _, ok = lm.Previous(currentKey)
+			assert.True(t, ok)
 		}
 	}
 }

@@ -3,6 +3,7 @@
 package qotp
 
 import (
+	"iter"
 	"sync"
 )
 
@@ -21,11 +22,6 @@ type lmNode[K comparable, V any] struct {
 	value V
 	next  *lmNode[K, V] // Next element in insertion order
 	prev  *lmNode[K, V] // Previous element in insertion order
-}
-
-type LinkedMapIterator[K comparable, V any] struct {
-	m    *LinkedMap[K, V]
-	curr *lmNode[K, V]
 }
 
 // NewLinkedMap creates a new linked hash map.
@@ -213,47 +209,17 @@ func (m *LinkedMap[K, V]) Replace(oldKey K, newKey K, value V) bool {
 	return true
 }
 
-// Iterator returns a new iterator for traversing the map in insertion order.
-func (m *LinkedMap[K, V]) Iterator() *LinkedMapIterator[K, V] {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	var curr *lmNode[K, V]
-	if m.head.next != m.tail {
-		curr = m.head.next // Start at first real element
-	} else {
-		curr = nil // Empty map
+// Iterator returns an iterator for traversing the map in insertion order.
+// Uses Go 1.23+ iter.Seq2 pattern.
+func (m *LinkedMap[K, V]) Iterator() iter.Seq2[K, V] {
+	return func(yield func(K, V) bool) {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		
+		for node := m.head.next; node != m.tail; node = node.next {
+			if !yield(node.key, node.value) {
+				return
+			}
+		}
 	}
-
-	return &LinkedMapIterator[K, V]{
-		curr: curr,
-		m:    m,
-	}
-}
-
-// Next advances the iterator and returns the current key, value, and true if valid.
-// Returns false when iteration has reached the end.
-func (it *LinkedMapIterator[K, V]) Next() (K, V, bool) {
-	it.m.mu.RLock()
-	defer it.m.mu.RUnlock()
-
-	// Check if curr is nil (empty map or end of iteration)
-	if it.curr == nil || it.curr == it.m.tail {
-		var zeroK K
-		var zeroV V
-		return zeroK, zeroV, false
-	}
-
-	// Get current values
-	key := it.curr.key
-	value := it.curr.value
-
-	// Advance to next
-	if it.curr.next == it.m.tail {
-		it.curr = nil // Mark end of iteration
-	} else {
-		it.curr = it.curr.next
-	}
-
-	return key, value, true
 }
