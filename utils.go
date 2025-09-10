@@ -6,44 +6,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"golang.org/x/sys/unix"
 	"log/slog"
 	"math"
-	"net"
 	"runtime"
 	"strings"
 	"time"
 )
-
-// based on: https://github.com/quic-go/quic-go/blob/d540f545b0b70217220eb0fbd5278ece436a7a20/sys_conn_df_linux.go#L15
-func setDontFragment(conn *net.UDPConn) error {
-	rawConn, err := conn.SyscallConn()
-	if err != nil {
-		return err
-	}
-
-	var errDFIPv4, errDFIPv6 error
-	if err := rawConn.Control(func(fd uintptr) {
-		errDFIPv4 = unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_MTU_DISCOVER, unix.IP_PMTUDISC_DO)
-		errDFIPv6 = unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_MTU_DISCOVER, unix.IPV6_PMTUDISC_DO)
-	}); err != nil {
-		return err
-	}
-
-	switch {
-	case errDFIPv4 == nil && errDFIPv6 == nil:
-		slog.Info("setting DF for IPv4 and IPv6")
-		//TODO: expose this and don't probe for higher MTU when not DF not supported
-	case errDFIPv4 == nil && errDFIPv6 != nil:
-		slog.Info("setting DF for IPv4 only")
-	case errDFIPv4 != nil && errDFIPv6 == nil:
-		slog.Info("setting DF for IPv6 only")
-	case errDFIPv4 != nil && errDFIPv6 != nil:
-		slog.Error("setting DF failed for both IPv4 and IPv6")
-	}
-
-	return nil
-}
 
 func gId() slog.Attr {
 	buf := make([]byte, 64)
@@ -150,12 +118,15 @@ func generateKey() (*ecdh.PrivateKey, error) {
 }
 
 type packetKey [10]byte
+
 func (p packetKey) offset() uint64 {
 	return Uint64(p[:8])
 }
+
 func (p packetKey) length() uint16 {
 	return Uint16(p[8:])
 }
+
 func (p packetKey) less(other packetKey) bool {
 	for i := range len(p) {
 		if p[i] < other[i] {
@@ -167,6 +138,7 @@ func (p packetKey) less(other packetKey) bool {
 	}
 	return false
 }
+
 func createPacketKey(offset uint64, length uint16) packetKey {
 	p := packetKey{}
 	PutUint64(p[:8], offset)
@@ -175,12 +147,15 @@ func createPacketKey(offset uint64, length uint16) packetKey {
 }
 
 type connStreamKey [12]byte
+
 func (csk connStreamKey) connID() uint64 {
 	return Uint64(csk[:8])
 }
+
 func (csk connStreamKey) streamID() uint32 {
 	return Uint32(csk[8:])
 }
+
 func createConnStreamKey(connID uint64, streamID uint32) connStreamKey {
 	csk := connStreamKey{}
 	PutUint64(csk[:8], connID)
@@ -194,17 +169,17 @@ var specificNano uint64 = math.MaxUint64
 
 func setTime(nowNano uint64) {
 	if nowNano <= specificNano {
-		slog.Warn("Time/Warp/Fail", 
-			slog.Uint64("before:ms", specificNano/msNano), 
-			slog.Uint64("after:ms", nowNano/msNano))	
+		slog.Warn("Time/Warp/Fail",
+			slog.Uint64("before:ms", specificNano/msNano),
+			slog.Uint64("after:ms", nowNano/msNano))
 		return
 	}
-	slog.Debug("Time/Warp/Manual", 
-		slog.Uint64("+:ms", (nowNano - specificNano)/msNano), 
-		slog.Uint64("before:ms", specificNano/msNano), 
+	slog.Debug("Time/Warp/Manual",
+		slog.Uint64("+:ms", (nowNano-specificNano)/msNano),
+		slog.Uint64("before:ms", specificNano/msNano),
 		slog.Uint64("after:ms", nowNano/msNano))
 	specificNano = nowNano
-	}
+}
 
 func timeNowNano() uint64 {
 	if specificNano == math.MaxUint64 {
@@ -217,7 +192,7 @@ func debug(msg string, keysAndValues ...any) {
 	if len(keysAndValues)%2 != 0 {
 		panic("debug requires even number of arguments (key-value pairs)")
 	}
-	
+
 	attrs := make([]any, 0, len(keysAndValues)/2)
 	for i := 0; i < len(keysAndValues); i += 2 {
 		key := keysAndValues[i].(string)
