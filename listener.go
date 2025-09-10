@@ -15,28 +15,15 @@ import (
 	"sync/atomic"
 )
 
-// Wrapper for your original use case
-type ConnStreamIterator struct {
-	*NestedIterator[uint64, uint32, *Connection, *Stream]
-}
-
-func NewConnStreamIterator(connMap *LinkedMap[uint64, *Connection]) *ConnStreamIterator {
-	return &ConnStreamIterator{NewNestedIterator(
-		connMap,
-		func(conn *Connection) *LinkedMap[uint32, *Stream] {
-			return conn.streams
-		},
-	)}
-}
-
 type Listener struct {
 	// this is the port we are listening to
-	localConn NetworkConn
-	prvKeyId  *ecdh.PrivateKey                //never nil
-	connMap   *LinkedMap[uint64, *Connection] // here we store the connection to remote peers, we can have up to
-	iter      *ConnStreamIterator
-	closed    bool
-	mu        sync.Mutex
+	localConn       NetworkConn
+	prvKeyId        *ecdh.PrivateKey                //never nil
+	connMap         *LinkedMap[uint64, *Connection] // here we store the connection to remote peers, we can have up to
+	currentConnID   *uint64
+	currentStreamID *uint32
+	closed          bool
+	mu              sync.Mutex
 }
 
 type ListenOption struct {
@@ -248,66 +235,60 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 }
 
 // Flush sends pending data for all connections using round-robin
-func (l *Listener) Flush(nowNano uint64) (minPacing uint64, err error) {
+func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 	minPacing = MinDeadLine
 	if l.connMap.Size() == 0 {
 		//if we do not have at least one connection, exit
-		return minPacing, nil
+		return minPacing
 	}
 
-	if l.iter == nil {
-		l.iter = NewConnStreamIterator(l.connMap)
-	}
-
-	var startK1 *uint64
-	var startK2 *uint32
+	closeConn := []uint64{}
 	closeStream := []connStreamKey{}
 
-	for {
-		conn, stream := l.iter.Next()
-		if conn == nil {
+	iter := NestedIterator(l.connMap, func(conn *Connection) *LinkedMap[uint32, *Stream] {
+		return conn.streams
+	}, l.currentConnID, l.currentStreamID)
+
+	for conn, stream := range iter {
+		_, dataSent, pacingNano, err := conn.Flush(stream, nowNano)
+		if err != nil {
+			slog.Info("closing connection", conn.debug(), slog.Any("err", err))
+			closeConn = append(closeConn, conn.connId)
+			continue
+		}
+
+		if stream.state == StreamStateClosed {
+			// stream closed, mark for cleaning up, do not clean up yet, otherwise the iterator will become
+			// much more complex
+			closeStream = append(closeStream, createConnStreamKey(conn.connId, stream.streamID))
+			continue
+		}
+
+		if dataSent > 0 {
+			// data sent, returning early
+			minPacing = 0
+			l.currentConnID = &conn.connId
+			l.currentStreamID = &stream.streamID
 			break
 		}
 
-		if startK1 == nil && startK2 == nil {
-			startK1 = l.iter.currentOuterKey
-			startK2 = l.iter.currentInnerKey //startK2 can be null
-		}
-
-		if stream != nil {
-			_, dataSent, pacingNano, err := conn.Flush(stream, nowNano)
-			if err != nil {
-				conn.cleanupConn(conn.connId)
-				return 0, err
-			}
-
-			if stream.state == StreamStateClosed {
-				// stream closed, mark for cleaning up, do not clean up yet, otherwise the iterator will become
-				// much more complex
-				closeStream = append(closeStream, createConnStreamKey(conn.connId, stream.streamID))
-			}
-
-			if dataSent > 0 {
-				// data sent, returning early
-				minPacing = 0
-				break
-			}
-
-			if pacingNano < minPacing {
-				minPacing = pacingNano
-			}
-		}
-
-		if *startK1 == *l.iter.nextOuterKey && *startK2 == *l.iter.nextInnerKey {
-			break
+		if pacingNano < minPacing {
+			minPacing = pacingNano
 		}
 	}
-
+	
+	for _, closeConnKey := range closeConn {
+		conn := l.connMap.Get(closeConnKey)
+		conn.cleanupConn(closeConnKey)
+	}
+	
 	for _, connStreamKey := range closeStream {
 		conn := l.connMap.Get(connStreamKey.connID())
 		conn.cleanupStream(connStreamKey.streamID())
 	}
-	return minPacing, nil
+	l.currentConnID = nil
+	l.currentStreamID = nil
+	return minPacing
 }
 
 func (l *Listener) newConn(
@@ -336,9 +317,9 @@ func (l *Listener) newConn(
 		streams:    NewLinkedMap[uint32, *Stream](),
 		remoteAddr: remoteAddr,
 		keys: ConnectionKeys{
-			pubKeyIdRcv:     pubKeyIdRcv,
-			prvKeyEpSnd:     prvKeyEpSnd,
-			pubKeyEpRcv:     pubKeyEdRcv,
+			pubKeyIdRcv: pubKeyIdRcv,
+			prvKeyEpSnd: prvKeyEpSnd,
+			pubKeyEpRcv: pubKeyEdRcv,
 		},
 		mu:       sync.Mutex{},
 		listener: l,
@@ -374,12 +355,7 @@ func (l *Listener) Loop(callback func(s *Stream)) func() {
 				callback(s) // Process received stream
 			}
 
-			//Flush
-			waitNextNano, err = l.Flush(timeNowNano())
-
-			if err != nil {
-				slog.Error("Error in loop flush", slog.Any("error", err))
-			}
+			waitNextNano = l.Flush(timeNowNano())
 		}
 	}()
 

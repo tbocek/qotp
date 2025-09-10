@@ -211,15 +211,42 @@ func (m *LinkedMap[K, V]) Replace(oldKey K, newKey K, value V) bool {
 
 // Iterator returns an iterator for traversing the map in insertion order.
 // Uses Go 1.23+ iter.Seq2 pattern.
-func (m *LinkedMap[K, V]) Iterator() iter.Seq2[K, V] {
+func (m *LinkedMap[K, V]) Iterator(startKey *K) iter.Seq2[K, V] {
 	return func(yield func(K, V) bool) {
 		m.mu.RLock()
 		defer m.mu.RUnlock()
-		
-		for node := m.head.next; node != m.tail; node = node.next {
+
+		startNode := m.head.next
+		// If startKey provided and exists, start from the next element
+		if startKey != nil {
+			if node, exists := m.items[*startKey]; exists && node.next != m.tail {
+				startNode = node.next
+			}
+		}
+
+		for node := startNode; node != m.tail; node = node.next {
 			if !yield(node.key, node.value) {
 				return
 			}
+		}
+	}
+}
+
+func NestedIterator[K1, K2 comparable, V1, V2 any](
+	outerMap *LinkedMap[K1, V1],
+	getInnerMap func(V1) *LinkedMap[K2, V2],
+	startKey1 *K1,
+	startKey2 *K2,
+) iter.Seq2[V1, V2] {
+	return func(yield func(V1, V2) bool) {
+		for _, outerVal := range outerMap.Iterator(startKey1) {
+			innerMap := getInnerMap(outerVal)
+			for _, innerVal := range innerMap.Iterator(startKey2) {
+				if !yield(outerVal, innerVal) {
+					return
+				}
+			}
+			startKey2 = nil
 		}
 	}
 }

@@ -61,12 +61,7 @@ func (c *Connection) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	iter := c.streams.Iterator()
-	for {
-		_, s, ok := iter.Next()
-		if !ok {
-			break
-		}
+	for _, s := range c.streams.Iterator(nil) {
 		if s != nil {
 			s.Close()
 		}
@@ -144,14 +139,9 @@ func (c *Connection) updateState(s *Stream, isClose bool) {
 func (c *Connection) cleanupStream(streamID uint32) {
 	slog.Debug("Cleanup/Stream", getGoroutineID(), c.debug(), slog.Uint64("streamID", uint64(streamID)))
 
-	if c.listener.iter.nextInnerKey != nil && streamID == *c.listener.iter.nextInnerKey {
-		var ok bool
-		*c.listener.iter.nextInnerKey, _, ok = c.streams.Next(streamID)
-		if !ok {
-			*c.listener.iter.nextInnerKey, _, _ = c.streams.First()
-		}
+	if c.listener.currentStreamID != nil && streamID == *c.listener.currentStreamID {
+		*c.listener.currentStreamID, _, _ = c.streams.Next(streamID)
 	}
-
 	c.streams.Remove(streamID)
 	//even if the stream size is 0, do not remove the connection yet, only after a certain timeout,
 	// so that BBR, RTT, is preserved for a bit
@@ -160,14 +150,9 @@ func (c *Connection) cleanupStream(streamID uint32) {
 func (c *Connection) cleanupConn(connID uint64) {
 	slog.Debug("Cleanup/Stream", getGoroutineID(), c.debug(), slog.Uint64("connID", connID))
 
-	if c.listener.iter.nextOuterKey != nil && connID == *c.listener.iter.nextOuterKey {
-		var ok bool
-		*c.listener.iter.nextOuterKey, _, ok = c.listener.connMap.Next(connID)
-		if !ok {
-			*c.listener.iter.nextOuterKey, _, _ = c.listener.connMap.First()
-		}
+	if c.listener.currentConnID != nil && connID == *c.listener.currentConnID {
+		*c.listener.currentConnID, _, _ = c.listener.connMap.Next(connID)
 	}
-
 	c.listener.connMap.Remove(connID)
 }
 
