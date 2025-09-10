@@ -254,7 +254,6 @@ func chainedEncrypt(snCrypt uint64, epochConn uint64, isSender bool, sharedSecre
 		nonceDet[0] = nonceDet[0] | 0x80 // bit set
 	}
 
-	slog.Debug(" ENCRY", getGoroutineID(), slog.Any("nonce", nonceDet), slog.Bool("isSender", isSender))
 	aead, err := chacha20poly1305.New(sharedSecret)
 	if err != nil {
 		return nil, err
@@ -555,7 +554,7 @@ func chainedDecrypt(isSender bool, epochCrypt uint64, sharedSecret []byte, heade
 			nonceDet[0] = nonceDet[0] | 0x80 // bit set
 		}
 
-		slog.Debug(" DECRC", getGoroutineID(), slog.Any("nonce", nonceDet), slog.Bool("isSender", isSender))
+		slog.Debug(" DECRC", gId(), slog.Any("nonce", nonceDet), slog.Bool("isSender", isSender))
 		packetData, err = aead.Open(nil, nonceDet, encData, header)
 		if err == nil {
 			//TODO if we are at epochCrypt + 1 -> make this the new epochCrypt

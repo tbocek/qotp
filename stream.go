@@ -52,7 +52,7 @@ func (s *Stream) Read() (userData []byte, err error) {
 	offset, data := s.conn.rcv.RemoveOldestInOrder(s.streamID)
 	closeOffset := s.conn.rcv.GetOffsetClosedAt(s.streamID)
 	s.conn.updateState(s, closeOffset != nil && *closeOffset == offset)
-	slog.Debug("Read", getGoroutineID(), s.debug(), slog.String("b…", string(data[:min(16, len(data))])))
+	slog.Debug("Read", gId(), s.debug(), slog.String("b…", string(data[:min(16, len(data))])))
 	return data, nil
 }
 
@@ -68,10 +68,10 @@ func (s *Stream) Write(userData []byte) (remainingUserData []byte, err error) {
 		return userData, nil
 	}
 
-	slog.Debug("Write", getGoroutineID(), s.debug(), slog.String("b…", string(userData[:min(16, len(userData))])))
+	slog.Debug("Write", gId(), s.debug(), slog.String("b…", string(userData[:min(16, len(userData))])))
 	n, status := s.conn.snd.QueueData(s.streamID, userData)
 	if status != InsertStatusOk {
-		slog.Debug("Status Nok", getGoroutineID(), s.debug(), slog.Any("status", status))
+		slog.Debug("Status Nok", gId(), s.debug(), slog.Any("status", status))
 	} else {
 		//data is read, so signal to cancel read, since we could do a flush
 		err = s.conn.listener.localConn.TimeoutReadNow()

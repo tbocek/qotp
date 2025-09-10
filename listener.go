@@ -168,7 +168,7 @@ func Listen(listenAddr *net.UDPAddr, options ...ListenFunc) (*Listener, error) {
 }
 
 func (l *Listener) Close() error {
-	slog.Debug("ListenerClose", getGoroutineID())
+	slog.Debug("ListenerClose", gId())
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -206,7 +206,7 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 		return nil, nil
 	}
 
-	slog.Debug("   Listen/Data", getGoroutineID(), l.debug(), slog.Any("len(data)", n), slog.Uint64("now:ms", nowNano/msNano))
+	slog.Debug("   Listen/Data", gId(), l.debug(), slog.Any("len(data)", n), slog.Uint64("now:ms", nowNano/msNano))
 
 	conn, m, err := l.decode(data[:n], remoteAddr)
 	if err != nil {

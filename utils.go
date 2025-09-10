@@ -45,7 +45,7 @@ func setDontFragment(conn *net.UDPConn) error {
 	return nil
 }
 
-func getGoroutineID() slog.Attr {
+func gId() slog.Attr {
 	buf := make([]byte, 64)
 	n := runtime.Stack(buf, false)
 	buf = buf[:n]

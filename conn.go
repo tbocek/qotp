@@ -137,7 +137,7 @@ func (c *Connection) updateState(s *Stream, isClose bool) {
 
 // We need to check if we remove the current state, if yes, then move the state to the previous stream
 func (c *Connection) cleanupStream(streamID uint32) {
-	slog.Debug("Cleanup/Stream", getGoroutineID(), c.debug(), slog.Uint64("streamID", uint64(streamID)))
+	slog.Debug("Cleanup/Stream", gId(), c.debug(), slog.Uint64("streamID", uint64(streamID)))
 
 	if c.listener.currentStreamID != nil && streamID == *c.listener.currentStreamID {
 		*c.listener.currentStreamID, _, _ = c.streams.Next(streamID)
@@ -148,7 +148,7 @@ func (c *Connection) cleanupStream(streamID uint32) {
 }
 
 func (c *Connection) cleanupConn(connID uint64) {
-	slog.Debug("Cleanup/Stream", getGoroutineID(), c.debug(), slog.Uint64("connID", connID))
+	slog.Debug("Cleanup/Stream", gId(), c.debug(), slog.Uint64("connID", connID))
 
 	if c.listener.currentConnID != nil && connID == *c.listener.currentConnID {
 		*c.listener.currentConnID, _, _ = c.listener.connMap.Next(connID)
@@ -163,7 +163,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 	// If close requested, do not send any data, just send ack
 	if s.state == StreamStateCloseReceived {
 		s.state = StreamStateClosed
-		slog.Debug(" Flush/Close", getGoroutineID(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
+		slog.Debug(" Flush/Close", gId(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
 		if ack == nil {
 			return 0, 0, MinDeadLine, nil
 		}
@@ -172,7 +172,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 
 	// Respect pacing
 	if c.nextWriteTime > nowNano {
-		slog.Debug(" Flush/Pacing", getGoroutineID(), s.debug(), c.debug(),
+		slog.Debug(" Flush/Pacing", gId(), s.debug(), c.debug(),
 			slog.Uint64("waitTime:ms", (c.nextWriteTime-nowNano)/msNano),
 			slog.Bool("ack?", ack != nil))
 		if ack == nil {
@@ -182,7 +182,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 	}
 	//Respect rwnd
 	if c.dataInFlight+startMtu > int(c.rcvWndSize) {
-		slog.Debug(" Flush/Rwnd/Rcv", getGoroutineID(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
+		slog.Debug(" Flush/Rwnd/Rcv", gId(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
 		if ack == nil {
 			return 0, 0, MinDeadLine, nil
 		}
@@ -206,7 +206,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 	//otherwise go ahead
 	if m != nil && splitData != nil {
 		c.OnPacketLoss()
-		slog.Debug(" Flush/Retransmit", getGoroutineID(), s.debug(), m.debug(), c.debug())
+		slog.Debug(" Flush/Retransmit", gId(), s.debug(), m.debug(), c.debug())
 
 		encData, err := s.encode(splitData, m.offset, ack, m.msgType)
 		if err != nil {
@@ -233,7 +233,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 	if c.state.isHandshakeDoneOnRcv || (!c.state.isHandshakeDoneOnRcv && !c.state.isInitSentOnSnd) {
 		splitData, m = c.snd.ReadyToSend(s.streamID, overhead, nowNano)
 		if m != nil && splitData != nil {
-			slog.Debug(" Flush/Send", getGoroutineID(), s.debug(), m.debug(), c.debug())
+			slog.Debug(" Flush/Send", gId(), s.debug(), m.debug(), c.debug())
 			encData, err := s.encode(splitData, m.offset, ack, s.msgType())
 			if err != nil {
 				return 0, 0, 0, err
@@ -260,7 +260,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 	if ack == nil {
 		return 0, 0, MinDeadLine, nil
 	}
-	slog.Debug(" Flush/Ack", getGoroutineID(), s.debug(), m.debug(), c.debug())
+	slog.Debug(" Flush/Ack", gId(), s.debug(), m.debug(), c.debug())
 	return c.writeAck(s, ack, nowNano)
 }
 
@@ -287,5 +287,8 @@ func (c *Connection) debug() slog.Attr {
 		//slog.Uint64("nextWrt:ns", c.nextWriteTime),
 		slog.Int("inFlight", c.dataInFlight+startMtu),
 		slog.Int("rcvBuf", c.rcv.capacity-c.rcv.size),
-		slog.Uint64("rcvWnd", c.rcvWndSize))
+		slog.Uint64("rcvWnd", c.rcvWndSize),
+		slog.Uint64("snCrypto", c.snCrypto),
+		slog.Uint64("epochSnd", c.epochCryptoSnd),
+		slog.Uint64("epochRcv", c.epochCryptoRcv))
 }
