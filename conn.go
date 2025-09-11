@@ -10,16 +10,18 @@ import (
 )
 
 type ConnectionKeys struct {
-	pubKeyIdRcv     *ecdh.PublicKey
-	prvKeyEpSnd     *ecdh.PrivateKey
-	pubKeyEpRcv     *ecdh.PublicKey
+	pubKeyIdRcv *ecdh.PublicKey
+	prvKeyEpSnd *ecdh.PrivateKey
+	pubKeyEpRcv *ecdh.PublicKey
 }
 
 type ConnectionState struct {
-	isSenderOnInit       bool
-	isWithCryptoOnInit   bool
-	isHandshakeDoneOnRcv bool
-	isInitSentOnSnd      bool
+	isSenderOnInit         bool
+	isWithCryptoOnInit     bool
+	isHandshakeDoneOnRcv   bool
+	isInitSentOnSnd        bool
+	isDataOnRcv            bool
+	isInitConnIdCleanOnRcv bool
 }
 
 type Connection struct {
@@ -148,7 +150,7 @@ func (c *Connection) cleanupStream(streamID uint32) {
 }
 
 func (c *Connection) cleanupConn(connID uint64) {
-	slog.Debug("Cleanup/Stream", gId(), c.debug(), slog.Uint64("connID", connID))
+	slog.Debug("Cleanup/Stream", gId(), c.debug(), slog.Uint64("connID", connID), slog.Any("currId", c.listener.currentConnID))
 
 	if c.listener.currentConnID != nil && connID == *c.listener.currentConnID {
 		*c.listener.currentConnID, _, _ = c.listener.connMap.Next(connID)

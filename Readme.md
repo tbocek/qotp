@@ -38,7 +38,7 @@ only mentions 9 primary RFCs and 48 extensions and informational RFCs, totalling
   if payload is sent in first message (request and reply). b) perfect forward secrecy with empty first message  
 * [x] Congestion control: BBR (Bottleneck Bandwidth and Round-trip propagation time) estimates network capacity by 
   measuring bottleneck bandwidth and minimum round-trip time
-* [ ] FIN/ACK teardown with timeout (no 3-way teardown as in TCP) - not yet implemented
+* [x] FIN/ACK teardown with timeout
 * [ ] MTU detection - not yet implemented
 * [x] Goal: less than 3k LoC
 
@@ -446,18 +446,18 @@ Source Code LoC
 ===============================================================================
  Language            Files        Lines         Code     Comments       Blanks
 ===============================================================================
- Go                     15         3706         2798          317          591
+ Go                     17         3813         2874          325          614
  Markdown                1          463            0          361          102
 ===============================================================================
- Total                  16         4169         2798          678          693
+ Total                  18         4276         2874          686          716
 ===============================================================================
 Test Code LoC
 ===============================================================================
  Language            Files        Lines         Code     Comments       Blanks
 ===============================================================================
- Go                     13         5831         4102          627         1102
+ Go                     13         5712         4020          608         1084
 ===============================================================================
- Total                  13         5831         4102          627         1102
+ Total                  13         5712         4020          608         1084
 ===============================================================================
 
 ```

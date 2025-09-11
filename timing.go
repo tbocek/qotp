@@ -26,12 +26,14 @@ const (
 
 	lossBwReduction = 95
 
-	maxReasonableRTT = 3600 * secondNano // 1 hour
 	fallbackInterval = 10 * msNano
 	rttDivisor       = 10
-	
+
 	rttInflationHigh     = 150
 	rttInflationModerate = 125
+
+	MinDeadLine uint64 = 100 * msNano
+	ReadDeadLine uint64 = 30 * secondNano // 30 seconds
 )
 
 // Combined measurement state - both RTT and BBR in one struct
@@ -48,6 +50,7 @@ type Measurements struct {
 	bwDec             uint64
 	lastProbeTimeNano uint64 // When we last probed for more bandwidth
 	pacingGainPct     uint64 // Current pacing gain (100 = 1.0x, 277 = 2.77x)
+	lastReadTimeNano  uint64 // Time of last activity
 }
 
 // NewMeasurements creates a new instance with default values
@@ -73,7 +76,7 @@ func (c *Connection) UpdateMeasurements(rttMeasurementNano uint64, bytesAcked ui
 		slog.Error("cannot ack 0 bytes")
 		return
 	}
-	if rttMeasurementNano > maxReasonableRTT {
+	if rttMeasurementNano > ReadDeadLine {
 		slog.Warn("suspiciously high RTT measurement", "rtt_seconds", rttMeasurementNano/secondNano)
 		return
 	}
@@ -151,7 +154,7 @@ func (c *Connection) UpdateMeasurements(rttMeasurementNano uint64, bytesAcked ui
 
 func (c *Connection) rtoNano() uint64 {
 	rto := c.srtt + 4*c.rttvar
-	
+
 	switch {
 	case rto == 0:
 		return defaultRTO

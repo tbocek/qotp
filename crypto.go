@@ -554,7 +554,6 @@ func chainedDecrypt(isSender bool, epochCrypt uint64, sharedSecret []byte, heade
 			nonceDet[0] = nonceDet[0] | 0x80 // bit set
 		}
 
-		slog.Debug(" DECRC", gId(), slog.Any("nonce", nonceDet), slog.Bool("isSender", isSender))
 		packetData, err = aead.Open(nil, nonceDet, encData, header)
 		if err == nil {
 			//TODO if we are at epochCrypt + 1 -> make this the new epochCrypt

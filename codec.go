@@ -12,11 +12,11 @@ func (s *Stream) msgType() MsgType {
 	switch {
 	case !s.conn.state.isHandshakeDoneOnRcv && s.conn.state.isWithCryptoOnInit && s.conn.state.isSenderOnInit:
 		return InitCryptoSnd
-	case !s.conn.state.isHandshakeDoneOnRcv && s.conn.state.isWithCryptoOnInit:
+	case !s.conn.state.isHandshakeDoneOnRcv && s.conn.state.isWithCryptoOnInit && !s.conn.state.isSenderOnInit:
 		return InitCryptoRcv
 	case !s.conn.state.isHandshakeDoneOnRcv && s.conn.state.isSenderOnInit:
 		return InitSnd
-	case !s.conn.state.isHandshakeDoneOnRcv:
+	case !s.conn.state.isHandshakeDoneOnRcv && !s.conn.state.isSenderOnInit:
 		return InitRcv
 	default:
 		return Data
@@ -187,10 +187,10 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 	s.conn.snCrypto++
 	//rollover
 	if s.conn.snCrypto > (1<<48)-1 {
-		if s.conn.epochCryptoSnd+1 > (1<<48)-1 {
+		if s.conn.epochCryptoSnd+1 > (1<<47)-1 { //47, as the last bit is used for sender / receiver differentiation
 			//TODO: quic has key rotation (via bitflip)
-			return nil, errors.New("exhausted 2^96 sn number, cannot continue, you just sent ~10 billion ZettaBytes. "+
-				"Now you need to reconnect manually. This is roughly 57 million times all the data humanity has ever created.")
+			return nil, errors.New("exhausted 2^95 sn number, cannot continue, you just sent ~5 billion ZettaBytes. " +
+				"Now you need to reconnect manually. This is roughly 28 million times all the data humanity has ever created.")
 		}
 		s.conn.epochCryptoSnd++
 		s.conn.snCrypto = 0
@@ -255,7 +255,6 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for InitRcv")
 		}
-		l.connMap.Remove(origConnId) // only sender ep pub key connId no longer needed, we now have a proper connId
 
 		// Decode R0 message
 		pubKeyIdRcv, pubKeyEpRcv, message, err := DecodeInitRcv(
@@ -320,7 +319,6 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for InitWithCryptoR0")
 		}
-		l.connMap.Remove(origConnId) // only sender ep pub key connId no longer needed, we now have a proper connId
 
 		// Decode crypto R0 message
 		pubKeyEpRcv, message, err := DecodeInitCryptoRcv(buffer, conn.keys.prvKeyEpSnd)
@@ -341,16 +339,24 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 			return nil, nil, errors.New("connection not found for DataMessage")
 		}
 
-		//only needs to be done right after the handshake
-		firstConnId := Uint64(conn.keys.pubKeyEpRcv.Bytes())
-		l.connMap.Remove(firstConnId)
+		//only needs to be done right after the handshake, after first data receive
+		if conn.state.isDataOnRcv && ! conn.state.isInitConnIdCleanOnRcv{
+			var firstConnId uint64
+			if conn.state.isSenderOnInit {
+				firstConnId = Uint64(conn.keys.prvKeyEpSnd.PublicKey().Bytes())
+			} else {
+				firstConnId = Uint64(conn.keys.pubKeyEpRcv.Bytes())
+			}
+			l.connMap.Remove(firstConnId)
+			conn.state.isInitConnIdCleanOnRcv = true
+		}
 
 		// Decode Data message
 		message, err := DecodeData(buffer, conn.state.isSenderOnInit, conn.epochCryptoRcv, conn.sharedSecret)
 		if err != nil {
 			return nil, nil, err
 		}
-		
+
 		//we decoded conn.epochCrypto + 1, that means we can safely move forward with the epoch
 		if message.currentEpochCrypt > conn.epochCryptoRcv {
 			conn.epochCryptoRcv = message.currentEpochCrypt

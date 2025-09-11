@@ -3,11 +3,7 @@ package qotp
 import (
 	"crypto/ecdh"
 	"fmt"
-	"net"
-	"sync"
 	"testing"
-	"time"
-
 	"github.com/stretchr/testify/assert"
 )
 
@@ -75,120 +71,5 @@ func TestClose(t *testing.T) {
 	err = listener.Close()
 	if err != nil {
 		t.Errorf("Expected no error, but got: %v", err)
-	}
-}
-
-type ChannelNetworkConn struct {
-	in             chan []byte
-	out            chan *SendBuffer
-	localAddr      net.Addr
-	readDeadline   time.Time
-	messageCounter int        // Tracks number of messages sent
-	cond           *sync.Cond // Used to wait for messages
-	mu             sync.Mutex // Protects messageCounter
-}
-
-// TestAddr struct implements the Addr interface
-type TestAddr struct {
-	network string
-	address string
-}
-
-// Network returns the network type (e.g., "tcp", "udp")
-func (a TestAddr) Network() string {
-	return a.network
-}
-
-// String returns the address in string format
-func (a TestAddr) String() string {
-	return a.address
-}
-
-func (c *ChannelNetworkConn) ReadFromUDP(p []byte) (int, net.Addr, error) {
-	select {
-	case msg := <-c.in:
-		copy(p, msg)
-		return len(msg), TestAddr{
-			network: "remote-of-" + c.localAddr.Network(),
-			address: "remote-of-" + c.localAddr.String(),
-		}, nil
-	default:
-		return 0, TestAddr{
-			network: "remote-of-" + c.localAddr.Network(),
-			address: "remote-of-" + c.localAddr.String(),
-		}, nil
-	}
-}
-
-func (c *ChannelNetworkConn) WriteToUDP(p []byte, addr net.Addr) (int, error) {
-	// Sends the message on the out channel.
-	//c.out <- &SendBuffer{dataToSend: p}
-	return len(p), nil
-}
-
-func (c *ChannelNetworkConn) Close() error {
-	close(c.out)
-	close(c.in)
-	return nil
-}
-
-func (c *ChannelNetworkConn) SetReadDeadline(t time.Time) error {
-	c.readDeadline = t
-	return nil
-}
-
-func (c *ChannelNetworkConn) LocalAddr() net.Addr {
-	return c.localAddr
-}
-
-// NewTestChannel creates two connected ChannelNetworkConn instances.
-func NewTestChannel(localAddr1, localAddr2 net.Addr) (*ChannelNetworkConn, *ChannelNetworkConn) {
-	// Channels to connect read1-write2 and write1-read2
-	in1 := make(chan []byte, 1)
-	out1 := make(chan *SendBuffer, 1)
-	in2 := make(chan []byte, 1)
-	out2 := make(chan *SendBuffer, 1)
-
-	conn1 := &ChannelNetworkConn{
-		localAddr: localAddr1,
-		in:        in1,
-		out:       out2,
-	}
-	conn1.cond = sync.NewCond(&conn1.mu)
-
-	conn2 := &ChannelNetworkConn{
-		localAddr: localAddr2,
-		in:        in2,
-		out:       out1,
-	}
-	conn2.cond = sync.NewCond(&conn2.mu)
-
-	go forwardMessages(conn1, conn2)
-	go forwardMessages(conn2, conn1)
-
-	return conn1, conn2
-}
-
-func forwardMessages(sender, receiver *ChannelNetworkConn) {
-	/*for msg := range isSender.out {
-		select {
-		case receiver.in <- msg.dataToSend:
-			receiver.mu.Lock()
-			receiver.messageCounter++
-			receiver.cond.Broadcast()
-			receiver.mu.Unlock()
-		default:
-			// Handle the case where the receiver's input channel is full
-			// You might want to log this or handle it according to your needs
-		}
-	}*/
-}
-
-func (c *ChannelNetworkConn) WaitRcv(nr int) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	for c.messageCounter < nr {
-		c.cond.Wait() // Wait until the desired number of messages is reached
 	}
 }

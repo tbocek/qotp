@@ -212,6 +212,10 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 	if err != nil {
 		return nil, err
 	}
+	
+	if nowNano > conn.lastReadTimeNano {
+		conn.lastReadTimeNano = nowNano
+	}
 
 	s, err = conn.decode(m.PayloadRaw, n, nowNano)
 	if err != nil {
@@ -228,6 +232,11 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 			if m.MsgType == Data {
 				conn.state.isHandshakeDoneOnRcv = true
 			}
+		}
+	}
+	if !conn.state.isDataOnRcv {
+		if m.MsgType == Data {
+			conn.state.isDataOnRcv = true
 		}
 	}
 
@@ -252,9 +261,9 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 	for conn, stream := range iter {
 		_, dataSent, pacingNano, err := conn.Flush(stream, nowNano)
 		if err != nil {
-			slog.Info("closing connection", conn.debug(), slog.Any("err", err))
+			slog.Info("closing connection, err", conn.debug(), slog.Any("err", err))
 			closeConn = append(closeConn, conn.connId)
-			continue
+			break
 		}
 
 		if stream.state == StreamStateClosed {
@@ -269,6 +278,13 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 			minPacing = 0
 			l.currentConnID = &conn.connId
 			l.currentStreamID = &stream.streamID
+			break
+		}
+		
+		//no data sent, check if we reached the timeout for the activity
+		if conn.lastReadTimeNano != 0 && nowNano > conn.lastReadTimeNano + ReadDeadLine {
+			slog.Info("closing connection, timeout", conn.debug(), slog.Uint64("now", nowNano), slog.Uint64("last", conn.lastReadTimeNano))
+			closeConn = append(closeConn, conn.connId)
 			break
 		}
 

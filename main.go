@@ -15,7 +15,6 @@ const (
 	sndBufferCapacity        = 16 * 1024 * 1024 // 16MB
 	secondNano               = 1_000_000_000
 	msNano                   = 1_000_000
-	MinDeadLine       uint64 = 100 * msNano
 )
 
 var (
