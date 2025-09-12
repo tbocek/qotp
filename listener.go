@@ -212,7 +212,7 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if nowNano > conn.lastReadTimeNano {
 		conn.lastReadTimeNano = nowNano
 	}
@@ -275,9 +275,9 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 			l.currentStreamID = &stream.streamID
 			break
 		}
-		
+
 		//no data sent, check if we reached the timeout for the activity
-		if conn.lastReadTimeNano != 0 && nowNano > conn.lastReadTimeNano + ReadDeadLine {
+		if conn.lastReadTimeNano != 0 && nowNano > conn.lastReadTimeNano+ReadDeadLine {
 			slog.Info("closing connection, timeout", conn.debug(), slog.Uint64("now", nowNano), slog.Uint64("last", conn.lastReadTimeNano))
 			closeConn = append(closeConn, conn.connId)
 			break
@@ -287,12 +287,12 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 			minPacing = pacingNano
 		}
 	}
-	
+
 	for _, closeConnKey := range closeConn {
 		conn := l.connMap.Get(closeConnKey)
 		conn.cleanupConn(closeConnKey)
 	}
-	
+
 	for _, connStreamKey := range closeStream {
 		conn := l.connMap.Get(connStreamKey.connID())
 		conn.cleanupStream(connStreamKey.streamID())
@@ -384,4 +384,21 @@ func (l *Listener) debug() slog.Attr {
 
 func (l *Listener) ForceClose(c *Connection) {
 	c.cleanupConn(c.connId)
+}
+
+type connStreamKey [12]byte
+
+func (csk connStreamKey) connID() uint64 {
+	return Uint64(csk[:8])
+}
+
+func (csk connStreamKey) streamID() uint32 {
+	return Uint32(csk[8:])
+}
+
+func createConnStreamKey(connID uint64, streamID uint32) connStreamKey {
+	csk := connStreamKey{}
+	PutUint64(csk[:8], connID)
+	PutUint32(csk[8:], streamID)
+	return csk
 }

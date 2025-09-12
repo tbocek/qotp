@@ -156,64 +156,54 @@ func TestCodecInitCryptoRcv(t *testing.T) {
 	assert.Equal(t, InitCryptoRcv, msgType)
 }
 
-// Overhead Calculation Tests
+// Overhead Calculation Tests - Updated to use CalcMaxOverhead function
 func TestCodecOverheadInitSndNoData(t *testing.T) {
-	o := &Overhead{
-		ack:        nil,
-		dataOffset: 100,
-		msgType:    InitSnd,
-		currentMtu: 1400,
-	}
-	maxData := o.CalcMaxData()
-	assert.Equal(t, uint16(0), maxData)
+	overhead := CalcMaxOverhead(InitSnd, nil, 100)
+	assert.Equal(t, -1, overhead)
 }
 
 func TestCodecOverheadInitRcvNoAck(t *testing.T) {
-	o := &Overhead{
-		ack:        nil,
-		dataOffset: 100,
-		msgType:    InitRcv,
-		currentMtu: 1400,
-	}
-	maxData := o.CalcMaxData()
-	expected := uint16(1400 - CalcProtoOverhead(false, false) - (MinInitRcvSizeHdr + FooterDataSize))
-	assert.Equal(t, expected, maxData)
+	overhead := CalcMaxOverhead(InitRcv, nil, 100)
+	expected := calcOverhead(false, false) + MinInitRcvSizeHdr + FooterDataSize
+	assert.Equal(t, expected, overhead)
+}
+
+func TestCodecOverheadInitCryptoSnd(t *testing.T) {
+	overhead := CalcMaxOverhead(InitCryptoSnd, nil, 100)
+	expected := calcOverhead(false, false) + MinInitCryptoSndSizeHdr + FooterDataSize + MsgInitFillLenSize
+	assert.Equal(t, expected, overhead)
+}
+
+func TestCodecOverheadInitCryptoRcv(t *testing.T) {
+	overhead := CalcMaxOverhead(InitCryptoRcv, nil, 100)
+	expected := calcOverhead(false, false) + MinInitCryptoRcvSizeHdr + FooterDataSize
+	assert.Equal(t, expected, overhead)
 }
 
 func TestCodecOverheadDataLargeAckOffset(t *testing.T) {
-	o := &Overhead{
-		ack:        &Ack{offset: 0xFFFFFF + 1},
-		dataOffset: 100,
-		msgType:    Data,
-		currentMtu: 1400,
-	}
-	maxData := o.CalcMaxData()
-	expected := uint16(1400 - CalcProtoOverhead(true, true) - (MinDataSizeHdr + FooterDataSize))
-	assert.Equal(t, expected, maxData)
+	ack := &Ack{offset: 0xFFFFFF + 1}
+	overhead := CalcMaxOverhead(Data, ack, 100)
+	expected := calcOverhead(true, true) + MinDataSizeHdr + FooterDataSize
+	assert.Equal(t, expected, overhead)
 }
 
 func TestCodecOverheadDataLargeDataOffset(t *testing.T) {
-	o := &Overhead{
-		ack:        nil,
-		dataOffset: 0xFFFFFF + 1,
-		msgType:    Data,
-		currentMtu: 1400,
-	}
-	maxData := o.CalcMaxData()
-	expected := uint16(1400 - CalcProtoOverhead(false, true) - (MinDataSizeHdr + FooterDataSize))
-	assert.Equal(t, expected, maxData)
+	overhead := CalcMaxOverhead(Data, nil, 0xFFFFFF+1)
+	expected := calcOverhead(false, true) + MinDataSizeHdr + FooterDataSize
+	assert.Equal(t, expected, overhead)
 }
 
 func TestCodecOverheadDataSmallOffsets(t *testing.T) {
-	o := &Overhead{
-		ack:        &Ack{offset: 1000},
-		dataOffset: 2000,
-		msgType:    Data,
-		currentMtu: 1400,
-	}
-	maxData := o.CalcMaxData()
-	expected := uint16(1400 - CalcProtoOverhead(true, false) - (MinDataSizeHdr + FooterDataSize))
-	assert.Equal(t, expected, maxData)
+	ack := &Ack{offset: 1000}
+	overhead := CalcMaxOverhead(Data, ack, 2000)
+	expected := calcOverhead(true, false) + MinDataSizeHdr + FooterDataSize
+	assert.Equal(t, expected, overhead)
+}
+
+func TestCodecOverheadDataNoAck(t *testing.T) {
+	overhead := CalcMaxOverhead(Data, nil, 2000)
+	expected := calcOverhead(false, false) + MinDataSizeHdr + FooterDataSize
+	assert.Equal(t, expected, overhead)
 }
 
 // Data Size Tests

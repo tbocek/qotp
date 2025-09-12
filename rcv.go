@@ -20,11 +20,6 @@ type RcvBuffer struct {
 	closeAtOffset              *uint64
 }
 
-type RcvBufferAck struct {
-	segments                   *SortedMap[uint64, *Ack]
-	nextInOrderOffsetToWaitFor uint64 // Next expected offset
-}
-
 type ReceiveBuffer struct {
 	streams    map[uint32]*RcvBuffer
 	lastStream uint32

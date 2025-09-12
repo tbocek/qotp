@@ -2,10 +2,12 @@ package qotp
 
 import (
 	"crypto/ecdh"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"strings"
 )
 
 func (s *Stream) msgType() MsgType {
@@ -23,62 +25,26 @@ func (s *Stream) msgType() MsgType {
 	}
 }
 
-type Overhead struct {
-	// Variables needed to calc the overhead
-	ack        *Ack
-	dataOffset uint64
-	msgType    MsgType
-	currentMtu uint16
-	debug      uint16
-}
-
-func (o *Overhead) CalcOverhead() (needsExtend bool, overhead int) {
-	hasAck := o.ack != nil
-	needsExtend = (hasAck && o.ack.offset > 0xFFFFFF) || o.dataOffset > 0xFFFFFF
-	overhead = CalcProtoOverhead(hasAck, needsExtend)
-	return needsExtend, overhead
-}
-
-func CalcProtoOverhead(ack bool, needsExtension bool) int {
-	overhead := 1 //header Size
-	if ack {
-		if !needsExtension {
-			overhead += 4 + 3 + 2 // StreamId, StreamOffset (24-bit), Len
-		} else {
-			overhead += 4 + 6 + 2 // StreamId, StreamOffset (48-bit), Len
-		}
-	}
-	if !needsExtension {
-		overhead += 4 + 3 // StreamId, StreamOffset (24-bit)
-	} else {
-		overhead += 4 + 6 // StreamId, StreamOffset (48-bit)
-	}
-
-	// now comes the data... -> but not calculated in overhead
-	return overhead
-}
-
-func (o *Overhead) CalcMaxData() (overhead uint16) {
-	if o.debug > 0 {
-		return o.debug
-	}
-
-	_, tmpOverhead := o.CalcOverhead()
-
-	switch o.msgType {
+func CalcMaxOverhead(msgType MsgType, ack *Ack, offset uint64) (overhead int) {
+	hasAck := ack != nil
+	needsExtension := (hasAck && ack.offset > 0xFFFFFF) || offset > 0xFFFFFF
+	
+	overhead = calcOverhead(hasAck, needsExtension)
+	
+	switch msgType {
 	case InitSnd:
-		return 0 //we cannot send data, this is unencrypted
+		return -1 //we cannot send data, this is unencrypted
 	case InitRcv:
-		tmpOverhead += MinInitRcvSizeHdr + FooterDataSize
+		overhead += MinInitRcvSizeHdr + FooterDataSize
 	case InitCryptoSnd:
-		tmpOverhead += MinInitCryptoSndSizeHdr + FooterDataSize + MsgInitFillLenSize
+		overhead += MinInitCryptoSndSizeHdr + FooterDataSize + MsgInitFillLenSize
 	case InitCryptoRcv:
-		tmpOverhead += MinInitCryptoRcvSizeHdr + FooterDataSize
+		overhead += MinInitCryptoRcvSizeHdr + FooterDataSize
 	case Data:
-		tmpOverhead += MinDataSizeHdr + FooterDataSize
+		overhead += MinDataSizeHdr + FooterDataSize
 	}
 
-	return o.currentMtu - uint16(tmpOverhead)
+	return overhead
 }
 
 func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgType) (encData []byte, err error) {
@@ -312,6 +278,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		connId := Uint64(buffer[HeaderSize : HeaderSize+ConnIdSize])
 		conn := l.connMap.Get(connId)
 		if conn == nil {
+			slog.Debug("Looking for connection", slog.Uint64("connId", connId), slog.Int("available", l.connMap.Size()))
 			return nil, nil, errors.New("connection not found for DataMessage")
 		}
 
@@ -331,4 +298,78 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 	default:
 		return nil, nil, fmt.Errorf("unknown message type: %v", msgType)
 	}
+}
+
+func decodeHex(pubKeyHex string) ([]byte, error) {
+	if strings.HasPrefix(pubKeyHex, "0x") {
+		pubKeyHex = strings.Replace(pubKeyHex, "0x", "", 1)
+	}
+
+	return hex.DecodeString(pubKeyHex)
+}
+
+//////////////////////////////////////////// 
+func PutUint16(b []byte, v uint16) int {
+	b[0] = byte(v)
+	b[1] = byte(v >> 8)
+	return 2
+}
+
+func PutUint24(b []byte, v uint64) int {
+	b[0] = byte(v)
+	b[1] = byte(v >> 8)
+	b[2] = byte(v >> 16)
+	return 3
+}
+
+func PutUint32(b []byte, v uint32) int {
+	b[0] = byte(v)
+	b[1] = byte(v >> 8)
+	b[2] = byte(v >> 16)
+	b[3] = byte(v >> 24)
+	return 4
+}
+
+func PutUint48(b []byte, v uint64) int {
+	b[0] = byte(v)
+	b[1] = byte(v >> 8)
+	b[2] = byte(v >> 16)
+	b[3] = byte(v >> 24)
+	b[4] = byte(v >> 32)
+	b[5] = byte(v >> 40)
+	return 6
+}
+
+func PutUint64(b []byte, v uint64) int {
+	b[0] = byte(v)
+	b[1] = byte(v >> 8)
+	b[2] = byte(v >> 16)
+	b[3] = byte(v >> 24)
+	b[4] = byte(v >> 32)
+	b[5] = byte(v >> 40)
+	b[6] = byte(v >> 48)
+	b[7] = byte(v >> 56)
+	return 8
+}
+
+func Uint16(b []byte) uint16 {
+	return uint16(b[0]) | uint16(b[1])<<8
+}
+
+func Uint24(b []byte) uint64 {
+	return uint64(b[0]) | uint64(b[1])<<8 | uint64(b[2])<<16
+}
+
+func Uint32(b []byte) uint32 {
+	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
+}
+
+func Uint48(b []byte) uint64 {
+	return uint64(b[0]) | uint64(b[1])<<8 | uint64(b[2])<<16 |
+		uint64(b[3])<<24 | uint64(b[4])<<32 | uint64(b[5])<<40
+}
+
+func Uint64(b []byte) uint64 {
+	return uint64(b[0]) | uint64(b[1])<<8 | uint64(b[2])<<16 | uint64(b[3])<<24 |
+		uint64(b[4])<<32 | uint64(b[5])<<40 | uint64(b[6])<<48 | uint64(b[7])<<56
 }

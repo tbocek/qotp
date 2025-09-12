@@ -2,6 +2,7 @@ package qotp
 
 import (
 	"crypto/ecdh"
+	"crypto/rand"
 	"errors"
 	"log/slog"
 
@@ -48,7 +49,6 @@ type Message struct {
 	SnConn            uint64
 	currentEpochCrypt uint64
 	PayloadRaw        []byte
-	//SharedSecret      []byte
 }
 
 // ************************************* Encoder *************************************
@@ -565,4 +565,25 @@ func openNoVerify(sharedSecret []byte, nonce []byte, encoded []byte, snSer []byt
 	s.XORKeyStream(snSer, encoded)
 
 	return snSer, nil
+}
+
+func decodeHexPubKey(pubKeyHex string) (pubKey *ecdh.PublicKey, err error) {
+	b, err := decodeHex(pubKeyHex)
+	if err != nil {
+		return nil, err
+	}
+
+	pubKey, err = ecdh.X25519().NewPublicKey(b)
+	if err != nil {
+		return nil, err
+	}
+	return pubKey, nil
+}
+
+func generateKey() (*ecdh.PrivateKey, error) {
+	prvKey1, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	return prvKey1, nil
 }

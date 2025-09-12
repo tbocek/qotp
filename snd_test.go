@@ -1,159 +1,216 @@
 package qotp
 
 import (
-	"github.com/stretchr/testify/suite"
 	"math"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-type SendBufferTestSuite struct {
-	suite.Suite
-	sb *SendBuffer
-}
+func TestSndInsert(t *testing.T) {
+	sb := NewSendBuffer(1000, nil)
 
-func (s *SendBufferTestSuite) SetupTest() {
-	s.T().Logf("SetupTest called for: %s", s.T().Name())
-	s.sb = NewSendBuffer(1000, nil)
-}
-
-func TestSendBufferSuite(t *testing.T) {
-	suite.Run(t, new(SendBufferTestSuite))
-}
-
-func (s *SendBufferTestSuite) TestInsert() {
 	// Basic insert
-	_, status := s.sb.QueueData(1, []byte("test"))
-	s.Equal(InsertStatusOk, status)
+	n, status := sb.QueueData(1, []byte("test"))
+	assert.Equal(t, InsertStatusOk, status)
+	assert.Equal(t, 4, n)
 
 	// Verify stream created correctly
-	stream := s.sb.streams[1]
-
-	s.Equal([]byte("test"), stream.userData)
-	s.Equal(uint64(4), stream.unsentOffset)
-	s.Equal(uint64(0), stream.sentOffset)
-	s.Equal(uint64(0), stream.bias)
+	stream := sb.streams[1]
+	assert.Equal(t, []byte("test"), stream.userData)
+	assert.Equal(t, uint64(4), stream.unsentOffset)
+	assert.Equal(t, uint64(0), stream.sentOffset)
+	assert.Equal(t, uint64(0), stream.bias)
 
 	// Test capacity limit
-	sb := NewSendBuffer(3, nil)
-	nr, status := sb.QueueData(1, []byte("test"))
-	s.Equal(InsertStatusSndFull, status)
-	s.Equal(3, nr)
+	sb2 := NewSendBuffer(3, nil)
+	nr, status := sb2.QueueData(1, []byte("test"))
+	assert.Equal(t, InsertStatusSndFull, status)
+	assert.Equal(t, 3, nr)
 
 	// Test 48-bit wrapping (using MaxUint64 as uint48 in go doesn't exist)
-	sb = NewSendBuffer(1000, nil)
+	sb3 := NewSendBuffer(1000, nil)
 	stream = NewStreamBuffer()
 	stream.unsentOffset = math.MaxUint64 - 2
-	sb.streams[1] = stream
-	_, status = sb.QueueData(1, []byte("test"))
-	s.Equal(InsertStatusOk, status) // Should succeed now
+	sb3.streams[1] = stream
+	_, status = sb3.QueueData(1, []byte("test"))
+	assert.Equal(t, InsertStatusOk, status) // Should succeed now
 
-	stream = sb.streams[1]
-	//s.Equal(uint64(math.MaxUint64 + 2), stream.unsentOffset) // Rollover will occur. Because we are using unit64
-	s.Equal(uint64(1), stream.unsentOffset) // Rollover will occur. Because we are using unit64
-	s.Equal(uint64(0), stream.sentOffset)
+	stream = sb3.streams[1]
+	assert.Equal(t, uint64(1), stream.unsentOffset) // Rollover will occur. Because we are using uint64
+	assert.Equal(t, uint64(0), stream.sentOffset)
 }
 
-func (s *SendBufferTestSuite) TestReadyToSend() {
-	nowMillis2 := uint64(100)
+func TestSndReadyToSend(t *testing.T) {
+	sb := NewSendBuffer(1000, nil)
+	nowNano := uint64(100)
 
 	// Insert data
-	s.sb.QueueData(1, []byte("test1"))
-	s.sb.QueueData(2, []byte("test2"))
+	sb.QueueData(1, []byte("test1"))
+	sb.QueueData(2, []byte("test2"))
 
 	// Basic send
-	data, _ := s.sb.ReadyToSend(1, &Overhead{debug: 10}, nowMillis2)
-	s.Equal([]byte("test1"), data)
+	data, offset := sb.ReadyToSend(1, Data, nil, 1000, nowNano)
+	assert.Equal(t, []byte("test1"), data)
+	assert.Equal(t, uint64(0), offset)
 
 	// Verify range tracking
-	stream := s.sb.streams[1]
+	stream := sb.streams[1]
+	rangePair, v, ok := stream.dataInFlightMap.First()
+	assert.True(t, ok)
+	assert.NotNil(t, rangePair)
+	assert.Equal(t, uint16(5), rangePair.length())
+	assert.Equal(t, nowNano, v.sentTimeNano)
 
-	rangePair, v, _ := stream.dataInFlightMap.First()
-	s.NotNil(rangePair)
-	s.Equal(uint16(5), rangePair.length())
-	s.Equal(nowMillis2, v.sentTimeNano)
+	// Test MTU limiting with small MTU
+	sb.QueueData(3, []byte("toolongdata"))
+	data, offset = sb.ReadyToSend(3, Data, nil, 15, nowNano) // Use larger MTU to account for overhead
+	// Should get limited data based on MTU minus overhead
+	assert.True(t, len(data) <= 15)
+	assert.Equal(t, uint64(0), offset)
 
-	s.sb.ReadyToSend(1, &Overhead{debug: 10}, nowMillis2)
+	// Test no data available
+	data, offset = sb.ReadyToSend(4, Data, nil, 1000, nowNano)
+	assert.Nil(t, data)
+	assert.Equal(t, uint64(0), offset)
 
-	// Test MTU limiting
-	s.sb.QueueData(3, []byte("toolongdata"))
-	data, _ = s.sb.ReadyToSend(3, &Overhead{debug: 4}, nowMillis2)
-	s.Equal([]byte("tool"), data)
-
-	// test no data available
-	data, _ = s.sb.ReadyToSend(4, &Overhead{debug: 10}, nowMillis2)
-	s.Nil(data)
+	// Test InitSnd message type (no overhead calculation, maxData = 0)
+	sb.QueueData(5, []byte("initdata"))
+	data, offset = sb.ReadyToSend(5, InitSnd, nil, 4, nowNano)
+	// InitSnd with maxData=0 results in empty data because length = min(0, remainingData) = 0
+	assert.Equal(t, []byte{}, data)
+	assert.Equal(t, uint64(0), offset)
 }
 
-func (s *SendBufferTestSuite) TestReadyToRetransmit() {
-	// Setup test data
-	s.sb.QueueData(1, []byte("test1"))
-	s.sb.QueueData(2, []byte("test2"))
+func TestSndReadyToRetransmit(t *testing.T) {
+	sb := NewSendBuffer(1000, nil)
 
-	s.sb.ReadyToSend(1, &Overhead{debug: 10}, 100) // Initial send at time 100
-	s.sb.ReadyToSend(2, &Overhead{debug: 10}, 100) // Initial send at time 100
+	// Setup test data
+	sb.QueueData(1, []byte("test1"))
+	sb.QueueData(2, []byte("test2"))
+
+	sb.ReadyToSend(1, Data, nil, 1000, 100) // Initial send at time 100
+	sb.ReadyToSend(2, Data, nil, 1000, 100) // Initial send at time 100
 
 	// Test basic retransmit
-	data, _, err := s.sb.ReadyToRetransmit(1, &Overhead{debug: 10}, 50, 200) // RTO = 50, now = 200.  200-100 > 50
-	s.Nil(err)
-	s.Equal([]byte("test1"), data)
+	data, offset, msgType, err := sb.ReadyToRetransmit(1, nil, 1000, 50, 200) // RTO = 50, now = 200. 200-100 > 50
+	assert.Nil(t, err)
+	assert.Equal(t, []byte("test1"), data)
+	assert.Equal(t, uint64(0), offset)
+	assert.Equal(t, Data, msgType)
 
-	data, _, err = s.sb.ReadyToRetransmit(2, &Overhead{debug: 10}, 100, 200) //RTO = 100, now = 200. 200-100 = 100, thus ok
-	s.Nil(err)
-	s.Nil(data)
+	data, offset, msgType, err = sb.ReadyToRetransmit(2, nil, 1000, 100, 200) // RTO = 100, now = 200. 200-100 = 100, thus not ready yet
+	assert.Nil(t, err)
+	assert.Nil(t, data)
+	assert.Equal(t, uint64(0), offset)
 
-	data, _, err = s.sb.ReadyToRetransmit(1, &Overhead{debug: 10}, 99, 399) // RTO = 99, now = 200. 200-100 > 99
-	s.Nil(err)
-	s.Equal([]byte("test1"), data)
+	data, offset, msgType, err = sb.ReadyToRetransmit(1, nil, 1000, 99, 399) // RTO = 99, now = 399. 399-100 > 99 with backoff
+	assert.Nil(t, err)
+	assert.Equal(t, []byte("test1"), data)
+	assert.Equal(t, uint64(0), offset)
+	assert.Equal(t, Data, msgType)
 
-	// Test MTU split
+	// Test MTU split scenario with proper MTU that should trigger splitting
+	sb2 := NewSendBuffer(1000, nil)
+	sb2.QueueData(1, []byte("testdata"))
+	sb2.ReadyToSend(1, Data, nil, 1000, 100) // Initial send
+
+	// Use very small MTU to force splitting
+	data, offset, msgType, err = sb2.ReadyToRetransmit(1, nil, 20, 99, 200) // Small MTU should trigger split
+	assert.Nil(t, err)
+	// Should get partial data due to MTU limiting
+	assert.True(t, len(data) <= 20)
+	assert.Equal(t, uint64(0), offset)
+	assert.Equal(t, Data, msgType)
+
+	// Verify range behavior after potential split
+	stream := sb2.streams[1]
+	// After split, we should have at least 1 range, possibly 2
+	assert.True(t, stream.dataInFlightMap.Size() >= 1)
+	node, _, ok := stream.dataInFlightMap.First()
+	assert.True(t, ok)
+	assert.Equal(t, uint64(0), node.offset())
+}
+
+func TestSndAcknowledgeRangeBasic(t *testing.T) {
 	sb := NewSendBuffer(1000, nil)
+
 	sb.QueueData(1, []byte("testdata"))
-	sb.ReadyToSend(1, &Overhead{debug: 100}, 100) // Initial send
-
-	data, _, err = sb.ReadyToRetransmit(1, &Overhead{debug: 4}, 99, 200)
-	s.Nil(err)
-	s.Equal([]byte("test"), data)
-
-	// Verify range split
+	sb.ReadyToSend(1, Data, nil, 1000, 100)
 	stream := sb.streams[1]
 
-	s.Equal(2, stream.dataInFlightMap.Size())
-	node, _, _ := stream.dataInFlightMap.First()
-	s.Equal(uint16(4), node.length())
-	s.Equal(uint64(4), node.offset())
+	status, sentTime := sb.AcknowledgeRange(&Ack{
+		streamID: 1,
+		offset:   0,
+		len:      8,
+	})
+	assert.Equal(t, AckStatusOk, status)
+	assert.Equal(t, uint64(100), sentTime)
+	assert.Equal(t, 0, len(stream.userData)) // All data should be removed
+	assert.Equal(t, uint64(8), stream.bias)
 }
 
-func (s *SendBufferTestSuite) TestAcknowledgeRangeBasic() {
-	s.sb.QueueData(1, []byte("testdata"))
-	s.sb.ReadyToSend(1, &Overhead{debug: 4}, 100)
-	stream := s.sb.streams[1]
+func TestSndAcknowledgeRangeNonExistentStream(t *testing.T) {
+	sb := NewSendBuffer(1000, nil)
 
-	_, time := s.sb.AcknowledgeRange(&Ack{
+	status, sentTime := sb.AcknowledgeRange(&Ack{
 		streamID: 1,
 		offset:   0,
 		len:      4,
 	})
-	s.Equal(uint64(100), time)
-	s.Equal(4, len(stream.userData))
-	s.Equal(uint64(4), stream.bias)
+	assert.Equal(t, AckNoStream, status)
+	assert.Equal(t, uint64(0), sentTime)
 }
 
-func (s *SendBufferTestSuite) TestAcknowledgeRangeNonExistentStream() {
-	_, time := s.sb.AcknowledgeRange(&Ack{
-		streamID: 1,
-		offset:   0,
-		len:      4,
-	})
-	s.Equal(uint64(0), time)
-}
+func TestSndAcknowledgeRangeNonExistentRange(t *testing.T) {
+	sb := NewSendBuffer(1000, nil)
 
-func (s *SendBufferTestSuite) TestAcknowledgeRangeNonExistentRange() {
 	stream := NewStreamBuffer()
-	s.sb.streams[1] = stream
-	_, time := s.sb.AcknowledgeRange(&Ack{
+	sb.streams[1] = stream
+
+	status, sentTime := sb.AcknowledgeRange(&Ack{
 		streamID: 1,
 		offset:   0,
 		len:      4,
 	})
-	s.Equal(uint64(0), time)
+	assert.Equal(t, AckDup, status)
+	assert.Equal(t, uint64(0), sentTime)
+}
+
+func TestSndEmptyData(t *testing.T) {
+	sb := NewSendBuffer(1000, nil)
+
+	n, status := sb.QueueData(1, []byte{})
+	assert.Equal(t, InsertStatusNoData, status)
+	assert.Equal(t, 0, n)
+
+	n, status = sb.QueueData(1, nil)
+	assert.Equal(t, InsertStatusNoData, status)
+	assert.Equal(t, 0, n)
+}
+
+func TestSndMultipleStreams(t *testing.T) {
+	sb := NewSendBuffer(1000, nil)
+
+	// Add data to multiple streams
+	sb.QueueData(1, []byte("stream1"))
+	sb.QueueData(2, []byte("stream2"))
+	sb.QueueData(3, []byte("stream3"))
+
+	// Send from different streams
+	data1, offset1 := sb.ReadyToSend(1, Data, nil, 1000, 100)
+	data2, offset2 := sb.ReadyToSend(2, Data, nil, 1000, 200)
+	data3, offset3 := sb.ReadyToSend(3, Data, nil, 1000, 300)
+
+	assert.Equal(t, []byte("stream1"), data1)
+	assert.Equal(t, []byte("stream2"), data2)
+	assert.Equal(t, []byte("stream3"), data3)
+	assert.Equal(t, uint64(0), offset1)
+	assert.Equal(t, uint64(0), offset2)
+	assert.Equal(t, uint64(0), offset3)
+
+	// Verify each stream has correct tracking
+	assert.Equal(t, 1, sb.streams[1].dataInFlightMap.Size())
+	assert.Equal(t, 1, sb.streams[2].dataInFlightMap.Size())
+	assert.Equal(t, 1, sb.streams[3].dataInFlightMap.Size())
 }

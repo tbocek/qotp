@@ -137,7 +137,7 @@ func EncodePayload(p *PayloadHeader, userData []byte) (encoded []byte, offset in
 
 	// Allocate buffer
 	userDataLen := len(userData)
-	overhead := overhead(p.Ack != nil, isExtend)
+	overhead := calcOverhead(p.Ack != nil, isExtend)
 	encoded = make([]byte, overhead+userDataLen)
 
 	// Write header
@@ -198,7 +198,7 @@ func DecodePayload(data []byte) (payload *PayloadHeader, userData []byte, err er
 	offset++ //we processed the header
 	
 	//now we know the correct header size, check again
-	overhead := overhead(isAck, isExtend)
+	overhead := calcOverhead(isAck, isExtend)
 	if dataLen < overhead {
 		return nil, nil, errors.New("payload Size below minimum")
 	}
@@ -242,8 +242,8 @@ func DecodePayload(data []byte) (payload *PayloadHeader, userData []byte, err er
 	return payload, userData, nil
 }
 
-func overhead(isAck, isExtend bool) int {
-	overhead := 1 + 4 + 3 //header + 32bit + 24bit
+func calcOverhead(isAck, isExtend bool) (overhead int) {
+	overhead = 1 + 4 + 3 //header + 32bit + 24bit
 	if isExtend {
 		overhead += 3 //in total 6 bytes for 48bit, we already counted 24bit, so just add 3
 	}

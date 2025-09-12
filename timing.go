@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"time"
 )
 
 const (
@@ -32,7 +33,7 @@ const (
 	rttInflationHigh     = 150
 	rttInflationModerate = 125
 
-	MinDeadLine uint64 = 100 * msNano
+	MinDeadLine  uint64 = 100 * msNano
 	ReadDeadLine uint64 = 30 * secondNano // 30 seconds
 )
 
@@ -227,4 +228,29 @@ func backoff(rtoNano uint64, rtoNr int) (uint64, error) {
 	}
 
 	return rtoNano, nil
+}
+
+// ******************* Time **********************
+
+var specificNano uint64 = math.MaxUint64
+
+func setTime(nowNano uint64) {
+	if nowNano <= specificNano {
+		slog.Warn("Time/Warp/Fail",
+			slog.Uint64("before:ms", specificNano/msNano),
+			slog.Uint64("after:ms", nowNano/msNano))
+		return
+	}
+	slog.Debug("Time/Warp/Manual",
+		slog.Uint64("+:ms", (nowNano-specificNano)/msNano),
+		slog.Uint64("before:ms", specificNano/msNano),
+		slog.Uint64("after:ms", nowNano/msNano))
+	specificNano = nowNano
+}
+
+func timeNowNano() uint64 {
+	if specificNano == math.MaxUint64 {
+		return uint64(time.Now().UnixNano())
+	}
+	return specificNano
 }

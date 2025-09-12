@@ -119,6 +119,7 @@ func (p *PairedConn) ReadFromUDPAddrPort(buf []byte, timeoutNano uint64, nowNano
 	// Check if there's data in the queue
 
 	if len(p.readQueue) == 0 {
+		specificNano += timeoutNano
 		return 0, netip.AddrPort{}, nil
 	}
 	

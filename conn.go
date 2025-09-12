@@ -189,26 +189,19 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 		return c.writeAck(s, ack, nowNano)
 	}
 
-	overhead := &Overhead{
-		msgType:    s.msgType(),
-		ack:        ack,
-		dataOffset: 0,
-		currentMtu: startMtu,
-	}
-
 	// Retransmission case
-	splitData, m, err := c.snd.ReadyToRetransmit(s.streamID, overhead, c.rtoNano(), nowNano)
+	splitData, offset, msgType, err := c.snd.ReadyToRetransmit(s.streamID, ack, startMtu, c.rtoNano(), nowNano)
 	if err != nil {
 		return 0, 0, 0, err
 	}
 
 	//during handshake, if we have something to retransmit, it will always be the first packet
 	//otherwise go ahead
-	if m != nil && splitData != nil {
+	if splitData != nil {
 		c.OnPacketLoss()
-		slog.Debug(" Flush/Retransmit", gId(), s.debug(), m.debug(), c.debug())
+		slog.Debug(" Flush/Retransmit", gId(), s.debug(), c.debug())
 
-		encData, err := s.encode(splitData, m.offset, ack, m.msgType)
+		encData, err := s.encode(splitData, offset, ack, msgType)
 		if err != nil {
 			return 0, 0, 0, err
 		}
@@ -231,16 +224,14 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 
 	//next check if we can send packets, during handshake we can only send 1 packet
 	if c.state.isHandshakeDoneOnRcv || (!c.state.isHandshakeDoneOnRcv && !c.state.isInitSentOnSnd) {
-		splitData, m = c.snd.ReadyToSend(s.streamID, overhead, nowNano)
-		if m != nil && splitData != nil {
-			slog.Debug(" Flush/Send", gId(), s.debug(), m.debug(), c.debug())
-			encData, err := s.encode(splitData, m.offset, ack, s.msgType())
+		splitData, offset := c.snd.ReadyToSend(s.streamID, s.msgType(), ack, startMtu, nowNano)
+		if splitData != nil {
+			slog.Debug(" Flush/Send", gId(), s.debug(), c.debug())
+			encData, err := s.encode(splitData, offset, ack, s.msgType())
 			if err != nil {
 				return 0, 0, 0, err
 			}
 
-			//TODO: this is important to set the type, but make this more explicit
-			m.msgType = s.msgType()
 			raw, err := c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowNano)
 			if err != nil {
 				return 0, 0, 0, err
@@ -260,7 +251,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 	if ack == nil {
 		return 0, 0, MinDeadLine, nil
 	}
-	slog.Debug(" Flush/Ack", gId(), s.debug(), m.debug(), c.debug())
+	slog.Debug(" Flush/Ack", gId(), s.debug(), c.debug())
 	return c.writeAck(s, ack, nowNano)
 }
 

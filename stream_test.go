@@ -1,6 +1,7 @@
 package qotp
 
 import (
+	"log/slog"
 	"net/netip"
 	"sync"
 	"testing"
@@ -8,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func setupTest(t *testing.T) (connA *Connection, listenerB *Listener, connPair *ConnPair) {
+func setupStreamTest(t *testing.T) (connA *Connection, listenerB *Listener, connPair *ConnPair) {
     // Setup code   
     connPair = NewConnPair("alice", "bob")
    	listenerA, err := Listen(nil, WithNetworkConn(connPair.Conn1), WithPrvKeyId(testPrvKey1))
@@ -30,8 +31,8 @@ func setupTest(t *testing.T) (connA *Connection, listenerB *Listener, connPair *
     return connA, listenerB, connPair
 }
 
-func TestOneStream(t *testing.T) {
-	connA, listenerB, connPair := setupTest(t)
+func TestStreamBasicSendReceive(t *testing.T) {
+	connA, listenerB, connPair := setupStreamTest(t)
 
 	// Send data from A to B
 	a := []byte("hallo")
@@ -56,8 +57,8 @@ func TestOneStream(t *testing.T) {
 	assert.Equal(t, a, b)
 }
 
-func TestTwoStream(t *testing.T) {
-	connA, listenerB, connPair := setupTest(t)
+func TestStreamMultipleStreams(t *testing.T) {
+	connA, listenerB, connPair := setupStreamTest(t)
 
 	// Send data from A to B
 	a1 := []byte("hallo1")
@@ -114,8 +115,8 @@ func TestTwoStream(t *testing.T) {
 	assert.Equal(t, a2, b2)
 }
 
-func TestTwoStreamFirstMessageTimeout(t *testing.T) {
-	connA, listenerB, connPair := setupTest(t)
+func TestStreamMultipleStreamsWithTimeout(t *testing.T) {
+	connA, listenerB, connPair := setupStreamTest(t)
 
 	// Send data from A to B
 	a1 := []byte("hallo1")
@@ -168,8 +169,8 @@ func TestTwoStreamFirstMessageTimeout(t *testing.T) {
 	assert.Equal(t, a2, b2)
 }
 
-func TestRTO(t *testing.T) {
-	connA, listenerB, connPair := setupTest(t)
+func TestStreamRetransmission(t *testing.T) {
+	connA, listenerB, connPair := setupStreamTest(t)
 
 	a1 := []byte("hallo1")
 	streamA1 := connA.Stream(0)
@@ -190,8 +191,8 @@ func TestRTO(t *testing.T) {
 	assert.True(t, streamB.state == StreamStateOpen)
 }
 
-func TestRTOTimes4Success(t *testing.T) {
-	connA, listenerB, connPair := setupTest(t)
+func TestStreamRetransmissionBackoff(t *testing.T) {
+	connA, listenerB, connPair := setupStreamTest(t)
 	
 	a1 := []byte("hallo1")
 	streamA1 := connA.Stream(0)
@@ -226,8 +227,8 @@ func TestRTOTimes4Success(t *testing.T) {
 	assert.True(t, streamB.state == StreamStateOpen)
 }
 
-func TestRTOTimes4Fail(t *testing.T) {
-	connA, _, connPair := setupTest(t)
+func TestStreamMaxRetransmissions(t *testing.T) {
+	connA, _, connPair := setupStreamTest(t)
 
 	a1 := []byte("hallo1")
 	streamA1 := connA.Stream(0)
@@ -268,8 +269,8 @@ func TestRTOTimes4Fail(t *testing.T) {
 	assert.True(t, minPacing > 0 || connA.listener.connMap.Size() == 0)
 }
 
-func TestCloseAWithInit(t *testing.T) {
-	connA, listenerB, connPair := setupTest(t)
+func TestStreamCloseInitiatedBySender(t *testing.T) {
+	connA, listenerB, connPair := setupStreamTest(t)
 	
 	streamA := connA.Stream(0)
 	a1 := []byte("hallo1")
@@ -314,8 +315,8 @@ func TestCloseAWithInit(t *testing.T) {
 	assert.True(t, streamA.state == StreamStateClosed)
 }
 
-func TestCloseBWithInit(t *testing.T) {
-	connA, listenerB, connPair := setupTest(t)
+func TestStreamCloseInitiatedByReceiver(t *testing.T) {
+	connA, listenerB, connPair := setupStreamTest(t)
 	
 	streamA := connA.Stream(0)
 	a1 := []byte("hallo1")
@@ -359,8 +360,8 @@ func TestCloseBWithInit(t *testing.T) {
 	assert.True(t, streamA.state == StreamStateCloseReceived)
 }
 
-func TestBBR(t *testing.T) {
-	connA, listenerB, connPair := setupTest(t)
+func TestStreamFlowControl(t *testing.T) {
+	connA, listenerB, connPair := setupStreamTest(t)
 
 	//write 64k
 	streamA := connA.Stream(0)
@@ -424,9 +425,8 @@ func TestBBR(t *testing.T) {
 	assert.Equal(t, uint64(0x65adb2f0), specificNano)
 }
 
-func TestBBR2(t *testing.T) {
-	t.SkipNow()
-	connA, listenerB, connPair := setupTest(t)
+func TestStreamHighThroughput(t *testing.T) {
+	connA, listenerB, connPair := setupStreamTest(t)
 
 	var totalBytesReceived uint64
 	var mu sync.Mutex
@@ -460,7 +460,6 @@ func TestBBR2(t *testing.T) {
 	_, err := streamA.Write(dataA)
 	assert.Nil(t, err)
 
-	//start := time.Now()
 	for {
 		mu.Lock()
 		received := totalBytesReceived
@@ -477,14 +476,7 @@ func TestBBR2(t *testing.T) {
 
 		_, err = connPair.senderToRecipientAll()
 		assert.Nil(t, err)
-
-		//time.Sleep(time.Duration(d1+d2) * time.Nanoecond)
-		//time.Sleep(100 * time.Millisecond)
-
-		//if time.Since(start) > 5*time.Second {
-		//	cancelA()
-		//	cancelB()
-		//	break
-		//}
 	}
+	
+	slog.Info("running time for 16MB in 10KB/s, expecting ~27min", "time:min", specificNano/(secondNano*60))
 }
