@@ -234,11 +234,6 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 			}
 		}
 	}
-	if !conn.state.isDataOnRcv {
-		if m.MsgType == Data {
-			conn.state.isDataOnRcv = true
-		}
-	}
 
 	return s, nil
 }

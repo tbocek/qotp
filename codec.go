@@ -199,7 +199,7 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 }
 
 func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection, *Message, error) {
-	origConnId, msgType, err := decodeHeader(buffer)
+	msgType, err := decodeHeader(buffer)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to decode header: %w", err)
 	}
@@ -207,75 +207,68 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 
 	switch msgType {
 	case InitSnd:
+		// Decode S0 message
+		connId, pubKeyIdSnd, pubKeyEpSnd, message, err := DecodeInitSnd(buffer)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to decode InitHandshakeS0: %w", err)
+		}
+		conn := l.connMap.Get(connId)
 		//we might have received this a multiple times due to retransmission in the first packet
 		//however the other side send us this, so we are expected to drop the old keys
-		conn := l.connMap.Get(origConnId)
-
 		var prvKeyEpRcv *ecdh.PrivateKey
 		if conn == nil {
 			prvKeyEpRcv, err = generateKey()
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to generate keys: %w", err)
 			}
+			conn, err = l.newConn(remoteAddr, prvKeyEpRcv, pubKeyIdSnd, pubKeyEpSnd, false, false)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to create connection: %w", err)
+			}
+			l.connMap.Put(connId, conn)
 		} else {
 			prvKeyEpRcv = conn.keys.prvKeyEpSnd
 		}
 
-		// Decode S0 message
-		pubKeyIdSnd, pubKeyEpSnd, message, err := DecodeInitSnd(buffer, prvKeyEpRcv)
+		sharedSecret, err := prvKeyEpRcv.ECDH(pubKeyEpSnd)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to decode InitHandshakeS0: %w", err)
+			return nil, nil, fmt.Errorf("failed to create connection: %w", err)
 		}
-
-		// We need to reuse the connection and just replace the keys in case of duplicates. Otherwise
-		// we will have the situtaion that we already inserted 1 package in our buffer, delivered it to the user
-		// and here we would initialize from scratch, which results that the duplicate data will be
-		// sent to the user
-		if conn == nil {
-			conn, err = l.newConn(
-				remoteAddr,
-				prvKeyEpRcv,
-				pubKeyIdSnd,
-				pubKeyEpSnd,
-				false, false)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to create connection: %w", err)
-			}
-			//this is tricky: we need to store the first message on the receiver side twice, once under the old id, once under the new id
-			//in case of duplicate, we need to find the right connection, and if we already store it under the new, then duplciate data
-			// will arrive. That also means, we need to remove the old id on the first data packet
-			l.connMap.Put(origConnId, conn)
-		}
-
-		conn.sharedSecret = message.SharedSecret
+		conn.sharedSecret = sharedSecret
 		slog.Debug(" Decode/InitSnd", gId(), l.debug())
 		return conn, message, nil
 	case InitRcv:
-		conn := l.connMap.Get(origConnId)
+		connId := Uint64(buffer[HeaderSize : HeaderSize+ConnIdSize])
+		conn := l.connMap.Get(connId)
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for InitRcv")
 		}
 
 		// Decode R0 message
-		pubKeyIdRcv, pubKeyEpRcv, message, err := DecodeInitRcv(
+		sharedSecret, pubKeyIdRcv, pubKeyEpRcv, message, err := DecodeInitRcv(
 			buffer,
 			conn.keys.prvKeyEpSnd)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to decode InitRcv: %w", err)
 		}
 
-		conn.connId = Uint64(conn.keys.prvKeyEpSnd.PublicKey().Bytes()) ^ Uint64(pubKeyEpRcv.Bytes())
-		l.connMap.Put(conn.connId, conn)
 		conn.keys.pubKeyIdRcv = pubKeyIdRcv
 		conn.keys.pubKeyEpRcv = pubKeyEpRcv
-		conn.sharedSecret = message.SharedSecret
+		conn.sharedSecret = sharedSecret
 
 		slog.Debug(" Decode/InitRcv", gId(), l.debug())
 		return conn, message, nil
 	case InitCryptoSnd:
+		// Decode crypto S0 message
+		connId, pubKeyIdSnd, pubKeyEpSnd, message, err := DecodeInitCryptoSnd(
+			buffer,
+			l.prvKeyId)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to decode InitWithCryptoS0: %w", err)
+		}
 		//we might have received this a multiple times due to retransmission in the first packet
 		//however the other side send us this, so we are expected to drop the old keys
-		conn := l.connMap.Get(origConnId)
+		conn := l.connMap.Get(connId)
 
 		var prvKeyEpRcv *ecdh.PrivateKey
 		if conn == nil {
@@ -283,72 +276,43 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to generate keys: %w", err)
 			}
-		} else {
-			prvKeyEpRcv = conn.keys.prvKeyEpSnd
-		}
-
-		// Decode crypto S0 message
-		pubKeyIdSnd, pubKeyEpSnd, message, err := DecodeInitCryptoSnd(
-			buffer,
-			l.prvKeyId,
-			prvKeyEpRcv)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to decode InitWithCryptoS0: %w", err)
-		}
-
-		// We need to reuse the connection and just replace the keys in case of duplicates. Otherwise
-		// we will have the situtaion that we already inserted 1 package in our buffer, delivered it to the user
-		// and here we would initialize from scratch, which results that the duplicate data will be
-		// sent to the user
-		if conn == nil {
 			conn, err = l.newConn(remoteAddr, prvKeyEpRcv, pubKeyIdSnd, pubKeyEpSnd, false, true)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to create connection: %w", err)
 			}
-			//this is tricky: we need to store the first message on the receiver side twice, once under the old id, once under the new id
-			//in case of duplicate, we need to find the right connection, and if we already store it under the new, then duplciate data
-			// will arrive. That also means, we need to remove the old id on the first data packet
-			l.connMap.Put(origConnId, conn)
+			l.connMap.Put(connId, conn)
+		} else {
+			prvKeyEpRcv = conn.keys.prvKeyEpSnd
 		}
 
-		conn.sharedSecret = message.SharedSecret
+		sharedSecret, err := prvKeyEpRcv.ECDH(pubKeyEpSnd)
+
+		conn.sharedSecret = sharedSecret
 		slog.Debug(" Decode/InitCryptoSnd", gId(), l.debug())
 		return conn, message, nil
 	case InitCryptoRcv:
-		conn := l.connMap.Get(origConnId)
+		connId := Uint64(buffer[HeaderSize : HeaderSize+ConnIdSize])
+		conn := l.connMap.Get(connId)
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for InitWithCryptoR0")
 		}
 
 		// Decode crypto R0 message
-		pubKeyEpRcv, message, err := DecodeInitCryptoRcv(buffer, conn.keys.prvKeyEpSnd)
+		sharedSecret, pubKeyEpRcv, message, err := DecodeInitCryptoRcv(buffer, conn.keys.prvKeyEpSnd)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to decode InitWithCryptoR0: %w", err)
 		}
 
-		conn.connId = Uint64(conn.keys.prvKeyEpSnd.PublicKey().Bytes()) ^ Uint64(pubKeyEpRcv.Bytes())
-		l.connMap.Put(conn.connId, conn)
 		conn.keys.pubKeyEpRcv = pubKeyEpRcv
-		conn.sharedSecret = message.SharedSecret
+		conn.sharedSecret = sharedSecret
 
 		slog.Debug(" Decode/InitCryptoRcv", gId(), l.debug())
 		return conn, message, nil
 	case Data:
-		conn := l.connMap.Get(origConnId)
+		connId := Uint64(buffer[HeaderSize : HeaderSize+ConnIdSize])
+		conn := l.connMap.Get(connId)
 		if conn == nil {
 			return nil, nil, errors.New("connection not found for DataMessage")
-		}
-
-		//only needs to be done right after the handshake, after first data receive
-		if conn.state.isDataOnRcv && ! conn.state.isInitConnIdCleanOnRcv{
-			var firstConnId uint64
-			if conn.state.isSenderOnInit {
-				firstConnId = Uint64(conn.keys.prvKeyEpSnd.PublicKey().Bytes())
-			} else {
-				firstConnId = Uint64(conn.keys.pubKeyEpRcv.Bytes())
-			}
-			l.connMap.Remove(firstConnId)
-			conn.state.isInitConnIdCleanOnRcv = true
 		}
 
 		// Decode Data message

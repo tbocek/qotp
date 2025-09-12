@@ -1,13 +1,13 @@
 module tomtp
 
-go 1.24
+go 1.25
 
 require (
-	github.com/MatusOllah/slogcolor v1.5.0
+	github.com/MatusOllah/slogcolor v1.7.0
 	github.com/fatih/color v1.18.0
-	github.com/stretchr/testify v1.10.0
-	golang.org/x/crypto v0.33.0
-	golang.org/x/sys v0.30.0
+	github.com/stretchr/testify v1.11.1
+	golang.org/x/crypto v0.42.0
+	golang.org/x/sys v0.36.0
 )
 
 require (

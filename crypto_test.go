@@ -154,7 +154,7 @@ func testEncodeDecodeInitCryptoSnd(t *testing.T, payload []byte) {
 
 	assert.Nil(t, err)
 
-	_, _, m, err := DecodeInitCryptoSnd(buffer, bobPrvKeyId, alicePrvKeyEp)
+	_, _, _, m, err := DecodeInitCryptoSnd(buffer, bobPrvKeyId)
 	assert.Nil(t, err)
 	assert.Equal(t, payload, m.PayloadRaw)
 }
@@ -208,7 +208,7 @@ func testEncodeDecodeInitCryptoRcv(t *testing.T, payload []byte) {
 	assert.Nil(t, err)
 
 	// Bob decodes message from Alice
-	_, _, m, err := DecodeInitCryptoSnd(bufferInit, bobPrvKeyId, bobPrvKeyEp)
+	_, _, _, _, err = DecodeInitCryptoSnd(bufferInit, bobPrvKeyId)
 	assert.Nil(t, err)
 
 	// Bob -> Alice (test the actual payload we want to test)
@@ -224,11 +224,9 @@ func testEncodeDecodeInitCryptoRcv(t *testing.T, payload []byte) {
 	assert.Nil(t, err)
 
 	// Alice decodes message from Bob
-	_, m2, err := DecodeInitCryptoRcv(bufferInitReply, alicePrvKeyEp)
+	_, _, m2, err := DecodeInitCryptoRcv(bufferInitReply, alicePrvKeyEp)
 	assert.Nil(t, err)
 	assert.Equal(t, payload, m2.PayloadRaw)
-
-	assert.Equal(t, m.SharedSecret, m2.SharedSecret)
 }
 
 func TestCryptoEncodeDecodeInitCryptoRcvShortPayload(t *testing.T) {
@@ -264,7 +262,6 @@ func TestCryptoInitSndBasicFlow(t *testing.T) {
 	// Generate keys
 	alicePrvKeyId := generateKeys(t)
 	alicePrvKeyEp := generateKeys(t)
-	bobPrvKeyEp := generateKeys(t)
 
 	// Alice -> Bob: Encode InitHandshakeS0
 	buffer := EncodeInitSnd(
@@ -272,13 +269,12 @@ func TestCryptoInitSndBasicFlow(t *testing.T) {
 		alicePrvKeyEp)
 
 	// Bob receives and decodes InitHandshakeS0
-	pubKeyIdSnd, pubKeyEpSnd, msg, err := DecodeInitSnd(buffer, bobPrvKeyEp)
+	_, pubKeyIdSnd, pubKeyEpSnd, msg, err := DecodeInitSnd(buffer)
 
 	// Verify the results
 	assert.NoError(t, err)
 	assert.Equal(t, InitSnd, msg.MsgType)
 	assert.Equal(t, uint64(0), msg.SnConn)
-	assert.NotNil(t, msg.SharedSecret)
 
 	// Verify the public keys match what was sent
 	assert.True(t, bytes.Equal(alicePrvKeyId.PublicKey().Bytes(), pubKeyIdSnd.Bytes()))
@@ -288,7 +284,7 @@ func TestCryptoInitSndBasicFlow(t *testing.T) {
 func TestCryptoInitSndInvalidSize(t *testing.T) {
 	// Test with buffer that's too small
 	buffer := make([]byte, MinInitSndSize-1)
-	_, _, _, err := DecodeInitSnd(buffer, generateKeys(t))
+	_, _, _, _, err := DecodeInitSnd(buffer)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "size is below minimum init")
 }
@@ -297,7 +293,6 @@ func TestCryptoInitSndInvalidSize(t *testing.T) {
 func TestCryptoInitSndExactMinSize(t *testing.T) {
 	alicePrvKeyId := generateKeys(t)
 	alicePrvKeyEp := generateKeys(t)
-	bobPrvKeyEp := generateKeys(t)
 
 	buffer := EncodeInitSnd(alicePrvKeyId.PublicKey(), alicePrvKeyEp)
 
@@ -305,13 +300,13 @@ func TestCryptoInitSndExactMinSize(t *testing.T) {
 	assert.GreaterOrEqual(t, len(buffer), MinInitSndSize)
 
 	// Should decode successfully
-	_, _, _, err := DecodeInitSnd(buffer, bobPrvKeyEp)
+	_, _, _, _, err := DecodeInitSnd(buffer)
 	assert.NoError(t, err)
 }
 
 // Corner case: Empty buffer
 func TestCryptoInitSndEmptyBuffer(t *testing.T) {
-	_, _, _, err := DecodeInitSnd([]byte{}, generateKeys(t))
+	_, _, _, _, err := DecodeInitSnd([]byte{})
 	assert.Error(t, err)
 }
 
@@ -335,16 +330,13 @@ func TestCryptoInitRcvBasicFlow(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Alice receives and decodes InitHandshakeR0
-	pubKeyIdRcv, pubKeyEpRcv, msg, err := DecodeInitRcv(
-		buffer,
-		alicePrvKeyEp)
+	_, pubKeyIdRcv, pubKeyEpRcv, msg, err := DecodeInitRcv(buffer, alicePrvKeyEp)
 
 	// Verify the results
 	assert.NoError(t, err)
 	assert.Equal(t, InitRcv, msg.MsgType)
 	assert.Equal(t, uint64(0), msg.SnConn)
 	assert.Equal(t, rawData, msg.PayloadRaw)
-	assert.NotNil(t, msg.SharedSecret)
 
 	// Verify the public keys match what was sent
 	assert.True(t, bytes.Equal(bobPrvKeyId.PublicKey().Bytes(), pubKeyIdRcv.Bytes()))
@@ -354,7 +346,7 @@ func TestCryptoInitRcvBasicFlow(t *testing.T) {
 func TestCryptoInitRcvInvalidSize(t *testing.T) {
 	// Test with buffer that's too small
 	buffer := make([]byte, MinInitRcvSizeHdr+FooterDataSize-1)
-	_, _, _, err := DecodeInitRcv(buffer, generateKeys(t))
+	_, _, _, _, err := DecodeInitRcv(buffer, generateKeys(t))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "size is below minimum init reply")
 }
@@ -381,7 +373,7 @@ func TestCryptoInitRcvEmptyPayload(t *testing.T) {
 	}
 
 	assert.NoError(t, err)
-	_, _, msg, err := DecodeInitRcv(buffer, alicePrvKeyEp)
+	_, _, _, msg, err := DecodeInitRcv(buffer, alicePrvKeyEp)
 	assert.NoError(t, err)
 	assert.Empty(t, msg.PayloadRaw)
 }
@@ -403,7 +395,7 @@ func TestCryptoInitRcv8BytePayload(t *testing.T) {
 		payload)
 
 	assert.NoError(t, err)
-	_, _, msg, err := DecodeInitRcv(buffer, alicePrvKeyEp)
+	_, _, _, msg, err := DecodeInitRcv(buffer, alicePrvKeyEp)
 	assert.NoError(t, err)
 	assert.Equal(t, payload, msg.PayloadRaw)
 }
@@ -427,7 +419,7 @@ func TestCryptoInitRcvMaxValues(t *testing.T) {
 
 	assert.NoError(t, err)
 
-	_, _, msg, err := DecodeInitRcv(buffer, alicePrvKeyEp)
+	_, _, _, msg, err := DecodeInitRcv(buffer, alicePrvKeyEp)
 	assert.NoError(t, err)
 	assert.Equal(t, []byte("test1234"), msg.PayloadRaw)
 }
@@ -445,7 +437,7 @@ func TestCryptoFullHandshakeFlow(t *testing.T) {
 		alicePrvKeyEp)
 
 	// Step 2: Bob receives and decodes InitHandshakeS0
-	_, _, msgS0, err := DecodeInitSnd(bufferS0, bobPrvKeyEp)
+	_, _, _, _, err := DecodeInitSnd(bufferS0)
 	assert.NoError(t, err)
 
 	// Step 3: Bob sends InitHandshakeR0
@@ -459,11 +451,9 @@ func TestCryptoFullHandshakeFlow(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Step 4: Alice receives and decodes InitHandshakeR0
-	_, _, msgR0, err := DecodeInitRcv(bufferR0, alicePrvKeyEp)
+	_, _, _, _, err = DecodeInitRcv(bufferR0, alicePrvKeyEp)
 	assert.NoError(t, err)
 
-	// Verify shared secrets match
-	assert.True(t, bytes.Equal(msgS0.SharedSecret, msgR0.SharedSecret))
 }
 
 // Corner case: Multiple handshakes between same parties
@@ -476,7 +466,7 @@ func TestCryptoMultipleHandshakes(t *testing.T) {
 	bobPrvKeyEp1 := generateKeys(t)
 
 	buffer1S0 := EncodeInitSnd(alicePrvKeyId.PublicKey(), alicePrvKeyEp1)
-	_, _, msg1S0, err := DecodeInitSnd(buffer1S0, bobPrvKeyEp1)
+	_, _, _, _, err := DecodeInitSnd(buffer1S0)
 	assert.NoError(t, err)
 
 	buffer1R0, err := EncodeInitRcv(
@@ -487,7 +477,7 @@ func TestCryptoMultipleHandshakes(t *testing.T) {
 		[]byte("first123"))
 	assert.NoError(t, err)
 
-	_, _, msg1R0, err := DecodeInitRcv(buffer1R0, alicePrvKeyEp1)
+	_, _, _, _, err = DecodeInitRcv(buffer1R0, alicePrvKeyEp1)
 	assert.NoError(t, err)
 
 	// Second handshake with different ephemeral keys
@@ -495,7 +485,7 @@ func TestCryptoMultipleHandshakes(t *testing.T) {
 	bobPrvKeyEp2 := generateKeys(t)
 
 	buffer2S0 := EncodeInitSnd(alicePrvKeyId.PublicKey(), alicePrvKeyEp2)
-	_, _, msg2S0, err := DecodeInitSnd(buffer2S0, bobPrvKeyEp2)
+	_, _, _, _, err = DecodeInitSnd(buffer2S0)
 	assert.NoError(t, err)
 
 	buffer2R0, err := EncodeInitRcv(
@@ -506,12 +496,9 @@ func TestCryptoMultipleHandshakes(t *testing.T) {
 		[]byte("second12"))
 	assert.NoError(t, err)
 
-	_, _, msg2R0, err := DecodeInitRcv(buffer2R0, alicePrvKeyEp2)
+	_, _, _, _, err = DecodeInitRcv(buffer2R0, alicePrvKeyEp2)
 	assert.NoError(t, err)
 
-	// Shared secrets should be different due to different ephemeral keys
-	assert.False(t, bytes.Equal(msg1S0.SharedSecret, msg2S0.SharedSecret))
-	assert.False(t, bytes.Equal(msg1R0.SharedSecret, msg2R0.SharedSecret))
 }
 
 func TestCryptoNilKeyHandling(t *testing.T) {
@@ -525,9 +512,8 @@ func TestCryptoNilKeyHandling(t *testing.T) {
 	})
 
 	validBuffer := make([]byte, startMtu)
-	assert.Panics(t, func() {
-		DecodeInitSnd(validBuffer, nil)
-	})
+	_, _, _, _, err := DecodeInitSnd(validBuffer)
+	assert.Nil(t, err)
 
 	validBuffer = make([]byte, startMtu)
 	assert.Panics(t, func() {
@@ -539,7 +525,6 @@ func TestCryptoNilKeyHandling(t *testing.T) {
 func TestCryptoCorruptedBuffer(t *testing.T) {
 	alicePrvKeyId := generateKeys(t)
 	alicePrvKeyEp := generateKeys(t)
-	bobPrvKeyEp := generateKeys(t)
 
 	// Create valid buffer
 	buffer := EncodeInitSnd(alicePrvKeyId.PublicKey(), alicePrvKeyEp)
@@ -551,7 +536,7 @@ func TestCryptoCorruptedBuffer(t *testing.T) {
 	}
 
 	// Should fail to decode
-	_, _, _, err := DecodeInitSnd(buffer, bobPrvKeyEp)
+	_, _, _, _, err := DecodeInitSnd(buffer)
 	// Note: Depending on where corruption occurs, this might succeed or fail
 	// The test verifies the function doesn't panic on corrupted data
 	_ = err // Explicitly acknowledge we're not checking the error
@@ -561,7 +546,6 @@ func TestCryptoCorruptedBuffer(t *testing.T) {
 func TestCryptoVeryLargeBuffer(t *testing.T) {
 	alicePrvKeyId := generateKeys(t)
 	alicePrvKeyEp := generateKeys(t)
-	bobPrvKeyEp := generateKeys(t)
 
 	validBuffer := EncodeInitSnd(alicePrvKeyId.PublicKey(), alicePrvKeyEp)
 
@@ -570,17 +554,16 @@ func TestCryptoVeryLargeBuffer(t *testing.T) {
 	copy(largeBuffer, validBuffer)
 
 	// Should still decode the valid portion
-	_, _, _, err := DecodeInitSnd(largeBuffer, bobPrvKeyEp)
+	_, _, _, _, err := DecodeInitSnd(largeBuffer)
 	assert.NoError(t, err)
 }
 
 // Corner case: Buffer with wrong message type or corrupted header
 func TestCryptoRandomBuffer(t *testing.T) {
 	randomBuffer := randomBytes(1000)
-	bobPrvKeyEp := generateKeys(t)
 
 	// Should handle random data gracefully
-	_, _, _, err := DecodeInitSnd(randomBuffer, bobPrvKeyEp)
+	_, _, _, _, err := DecodeInitSnd(randomBuffer)
 	// This will likely fail, but shouldn't panic
 	_ = err
 }

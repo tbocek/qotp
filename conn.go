@@ -20,8 +20,6 @@ type ConnectionState struct {
 	isWithCryptoOnInit     bool
 	isHandshakeDoneOnRcv   bool
 	isInitSentOnSnd        bool
-	isDataOnRcv            bool
-	isInitConnIdCleanOnRcv bool
 }
 
 type Connection struct {
@@ -52,8 +50,8 @@ type Connection struct {
 
 	// Crypto and performance
 	snCrypto       uint64 //this is 48bit
-	epochCryptoSnd uint64 //this is 48bit
-	epochCryptoRcv uint64 //this is 48bit
+	epochCryptoSnd uint64 //this is 47bit
+	epochCryptoRcv uint64 //this is 47bit
 	Measurements
 
 	mu sync.Mutex

@@ -137,10 +137,9 @@ title: "INIT_HANDSHAKE_S0 Packet"
 packet-beta
   0-4: "Version"
   5-7: "Type"
-  8-71: "Connection Id (64bit), based on pub_key_ep_snd"
-  72-327: "Public Key Sender Id (X25519)"
-  328-583: "Public Key Sender Ephemeral (X25519)"
-  584-585: "(584-11200) fill up to 1400 bytes..."
+  8-263: "Public Key Sender Id (X25519)"
+  264-519: "Public Key Sender Ephemeral (X25519)"
+  520-521: "(520-11200) fill up to 1400 bytes..."
 ```
 
 ### Type INIT_HANDSHAKE_R0, min: 103 bytes (79 bytes until payload + min payload 8 bytes + 16 bytes MAC)
@@ -173,17 +172,17 @@ user can decide if he wants to send data. S0 means, it's only sent by the sender
 ---
 title: "INIT_WITH_CRYPTO_S0 Packet"
 ---
+
 packet-beta
   0-4: "Version"
   5-7: "Type"
-  8-71: "Connection Id (64bit), based on pub_key_ep_snd"
-  72-327: "Public Key Sender Id (X25519)"
-  328-583: "Public Key Sender Ephemeral (X25519)"
-  584-631: "Double Encrypted Crypto Sequence Number (48bit)"
-  632-647: "Filler length (16bit), example 1 byte"
-  648-655: "Fill, example 1 byte"
-  656-719: "Data (variable, but min 8 bytes)"
-  720-848: "MAC (HMAC-SHA256)"
+  8-263: "Public Key Sender Id (X25519)"
+  264-519: "Public Key Sender Ephemeral (X25519)"
+  520-567: "Double Encrypted Crypto Sequence Number (48bit)"
+  568-583: "Filler length (16bit), example 1 byte"
+  584-591: "Fill, example 1 byte"
+  592-655: "Data (variable, but min 8 bytes)"
+  656-784: "MAC (HMAC-SHA256)"
 ```
 
 ### Type INIT_WITH_CRYPTO_R0, min: 71 bytes (47 bytes until payload + min payload 8 bytes + 16 bytes MAC)
@@ -446,18 +445,18 @@ Source Code LoC
 ===============================================================================
  Language            Files        Lines         Code     Comments       Blanks
 ===============================================================================
- Go                     17         3813         2874          325          614
- Markdown                1          463            0          361          102
+ Go                     17         3760         2845          310          605
+ Markdown                1          462            0          359          103
 ===============================================================================
- Total                  18         4276         2874          686          716
+ Total                  18         4222         2845          669          708
 ===============================================================================
 Test Code LoC
 ===============================================================================
  Language            Files        Lines         Code     Comments       Blanks
 ===============================================================================
- Go                     13         5712         4020          608         1084
+ Go                     13         5956         4205          602         1149
 ===============================================================================
- Total                  13         5712         4020          608         1084
+ Total                  13         5956         4205          602         1149
 ===============================================================================
 
 ```
