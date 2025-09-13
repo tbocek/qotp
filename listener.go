@@ -246,7 +246,7 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 		return minPacing
 	}
 
-	closeConn := []uint64{}
+	closeConn := []*Connection{}
 	closeStream := []connStreamKey{}
 
 	iter := NestedIterator(l.connMap, func(conn *Connection) *LinkedMap[uint32, *Stream] {
@@ -257,7 +257,7 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 		_, dataSent, pacingNano, err := conn.Flush(stream, nowNano)
 		if err != nil {
 			slog.Info("closing connection, err", conn.debug(), slog.Any("err", err))
-			closeConn = append(closeConn, conn.connId)
+			closeConn = append(closeConn, conn)
 			break
 		}
 
@@ -279,7 +279,7 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 		//no data sent, check if we reached the timeout for the activity
 		if conn.lastReadTimeNano != 0 && nowNano > conn.lastReadTimeNano+ReadDeadLine {
 			slog.Info("closing connection, timeout", conn.debug(), slog.Uint64("now", nowNano), slog.Uint64("last", conn.lastReadTimeNano))
-			closeConn = append(closeConn, conn.connId)
+			closeConn = append(closeConn, conn)
 			break
 		}
 
@@ -288,9 +288,8 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 		}
 	}
 
-	for _, closeConnKey := range closeConn {
-		conn := l.connMap.Get(closeConnKey)
-		conn.cleanupConn(closeConnKey)
+	for _, closeConn := range closeConn {
+		closeConn.cleanupConn()
 	}
 
 	for _, connStreamKey := range closeStream {
@@ -383,7 +382,7 @@ func (l *Listener) debug() slog.Attr {
 }
 
 func (l *Listener) ForceClose(c *Connection) {
-	c.cleanupConn(c.connId)
+	c.cleanupConn()
 }
 
 type connStreamKey [12]byte

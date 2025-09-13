@@ -147,13 +147,13 @@ func (c *Connection) cleanupStream(streamID uint32) {
 	// so that BBR, RTT, is preserved for a bit
 }
 
-func (c *Connection) cleanupConn(connID uint64) {
-	slog.Debug("Cleanup/Stream", gId(), c.debug(), slog.Uint64("connID", connID), slog.Any("currId", c.listener.currentConnID))
+func (c *Connection) cleanupConn() {
+	slog.Debug("Cleanup/Stream", gId(), c.debug(), slog.Uint64("connID", c.connId), slog.Any("currId", c.listener.currentConnID))
 
-	if c.listener.currentConnID != nil && connID == *c.listener.currentConnID {
-		*c.listener.currentConnID, _, _ = c.listener.connMap.Next(connID)
+	if c.listener.currentConnID != nil && c.connId == *c.listener.currentConnID {
+		*c.listener.currentConnID, _, _ = c.listener.connMap.Next(c.connId)
 	}
-	c.listener.connMap.Remove(connID)
+	c.listener.connMap.Remove(c.connId)
 }
 
 func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacingIntervalNano uint64, err error) {
