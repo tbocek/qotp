@@ -1,4 +1,4 @@
-// Package tomtp provides a linked hash map with O(1) operations and insertion order traversal.
+// Package qotp provides a linked hash map with O(1) operations and insertion order traversal.
 // All exported methods are thread-safe.
 package qotp
 

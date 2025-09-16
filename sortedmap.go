@@ -1,4 +1,4 @@
-// Package tomtp provides a sorted map with O(1) Next() traversal.
+// Package qotp provides a sorted map with O(1) Next() traversal.
 // All exported methods are thread-safe.
 package qotp
 
@@ -35,15 +35,15 @@ func NewSortedMap[K cmp.Ordered, V any]() *SortedMap[K, V] {
 		items: make(map[K]*smNode[K, V]),
 		level: 1,
 	}
-	
+
 	// Create sentinel head and tail nodes
 	m.head = &smNode[K, V]{next: make([]*smNode[K, V], maxLevel)}
 	m.tail = &smNode[K, V]{}
-	
+
 	// Link head to tail initially
 	m.head.after = m.tail
 	m.tail.prev = m.head
-	
+
 	return m
 }
 
@@ -131,11 +131,11 @@ func (m *SortedMap[K, V]) Put(key K, value V) {
 func (m *SortedMap[K, V]) Get(key K) (V, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	if node, exists := m.items[key]; exists {
 		return node.value, true
 	}
-	
+
 	var zero V
 	return zero, false
 }
@@ -227,13 +227,13 @@ func (m *SortedMap[K, V]) Min() (K, V, bool) {
 		node := m.head.after
 		return node.key, node.value, true
 	}
-	
+
 	var zeroK K
 	var zeroV V
 	return zeroK, zeroV, false
 }
 
-// Remove removes a key-value pair from the map. 
+// Remove removes a key-value pair from the map.
 // Returns the removed value and a boolean indicating if the key existed.
 func (m *SortedMap[K, V]) Remove(key K) (V, bool) {
 	m.mu.Lock()
