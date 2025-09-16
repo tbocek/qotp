@@ -1,4 +1,4 @@
-module tomtp
+module github.com/tbocek/qotp
 
 go 1.25
 
