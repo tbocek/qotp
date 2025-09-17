@@ -12,7 +12,6 @@ import (
 	"net/netip"
 
 	"sync"
-	"sync/atomic"
 )
 
 type Listener struct {
@@ -27,9 +26,10 @@ type Listener struct {
 }
 
 type ListenOption struct {
-	seed      *[32]byte
-	prvKeyId  *ecdh.PrivateKey
-	localConn NetworkConn
+	seed       *[32]byte
+	prvKeyId   *ecdh.PrivateKey
+	localConn  NetworkConn
+	listenAddr *net.UDPAddr
 }
 
 type ListenFunc func(*ListenOption) error
@@ -95,19 +95,25 @@ func WithSeedStr(seedStr string) ListenFunc {
 	}
 }
 
-func ListenString(listenAddrStr string, options ...ListenFunc) (*Listener, error) {
-	listenAddr, err := net.ResolveUDPAddr("udp", listenAddrStr)
-	if err != nil {
-		return nil, err
+func WithListenAddr(addr string) ListenFunc {
+	return func(o *ListenOption) error {
+		if o.listenAddr != nil {
+			return errors.New("listenAddr already set")
+		}
+
+		listenAddr, err := net.ResolveUDPAddr("udp", addr)
+		if err != nil {
+			return err
+		}
+
+		o.listenAddr = listenAddr
+		return nil
 	}
-	return Listen(listenAddr, options...)
 }
 
-func fillListenOpts(listenAddr *net.UDPAddr, options ...ListenFunc) (*ListenOption, error) {
-	lOpts := &ListenOption{
-		seed:     nil,
-		prvKeyId: nil,
-	}
+func fillListenOpts(options ...ListenFunc) (*ListenOption, error) {
+	lOpts := &ListenOption{}
+
 	for _, opt := range options {
 		err := opt(lOpts)
 		if err != nil {
@@ -130,7 +136,7 @@ func fillListenOpts(listenAddr *net.UDPAddr, options ...ListenFunc) (*ListenOpti
 		lOpts.prvKeyId = prvKeyId
 	}
 	if lOpts.localConn == nil {
-		conn, err := net.ListenUDP("udp", listenAddr)
+		conn, err := net.ListenUDP("udp", lOpts.listenAddr)
 		if err != nil {
 			return nil, err
 		}
@@ -146,8 +152,8 @@ func fillListenOpts(listenAddr *net.UDPAddr, options ...ListenFunc) (*ListenOpti
 	return lOpts, nil
 }
 
-func Listen(listenAddr *net.UDPAddr, options ...ListenFunc) (*Listener, error) {
-	lOpts, err := fillListenOpts(listenAddr, options...)
+func Listen(options ...ListenFunc) (*Listener, error) {
+	lOpts, err := fillListenOpts(options...)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +200,6 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 		ok := errors.As(err, &netErr)
 
 		if ok && netErr.Timeout() {
-			slog.Debug("   Listen/Timeout")
 			return nil, nil // Timeout is normal, return no dataToSend/error
 		} else {
 			slog.Error("   Listen/Error", slog.Any("error", err))
@@ -208,7 +213,7 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 
 	slog.Debug("   Listen/Data", gId(), l.debug(), slog.Any("len(data)", n), slog.Uint64("now:ms", nowNano/msNano))
 
-	conn, m, err := l.decode(data[:n], remoteAddr)
+	conn, payload, msgType, err := l.decode(data[:n], remoteAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +222,19 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 		conn.lastReadTimeNano = nowNano
 	}
 
-	s, err = conn.decode(m.PayloadRaw, n, nowNano)
+	var p *PayloadHeader
+	if msgType == InitSnd { //InitSnd is the only message without any payload
+		p = &PayloadHeader{RcvWndSize: rcvBufferCapacity}
+		data = []byte{}
+	} else {
+		p, data, err = DecodePayload(payload)
+		if err != nil {
+			slog.Info("error in decoding payload from new connection", slog.Any("error", err))
+			return nil, err
+		}
+	}
+
+	s, err = conn.decode(p, data, n, nowNano)
 	if err != nil {
 		return nil, err
 	}
@@ -225,11 +242,11 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 	//Set state
 	if !conn.state.isHandshakeDoneOnRcv {
 		if conn.state.isSenderOnInit {
-			if m.MsgType == InitRcv || m.MsgType == InitCryptoRcv {
+			if msgType == InitRcv || msgType == InitCryptoRcv {
 				conn.state.isHandshakeDoneOnRcv = true
 			}
 		} else {
-			if m.MsgType == Data {
+			if msgType == Data {
 				conn.state.isHandshakeDoneOnRcv = true
 			}
 		}
@@ -240,20 +257,21 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 
 // Flush sends pending data for all connections using round-robin
 func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
+
 	minPacing = MinDeadLine
 	if l.connMap.Size() == 0 {
 		//if we do not have at least one connection, exit
 		return minPacing
 	}
-
+	
 	closeConn := []*Connection{}
-	closeStream := []connStreamKey{}
+	closeStream := map[*Connection]uint32{}
 
 	iter := NestedIterator(l.connMap, func(conn *Connection) *LinkedMap[uint32, *Stream] {
 		return conn.streams
 	}, l.currentConnID, l.currentStreamID)
 
-	for conn, stream := range iter {
+	for conn, stream := range iter {	
 		_, dataSent, pacingNano, err := conn.Flush(stream, nowNano)
 		if err != nil {
 			slog.Info("closing connection, err", conn.debug(), slog.Any("err", err))
@@ -264,7 +282,7 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 		if stream.state == StreamStateClosed {
 			// stream closed, mark for cleaning up, do not clean up yet, otherwise the iterator will become
 			// much more complex
-			closeStream = append(closeStream, createConnStreamKey(conn.connId, stream.streamID))
+			closeStream[conn] = stream.streamID
 			continue
 		}
 
@@ -292,9 +310,8 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 		closeConn.cleanupConn()
 	}
 
-	for _, connStreamKey := range closeStream {
-		conn := l.connMap.Get(connStreamKey.connID())
-		conn.cleanupStream(connStreamKey.streamID())
+	for conn, stream := range closeStream {
+		conn.cleanupStream(stream)
 	}
 	l.currentConnID = nil
 	l.currentStreamID = nil
@@ -349,28 +366,21 @@ func (l *Listener) newConn(
 	return conn, nil
 }
 
-func (l *Listener) Loop(callback func(s *Stream)) func() {
-	running := new(atomic.Bool)
-	running.Store(true)
-
-	go func() {
-		waitNextNano := MinDeadLine
-		for running.Load() {
-			//Listen
-			s, err := l.Listen(waitNextNano, timeNowNano())
-			if err != nil {
-				slog.Error("Error in loop listen", slog.Any("error", err))
-			}
-			if s != nil {
-				callback(s) // Process received stream
-			}
-
-			waitNextNano = l.Flush(timeNowNano())
+func (l *Listener) Loop(callback func(s *Stream) bool) {
+	waitNextNano := MinDeadLine
+	for {
+		s, err := l.Listen(waitNextNano, timeNowNano())
+		if err != nil {
+			slog.Error("Error in loop listen", slog.Any("error", err))
 		}
-	}()
+		// callback in any case, s may be null, but this gives the user
+		// the control to cancel the Loop every MinDeadLine
+		cont := callback(s)
+		waitNextNano = l.Flush(timeNowNano())
 
-	return func() {
-		running.Store(false)
+		if !cont {
+			return
+		}
 	}
 }
 
@@ -383,21 +393,4 @@ func (l *Listener) debug() slog.Attr {
 
 func (l *Listener) ForceClose(c *Connection) {
 	c.cleanupConn()
-}
-
-type connStreamKey [12]byte
-
-func (csk connStreamKey) connID() uint64 {
-	return Uint64(csk[:8])
-}
-
-func (csk connStreamKey) streamID() uint32 {
-	return Uint32(csk[8:])
-}
-
-func createConnStreamKey(connID uint64, streamID uint32) connStreamKey {
-	csk := connStreamKey{}
-	PutUint64(csk[:8], connID)
-	PutUint32(csk[8:], streamID)
-	return csk
 }

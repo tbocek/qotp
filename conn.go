@@ -87,8 +87,8 @@ func (c *Connection) Stream(streamID uint32) (s *Stream) {
 	return s
 }
 
-func (c *Connection) decode(packetData []byte, rawLen int, nowNano uint64) (s *Stream, err error) {
-	p, userData, err := DecodePayload(packetData)
+func (c *Connection) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uint64) (s *Stream, err error) {
+	
 	if err != nil {
 		slog.Info("error in decoding payload from new connection", slog.Any("error", err))
 		return nil, err
@@ -223,7 +223,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 	}
 
 	//next check if we can send packets, during handshake we can only send 1 packet
-	if c.state.isHandshakeDoneOnRcv || (!c.state.isHandshakeDoneOnRcv && !c.state.isInitSentOnSnd) {
+	if c.state.isHandshakeDoneOnRcv || !c.state.isInitSentOnSnd {
 		splitData, offset := c.snd.ReadyToSend(s.streamID, s.msgType(), ack, startMtu, nowNano)
 		if splitData != nil {
 			slog.Debug(" Flush/Send", gId(), s.debug(), c.debug())
@@ -245,18 +245,17 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 			pacingIntervalNano = c.CalcPacingInterval(uint64(len(encData)))
 			c.nextWriteTime = nowNano + pacingIntervalNano
 			return raw, packetLen, pacingIntervalNano, nil
+		} else if ack != nil || !c.state.isInitSentOnSnd {
+			slog.Debug(" Flush/Ack", gId(), s.debug(), c.debug())
+			return c.writeAck(s, ack, nowNano)
 		}
 	}
 
-	if ack == nil {
-		return 0, 0, MinDeadLine, nil
-	}
-	slog.Debug(" Flush/Ack", gId(), s.debug(), c.debug())
-	return c.writeAck(s, ack, nowNano)
+	return 0, 0, MinDeadLine, nil
 }
 
 func (c *Connection) writeAck(stream *Stream, ack *Ack, nowNano uint64) (raw int, data int, pacingIntervalNano uint64, err error) {
-	encData, err := stream.encode([]byte{}, stream.currentOffset(), ack, stream.msgType())
+	encData, err := stream.encode([]byte{}, 0, ack, stream.msgType())
 	if err != nil {
 		return 0, 0, 0, err
 	}

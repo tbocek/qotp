@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"crypto/ecdh"
 	"encoding/binary"
-	"github.com/stretchr/testify/assert"
 	"net/netip"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 var (
@@ -29,9 +30,9 @@ var (
 func createTestConnection(isSender, withCrypto, handshakeDone bool) *Connection {
 	conn := &Connection{
 		state: ConnectionState{
-			isSenderOnInit:         isSender,
-			isWithCryptoOnInit:     withCrypto,
-			isHandshakeDoneOnRcv:   handshakeDone,
+			isSenderOnInit:       isSender,
+			isWithCryptoOnInit:   withCrypto,
+			isHandshakeDoneOnRcv: handshakeDone,
 		},
 		snCrypto: 0,
 		mtu:      1400,
@@ -87,7 +88,7 @@ func TestCodecStreamClosed(t *testing.T) {
 	conn := createTestConnection(true, false, true)
 	stream := conn.Stream(1)
 	stream.Close()
-	
+
 	output, err := stream.encode([]byte("test data"), 0, nil, stream.msgType())
 	assert.NotNil(t, output)
 	assert.NoError(t, err)
@@ -97,7 +98,7 @@ func TestCodecConnectionClosed(t *testing.T) {
 	conn := createTestConnection(true, false, true)
 	stream := conn.Stream(1)
 	stream.conn.Close()
-	
+
 	output, err := stream.encode([]byte("test data"), 0, nil, stream.msgType())
 	assert.NotNil(t, output)
 	assert.NoError(t, err)
@@ -209,11 +210,11 @@ func TestCodecOverheadDataNoAck(t *testing.T) {
 // Data Size Tests
 func TestCodecDataSizeZero(t *testing.T) {
 	lAlice, lBob := createTestListeners()
-	
+
 	connAlice := createTestConnection(true, true, false)
 	connAlice.snd = NewSendBuffer(rcvBufferCapacity, nil)
 	connAlice.rcv = NewReceiveBuffer(12000)
-	
+
 	connId := binary.LittleEndian.Uint64(prvEpAlice.PublicKey().Bytes())
 	lAlice.connMap.Put(connId, connAlice)
 	connAlice.connId = connId
@@ -225,11 +226,12 @@ func TestCodecDataSizeZero(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, encoded)
 
-	connBob, m, err := lBob.decode(encoded, getTestRemoteAddr())
+	connBob, payload, msgType, err := lBob.decode(encoded, getTestRemoteAddr())
 	assert.NoError(t, err)
 
-	if m.MsgType == InitCryptoRcv {
-		s, err := connBob.decode(m.PayloadRaw, 0, 0)
+	if msgType == InitCryptoRcv {
+		p, u, err := DecodePayload(payload)
+		s, err := connBob.decode(p, u, 0, 0)
 		assert.NoError(t, err)
 		assert.NotNil(t, s)
 	}
@@ -237,11 +239,11 @@ func TestCodecDataSizeZero(t *testing.T) {
 
 func TestCodecDataSizeOne(t *testing.T) {
 	lAlice, lBob := createTestListeners()
-	
+
 	connAlice := createTestConnection(true, true, false)
 	connAlice.snd = NewSendBuffer(rcvBufferCapacity, nil)
 	connAlice.rcv = NewReceiveBuffer(12000)
-	
+
 	connId := binary.LittleEndian.Uint64(prvEpAlice.PublicKey().Bytes())
 	lAlice.connMap.Put(connId, connAlice)
 	connAlice.connId = connId
@@ -253,10 +255,11 @@ func TestCodecDataSizeOne(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, encoded)
 
-	connBob, m, err := lBob.decode(encoded, getTestRemoteAddr())
+	connBob, payload, _, err := lBob.decode(encoded, getTestRemoteAddr())
 	assert.NoError(t, err)
 
-	s, err := connBob.decode(m.PayloadRaw, 0, 0)
+	p, u, err := DecodePayload(payload)
+	s, err := connBob.decode(p, u, 0, 0)
 	assert.NoError(t, err)
 	_, rb := s.conn.rcv.RemoveOldestInOrder(s.streamID)
 	assert.Equal(t, testData, rb)
@@ -264,11 +267,11 @@ func TestCodecDataSizeOne(t *testing.T) {
 
 func TestCodecDataSizeHundred(t *testing.T) {
 	lAlice, lBob := createTestListeners()
-	
+
 	connAlice := createTestConnection(true, true, false)
 	connAlice.snd = NewSendBuffer(rcvBufferCapacity, nil)
 	connAlice.rcv = NewReceiveBuffer(12000)
-	
+
 	connId := binary.LittleEndian.Uint64(prvEpAlice.PublicKey().Bytes())
 	lAlice.connMap.Put(connId, connAlice)
 	connAlice.connId = connId
@@ -280,10 +283,11 @@ func TestCodecDataSizeHundred(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, encoded)
 
-	connBob, m, err := lBob.decode(encoded, getTestRemoteAddr())
+	connBob, payload, _, err := lBob.decode(encoded, getTestRemoteAddr())
 	assert.NoError(t, err)
 
-	s, err := connBob.decode(m.PayloadRaw, 0, 0)
+	p, u, err := DecodePayload(payload)
+	s, err := connBob.decode(p, u, 0, 0)
 	assert.NoError(t, err)
 	_, rb := s.conn.rcv.RemoveOldestInOrder(s.streamID)
 	assert.Equal(t, testData, rb)
@@ -291,11 +295,11 @@ func TestCodecDataSizeHundred(t *testing.T) {
 
 func TestCodecDataSizeThousand(t *testing.T) {
 	lAlice, lBob := createTestListeners()
-	
+
 	connAlice := createTestConnection(true, true, false)
 	connAlice.snd = NewSendBuffer(rcvBufferCapacity, nil)
 	connAlice.rcv = NewReceiveBuffer(12000)
-	
+
 	connId := binary.LittleEndian.Uint64(prvEpAlice.PublicKey().Bytes())
 	lAlice.connMap.Put(connId, connAlice)
 	connAlice.connId = connId
@@ -307,10 +311,11 @@ func TestCodecDataSizeThousand(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, encoded)
 
-	connBob, m, err := lBob.decode(encoded, getTestRemoteAddr())
+	connBob, payload, _, err := lBob.decode(encoded, getTestRemoteAddr())
 	assert.NoError(t, err)
 
-	s, err := connBob.decode(m.PayloadRaw, 0, 0)
+	p, u, err := DecodePayload(payload)
+	s, err := connBob.decode(p, u, 0, 0)
 	assert.NoError(t, err)
 	_, rb := s.conn.rcv.RemoveOldestInOrder(s.streamID)
 	assert.Equal(t, testData, rb)
@@ -318,11 +323,11 @@ func TestCodecDataSizeThousand(t *testing.T) {
 
 func TestCodecDataSizeLarge(t *testing.T) {
 	lAlice, lBob := createTestListeners()
-	
+
 	connAlice := createTestConnection(true, true, false)
 	connAlice.snd = NewSendBuffer(rcvBufferCapacity, nil)
 	connAlice.rcv = NewReceiveBuffer(12000)
-	
+
 	connId := binary.LittleEndian.Uint64(prvEpAlice.PublicKey().Bytes())
 	lAlice.connMap.Put(connId, connAlice)
 	connAlice.connId = connId
@@ -334,10 +339,11 @@ func TestCodecDataSizeLarge(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, encoded)
 
-	connBob, m, err := lBob.decode(encoded, getTestRemoteAddr())
+	connBob, payload, _, err := lBob.decode(encoded, getTestRemoteAddr())
 	assert.NoError(t, err)
 
-	s, err := connBob.decode(m.PayloadRaw, 0, 0)
+	p, u, err := DecodePayload(payload)
+	s, err := connBob.decode(p, u, 0, 0)
 	assert.NoError(t, err)
 	_, rb := s.conn.rcv.RemoveOldestInOrder(s.streamID)
 	assert.Equal(t, testData, rb)
@@ -373,10 +379,10 @@ func TestCodecFullHandshake(t *testing.T) {
 	assert.NotNil(t, encoded)
 
 	// Step 2: Bob receives and decodes InitSnd
-	connBob, msgS0, err := lBob.decode(encoded, remoteAddr)
+	connBob, _, msgTypeS0, err := lBob.decode(encoded, remoteAddr)
 	assert.NoError(t, err)
 	assert.NotNil(t, connBob)
-	assert.Equal(t, InitSnd, msgS0.MsgType)
+	assert.Equal(t, InitSnd, msgTypeS0)
 
 	// Step 3: Bob responds with InitRcv
 	streamBob := &Stream{conn: connBob}
@@ -386,11 +392,12 @@ func TestCodecFullHandshake(t *testing.T) {
 	assert.NotNil(t, encodedR0)
 
 	// Step 4: Alice receives and decodes InitRcv
-	c, m, err := lAlice.decode(encodedR0, remoteAddr)
+	c, payload, msgType, err := lAlice.decode(encodedR0, remoteAddr)
 	assert.NoError(t, err)
-	assert.Equal(t, InitRcv, m.MsgType)
-	
-	s, err := c.decode(m.PayloadRaw, 0, 0)
+	assert.Equal(t, InitRcv, msgType)
+
+	p, u, err := DecodePayload(payload)
+	s, err := c.decode(p, u, 0, 0)
 	assert.NoError(t, err)
 	_, rb := s.conn.rcv.RemoveOldestInOrder(s.streamID)
 	assert.Equal(t, testData, rb)
@@ -415,12 +422,13 @@ func TestCodecFullHandshake(t *testing.T) {
 	assert.NotNil(t, encoded)
 
 	// Step 7: Bob receives and decodes Data message
-	c, msg, err := lBob.decode(encoded, remoteAddr)
+	c, payload, msgType, err = lBob.decode(encoded, remoteAddr)
 	assert.NoError(t, err)
 	assert.NotNil(t, c)
-	assert.Equal(t, Data, msg.MsgType)
+	assert.Equal(t, Data, msgType)
 
-	s, err = c.decode(msg.PayloadRaw, 0, 0)
+	p, u, err = DecodePayload(payload)
+	s, err = c.decode(p, u, 0, 0)
 	assert.NoError(t, err)
 	_, rb = s.conn.rcv.RemoveOldestInOrder(s.streamID)
 	assert.Equal(t, dataMsg, rb)
@@ -475,8 +483,8 @@ func TestCodecDecodeEmptyBuffer(t *testing.T) {
 		connMap:  NewLinkedMap[uint64, *Connection](),
 		prvKeyId: prvIdAlice,
 	}
-	
-	_, _, err := l.decode([]byte{}, getTestRemoteAddr())
+
+	_, _, _, err := l.decode([]byte{}, getTestRemoteAddr())
 	assert.Error(t, err)
 }
 
@@ -485,8 +493,8 @@ func TestCodecDecodeInvalidHeader(t *testing.T) {
 		connMap:  NewLinkedMap[uint64, *Connection](),
 		prvKeyId: prvIdAlice,
 	}
-	
-	_, _, err := l.decode([]byte{0xFF}, getTestRemoteAddr())
+
+	_, _, _, err := l.decode([]byte{0xFF}, getTestRemoteAddr())
 	assert.Error(t, err)
 }
 
@@ -495,9 +503,9 @@ func TestCodecDecodeConnectionNotFoundInitRcv(t *testing.T) {
 		connMap:  NewLinkedMap[uint64, *Connection](),
 		prvKeyId: prvIdAlice,
 	}
-	
+
 	buffer := append([]byte{byte(InitRcv)}, make([]byte, 15)...)
-	_, _, err := l.decode(buffer, getTestRemoteAddr())
+	_, _, _, err := l.decode(buffer, getTestRemoteAddr())
 	assert.Error(t, err)
 }
 
@@ -506,9 +514,9 @@ func TestCodecDecodeConnectionNotFoundData(t *testing.T) {
 		connMap:  NewLinkedMap[uint64, *Connection](),
 		prvKeyId: prvIdAlice,
 	}
-	
+
 	buffer := append([]byte{byte(Data)}, make([]byte, 15)...)
-	_, _, err := l.decode(buffer, getTestRemoteAddr())
+	_, _, _, err := l.decode(buffer, getTestRemoteAddr())
 	assert.Error(t, err)
 }
 
@@ -516,7 +524,7 @@ func TestCodecDecodeConnectionNotFoundData(t *testing.T) {
 func TestCodecMsgTypeInitCryptoSnd(t *testing.T) {
 	conn := createTestConnection(true, true, false)
 	stream := &Stream{conn: conn}
-	
+
 	msgType := stream.msgType()
 	assert.Equal(t, InitCryptoSnd, msgType)
 }
@@ -524,7 +532,7 @@ func TestCodecMsgTypeInitCryptoSnd(t *testing.T) {
 func TestCodecMsgTypeInitCryptoRcv(t *testing.T) {
 	conn := createTestConnection(false, true, false)
 	stream := &Stream{conn: conn}
-	
+
 	msgType := stream.msgType()
 	assert.Equal(t, InitCryptoRcv, msgType)
 }
@@ -532,7 +540,7 @@ func TestCodecMsgTypeInitCryptoRcv(t *testing.T) {
 func TestCodecMsgTypeInitSnd(t *testing.T) {
 	conn := createTestConnection(true, false, false)
 	stream := &Stream{conn: conn}
-	
+
 	msgType := stream.msgType()
 	assert.Equal(t, InitSnd, msgType)
 }
@@ -540,7 +548,7 @@ func TestCodecMsgTypeInitSnd(t *testing.T) {
 func TestCodecMsgTypeInitRcv(t *testing.T) {
 	conn := createTestConnection(false, false, false)
 	stream := &Stream{conn: conn}
-	
+
 	msgType := stream.msgType()
 	assert.Equal(t, InitRcv, msgType)
 }
@@ -548,7 +556,7 @@ func TestCodecMsgTypeInitRcv(t *testing.T) {
 func TestCodecMsgTypeData(t *testing.T) {
 	conn := createTestConnection(true, false, true)
 	stream := &Stream{conn: conn}
-	
+
 	msgType := stream.msgType()
 	assert.Equal(t, Data, msgType)
 }

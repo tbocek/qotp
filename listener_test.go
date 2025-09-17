@@ -19,8 +19,7 @@ var (
 
 func TestNewListener(t *testing.T) {
 	// Test case 1: Create a new listener with a valid address
-	addr := "127.0.0.1:8080"
-	listener, err := ListenString(addr, WithSeed(testPrvSeed1))
+	listener, err := Listen(WithListenAddr("127.0.0.1:8080"), WithSeed(testPrvSeed1))
 	defer func() {
 		err := listener.Close()
 		assert.Nil(t, err)
@@ -33,8 +32,7 @@ func TestNewListener(t *testing.T) {
 	}
 
 	// Test case 2: Create a new listener with an invalid address
-	invalidAddr := "127.0.0.1:99999"
-	_, err = ListenString(invalidAddr, WithSeed(testPrvSeed1))
+	_, err = Listen(WithListenAddr("127.0.0.1:99999"), WithSeed(testPrvSeed1))
 	if err == nil {
 		t.Errorf("Expected an error, but got nil")
 	}
@@ -42,7 +40,7 @@ func TestNewListener(t *testing.T) {
 
 func TestNewStream(t *testing.T) {
 	// Test case 1: Create a new multi-stream with a valid remote address
-	listener, err := ListenString("127.0.0.1:9080", WithSeed(testPrvSeed1))
+	listener, err := Listen(WithListenAddr("127.0.0.1:9080"), WithSeed(testPrvSeed1))
 	defer func() {
 		err := listener.Close()
 		assert.Nil(t, err)
@@ -64,7 +62,7 @@ func TestNewStream(t *testing.T) {
 
 func TestClose(t *testing.T) {
 	// Test case 1: Close a listener with no multi-streams
-	listener, err := ListenString("127.0.0.1:9080", WithSeed(testPrvSeed1))
+	listener, err := Listen(WithListenAddr("127.0.0.1:9080"), WithSeed(testPrvSeed1))
 	assert.NoError(t, err)
 	// Test case 2: Close a listener with multi-streams
 	listener.DialWithCryptoString("127.0.0.1:9081", hexPubKey1)

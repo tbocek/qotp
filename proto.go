@@ -2,6 +2,7 @@ package qotp
 
 import (
 	"errors"
+	"log/slog"
 	"math/bits"
 )
 
@@ -175,6 +176,7 @@ func EncodePayload(p *PayloadHeader, userData []byte) (encoded []byte, offset in
 func DecodePayload(data []byte) (payload *PayloadHeader, userData []byte, err error) {
 	dataLen := len(data)
 	if dataLen < MinProtoSize {
+		slog.Error("payload size too low", "dataLen", dataLen, "MinProtoSize", MinProtoSize)
 		return nil, nil, errors.New("payload Size below minimum of 8 bytes")
 	}
 

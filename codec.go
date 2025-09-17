@@ -28,9 +28,9 @@ func (s *Stream) msgType() MsgType {
 func CalcMaxOverhead(msgType MsgType, ack *Ack, offset uint64) (overhead int) {
 	hasAck := ack != nil
 	needsExtension := (hasAck && ack.offset > 0xFFFFFF) || offset > 0xFFFFFF
-	
+
 	overhead = calcOverhead(hasAck, needsExtension)
-	
+
 	switch msgType {
 	case InitSnd:
 		return -1 //we cannot send data, this is unencrypted
@@ -65,7 +65,6 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 		slog.Debug("   Encode/InitSnd", gId(), s.debug(), s.conn.debug(),
 			slog.Int("l(encData)", len(encData)))
 		s.conn.snCrypto++
-		//here we cannot rollover
 		s.conn.state.isInitSentOnSnd = true
 		return encData, nil
 	}
@@ -164,10 +163,10 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 	return encData, nil
 }
 
-func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection, *Message, error) {
-	msgType, err := decodeHeader(buffer)
+func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (conn *Connection, payload []byte, msgType MsgType, err error) {
+	msgType, err = decodeHeader(buffer)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to decode header: %w", err)
+		return nil, nil, 0, fmt.Errorf("failed to decode header: %w", err)
 	}
 	slog.Debug("  Decode", gId(), l.debug(), slog.Int("l(data)", len(buffer)), slog.Any("msgType", msgType))
 
@@ -176,7 +175,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		// Decode S0 message
 		connId, pubKeyIdSnd, pubKeyEpSnd, message, err := DecodeInitSnd(buffer)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to decode InitHandshakeS0: %w", err)
+			return nil, nil, 0, fmt.Errorf("failed to decode InitHandshakeS0: %w", err)
 		}
 		conn := l.connMap.Get(connId)
 		//we might have received this a multiple times due to retransmission in the first packet
@@ -185,11 +184,11 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		if conn == nil {
 			prvKeyEpRcv, err = generateKey()
 			if err != nil {
-				return nil, nil, fmt.Errorf("failed to generate keys: %w", err)
+				return nil, nil, 0, fmt.Errorf("failed to generate keys: %w", err)
 			}
 			conn, err = l.newConn(remoteAddr, prvKeyEpRcv, pubKeyIdSnd, pubKeyEpSnd, false, false)
 			if err != nil {
-				return nil, nil, fmt.Errorf("failed to create connection: %w", err)
+				return nil, nil, 0, fmt.Errorf("failed to create connection: %w", err)
 			}
 			l.connMap.Put(connId, conn)
 		} else {
@@ -198,16 +197,16 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 
 		sharedSecret, err := prvKeyEpRcv.ECDH(pubKeyEpSnd)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create connection: %w", err)
+			return nil, nil, 0, fmt.Errorf("failed to create connection: %w", err)
 		}
 		conn.sharedSecret = sharedSecret
 		slog.Debug(" Decode/InitSnd", gId(), l.debug())
-		return conn, message, nil
+		return conn, message.PayloadRaw, InitSnd, nil
 	case InitRcv:
 		connId := Uint64(buffer[HeaderSize : HeaderSize+ConnIdSize])
 		conn := l.connMap.Get(connId)
 		if conn == nil {
-			return nil, nil, errors.New("connection not found for InitRcv")
+			return nil, nil, 0, errors.New("connection not found for InitRcv")
 		}
 
 		// Decode R0 message
@@ -215,7 +214,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 			buffer,
 			conn.keys.prvKeyEpSnd)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to decode InitRcv: %w", err)
+			return nil, nil, 0, fmt.Errorf("failed to decode InitRcv: %w", err)
 		}
 
 		conn.keys.pubKeyIdRcv = pubKeyIdRcv
@@ -223,14 +222,14 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		conn.sharedSecret = sharedSecret
 
 		slog.Debug(" Decode/InitRcv", gId(), l.debug())
-		return conn, message, nil
+		return conn, message.PayloadRaw, InitRcv, nil
 	case InitCryptoSnd:
 		// Decode crypto S0 message
 		connId, pubKeyIdSnd, pubKeyEpSnd, message, err := DecodeInitCryptoSnd(
 			buffer,
 			l.prvKeyId)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to decode InitWithCryptoS0: %w", err)
+			return nil, nil, 0, fmt.Errorf("failed to decode InitWithCryptoS0: %w", err)
 		}
 		//we might have received this a multiple times due to retransmission in the first packet
 		//however the other side send us this, so we are expected to drop the old keys
@@ -240,11 +239,11 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		if conn == nil {
 			prvKeyEpRcv, err = generateKey()
 			if err != nil {
-				return nil, nil, fmt.Errorf("failed to generate keys: %w", err)
+				return nil, nil, 0, fmt.Errorf("failed to generate keys: %w", err)
 			}
 			conn, err = l.newConn(remoteAddr, prvKeyEpRcv, pubKeyIdSnd, pubKeyEpSnd, false, true)
 			if err != nil {
-				return nil, nil, fmt.Errorf("failed to create connection: %w", err)
+				return nil, nil, 0, fmt.Errorf("failed to create connection: %w", err)
 			}
 			l.connMap.Put(connId, conn)
 		} else {
@@ -255,37 +254,37 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 
 		conn.sharedSecret = sharedSecret
 		slog.Debug(" Decode/InitCryptoSnd", gId(), l.debug())
-		return conn, message, nil
+		return conn, message.PayloadRaw, InitCryptoSnd, nil
 	case InitCryptoRcv:
 		connId := Uint64(buffer[HeaderSize : HeaderSize+ConnIdSize])
 		conn := l.connMap.Get(connId)
 		if conn == nil {
-			return nil, nil, errors.New("connection not found for InitWithCryptoR0")
+			return nil, nil, 0, errors.New("connection not found for InitWithCryptoR0")
 		}
 
 		// Decode crypto R0 message
 		sharedSecret, pubKeyEpRcv, message, err := DecodeInitCryptoRcv(buffer, conn.keys.prvKeyEpSnd)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to decode InitWithCryptoR0: %w", err)
+			return nil, nil, 0, fmt.Errorf("failed to decode InitWithCryptoR0: %w", err)
 		}
 
 		conn.keys.pubKeyEpRcv = pubKeyEpRcv
 		conn.sharedSecret = sharedSecret
 
 		slog.Debug(" Decode/InitCryptoRcv", gId(), l.debug())
-		return conn, message, nil
+		return conn, message.PayloadRaw, InitCryptoRcv, nil
 	case Data:
 		connId := Uint64(buffer[HeaderSize : HeaderSize+ConnIdSize])
 		conn := l.connMap.Get(connId)
 		if conn == nil {
 			slog.Debug("Looking for connection", slog.Uint64("connId", connId), slog.Int("available", l.connMap.Size()))
-			return nil, nil, errors.New("connection not found for DataMessage")
+			return nil, nil, 0, errors.New("connection not found for DataMessage")
 		}
 
 		// Decode Data message
 		message, err := DecodeData(buffer, conn.state.isSenderOnInit, conn.epochCryptoRcv, conn.sharedSecret)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, 0, err
 		}
 
 		//we decoded conn.epochCrypto + 1, that means we can safely move forward with the epoch
@@ -294,9 +293,9 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (*Connection
 		}
 
 		slog.Debug(" Decode/Data", gId(), l.debug(), slog.Int("l(buffer)", len(buffer)))
-		return conn, message, nil
+		return conn, message.PayloadRaw, Data, nil
 	default:
-		return nil, nil, fmt.Errorf("unknown message type: %v", msgType)
+		return nil, nil, 0, fmt.Errorf("unknown message type: %v", msgType)
 	}
 }
 

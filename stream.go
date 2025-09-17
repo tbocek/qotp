@@ -99,7 +99,7 @@ func (s *Stream) debug() slog.Attr {
 	} else if s.conn.listener.localConn == nil {
 		return slog.String("net", "s.conn.listener.localConn is nil")
 	}
-	
+
 	return slog.String("net", s.conn.listener.localConn.LocalAddrString())
 }
 

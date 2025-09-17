@@ -347,8 +347,6 @@ func DecodeInitRcv(encData []byte, prvKeyEpSnd *ecdh.PrivateKey) (
 
 	sharedSecret, err = prvKeyEpSnd.ECDH(pubKeyEpRcv)
 
-	slog.Debug("EncodeInitHandshakeR0 shared secret:", slog.Any("sharedSecret2", sharedSecret))
-
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
