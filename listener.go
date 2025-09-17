@@ -224,7 +224,7 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 
 	var p *PayloadHeader
 	if msgType == InitSnd { //InitSnd is the only message without any payload
-		p = &PayloadHeader{RcvWndSize: rcvBufferCapacity}
+		p = conn.payloadHeader()
 		data = []byte{}
 	} else {
 		p, data, err = DecodePayload(payload)

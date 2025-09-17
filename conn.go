@@ -16,10 +16,10 @@ type ConnectionKeys struct {
 }
 
 type ConnectionState struct {
-	isSenderOnInit         bool
-	isWithCryptoOnInit     bool
-	isHandshakeDoneOnRcv   bool
-	isInitSentOnSnd        bool
+	isSenderOnInit       bool
+	isWithCryptoOnInit   bool
+	isHandshakeDoneOnRcv bool
+	isInitSentOnSnd      bool
 }
 
 type Connection struct {
@@ -88,7 +88,7 @@ func (c *Connection) Stream(streamID uint32) (s *Stream) {
 }
 
 func (c *Connection) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uint64) (s *Stream, err error) {
-	
+
 	if err != nil {
 		slog.Info("error in decoding payload from new connection", slog.Any("error", err))
 		return nil, err
@@ -201,7 +201,8 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 		c.OnPacketLoss()
 		slog.Debug(" Flush/Retransmit", gId(), s.debug(), c.debug())
 
-		encData, err := s.encode(splitData, offset, ack, msgType)
+		p := s.payloadHeader(offset, ack)
+		encData, err := c.encode(p, splitData, msgType)
 		if err != nil {
 			return 0, 0, 0, err
 		}
@@ -227,7 +228,8 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 		splitData, offset := c.snd.ReadyToSend(s.streamID, s.msgType(), ack, startMtu, nowNano)
 		if splitData != nil {
 			slog.Debug(" Flush/Send", gId(), s.debug(), c.debug())
-			encData, err := s.encode(splitData, offset, ack, s.msgType())
+			p := s.payloadHeader(offset, ack)
+			encData, err := c.encode(p, splitData, s.msgType())
 			if err != nil {
 				return 0, 0, 0, err
 			}
@@ -255,7 +257,8 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 }
 
 func (c *Connection) writeAck(stream *Stream, ack *Ack, nowNano uint64) (raw int, data int, pacingIntervalNano uint64, err error) {
-	encData, err := stream.encode([]byte{}, 0, ack, stream.msgType())
+	p := stream.payloadHeader(0, ack)
+	encData, err := c.encode(p, []byte{}, stream.msgType())
 	if err != nil {
 		return 0, 0, 0, err
 	}
@@ -269,6 +272,12 @@ func (c *Connection) writeAck(stream *Stream, ack *Ack, nowNano uint64) (raw int
 	pacingIntervalNano = c.CalcPacingInterval(uint64(len(encData)))
 	c.nextWriteTime = nowNano + pacingIntervalNano
 	return raw, 0, pacingIntervalNano, nil
+}
+
+func (c *Connection) payloadHeader() *PayloadHeader{
+	return &PayloadHeader{
+			RcvWndSize:   uint64(c.rcv.capacity) - uint64(c.rcv.Size()),
+		}
 }
 
 func (c *Connection) debug() slog.Attr {

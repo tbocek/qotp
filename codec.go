@@ -47,101 +47,94 @@ func CalcMaxOverhead(msgType MsgType, ack *Ack, offset uint64) (overhead int) {
 	return overhead
 }
 
-func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgType) (encData []byte, err error) {
+func (conn *Connection) encode(p *PayloadHeader, userData []byte, msgType MsgType) (encData []byte, err error) {
 	// Create payload early for cases that need it
 	var packetData []byte
 
-	slog.Debug("  Encode", gId(), s.debug(), s.conn.debug(),
-		slog.Uint64("offset", offset),
+	slog.Debug("  Encode", gId(), conn.debug(),
 		slog.Int("l(userData)", len(userData)),
 		slog.String("b…", string(userData[:min(16, len(userData))])))
 
 	// Special case: InitHandshakeS0 doesn't need payload
 	if msgType == InitSnd {
 		encData = EncodeInitSnd(
-			s.conn.listener.prvKeyId.PublicKey(),
-			s.conn.keys.prvKeyEpSnd,
+			conn.listener.prvKeyId.PublicKey(),
+			conn.keys.prvKeyEpSnd,
 		)
-		slog.Debug("   Encode/InitSnd", gId(), s.debug(), s.conn.debug(),
+		slog.Debug("   Encode/InitSnd", gId(), conn.debug(),
 			slog.Int("l(encData)", len(encData)))
-		s.conn.snCrypto++
-		s.conn.state.isInitSentOnSnd = true
+		conn.snCrypto++
+		conn.state.isInitSentOnSnd = true
 		return encData, nil
 	}
 
 	// Create payload for all other message types
-	p := &PayloadHeader{
-		IsClose:      s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
-		RcvWndSize:   uint64(s.conn.rcv.capacity) - uint64(s.conn.rcv.Size()),
-		Ack:          ack,
-		StreamID:     s.streamID,
-		StreamOffset: offset,
-	}
+	
 	packetData, _ = EncodePayload(p, userData)
 
 	// Handle message encoding based on connection state
 	switch msgType {
 	case InitCryptoSnd:
 		encData, err = EncodeInitCryptoSnd(
-			s.conn.keys.pubKeyIdRcv,
-			s.conn.listener.prvKeyId.PublicKey(),
-			s.conn.keys.prvKeyEpSnd,
-			s.conn.snCrypto,
+			conn.keys.pubKeyIdRcv,
+			conn.listener.prvKeyId.PublicKey(),
+			conn.keys.prvKeyEpSnd,
+			conn.snCrypto,
 			packetData,
 		)
 		if err != nil {
 			return nil, err
 		}
-		s.conn.state.isInitSentOnSnd = true
-		slog.Debug("   Encode/InitCryptoSnd", gId(), s.debug(), s.conn.debug(),
+		conn.state.isInitSentOnSnd = true
+		slog.Debug("   Encode/InitCryptoSnd", gId(), conn.debug(),
 			slog.Int("l(packetData)", len(packetData)),
 			slog.Int("l(encData)", len(encData)))
 	case InitCryptoRcv:
 		encData, err = EncodeInitCryptoRcv(
-			s.conn.keys.pubKeyIdRcv,
-			s.conn.listener.prvKeyId.PublicKey(),
-			s.conn.keys.pubKeyEpRcv,
-			s.conn.keys.prvKeyEpSnd,
-			s.conn.snCrypto,
+			conn.keys.pubKeyIdRcv,
+			conn.listener.prvKeyId.PublicKey(),
+			conn.keys.pubKeyEpRcv,
+			conn.keys.prvKeyEpSnd,
+			conn.snCrypto,
 			packetData,
 		)
 		if err != nil {
 			return nil, err
 		}
-		s.conn.state.isInitSentOnSnd = true
-		slog.Debug("   Encode/InitCryptoRcv", gId(), s.debug(), s.conn.debug(),
+		conn.state.isInitSentOnSnd = true
+		slog.Debug("   Encode/InitCryptoRcv", gId(), conn.debug(),
 			slog.Int("l(packetData)", len(packetData)),
 			slog.Int("l(encData)", len(encData)))
 	case InitRcv:
 		encData, err = EncodeInitRcv(
-			s.conn.keys.pubKeyIdRcv,
-			s.conn.listener.prvKeyId.PublicKey(),
-			s.conn.keys.pubKeyEpRcv,
-			s.conn.keys.prvKeyEpSnd,
-			s.conn.snCrypto,
+			conn.keys.pubKeyIdRcv,
+			conn.listener.prvKeyId.PublicKey(),
+			conn.keys.pubKeyEpRcv,
+			conn.keys.prvKeyEpSnd,
+			conn.snCrypto,
 			packetData,
 		)
 		if err != nil {
 			return nil, err
 		}
-		s.conn.state.isInitSentOnSnd = true
-		slog.Debug("   Encode/InitRcv", gId(), s.debug(), s.conn.debug(),
+		conn.state.isInitSentOnSnd = true
+		slog.Debug("   Encode/InitRcv", gId(), conn.debug(),
 			slog.Int("l(packetData)", len(packetData)),
 			slog.Int("l(encData)", len(encData)))
 	case Data:
 		encData, err = EncodeData(
-			s.conn.keys.prvKeyEpSnd.PublicKey(),
-			s.conn.keys.pubKeyEpRcv,
-			s.conn.state.isSenderOnInit,
-			s.conn.sharedSecret,
-			s.conn.snCrypto,
-			s.conn.epochCryptoSnd,
+			conn.keys.prvKeyEpSnd.PublicKey(),
+			conn.keys.pubKeyEpRcv,
+			conn.state.isSenderOnInit,
+			conn.sharedSecret,
+			conn.snCrypto,
+			conn.epochCryptoSnd,
 			packetData,
 		)
 		if err != nil {
 			return nil, err
 		}
-		slog.Debug("   Encode/Data", gId(), s.debug(), s.conn.debug(),
+		slog.Debug("   Encode/Data", gId(), conn.debug(),
 			slog.Int("len(payRaw)", len(packetData)),
 			slog.Int("len(dataEnc)", len(encData)))
 	default:
@@ -149,16 +142,16 @@ func (s *Stream) encode(userData []byte, offset uint64, ack *Ack, msgType MsgTyp
 	}
 
 	//update state ofter encode of packet
-	s.conn.snCrypto++
+	conn.snCrypto++
 	//rollover
-	if s.conn.snCrypto > (1<<48)-1 {
-		if s.conn.epochCryptoSnd+1 > (1<<47)-1 { //47, as the last bit is used for sender / receiver differentiation
+	if conn.snCrypto > (1<<48)-1 {
+		if conn.epochCryptoSnd+1 > (1<<47)-1 { //47, as the last bit is used for sender / receiver differentiation
 			//TODO: quic has key rotation (via bitflip)
 			return nil, errors.New("exhausted 2^95 sn number, cannot continue, you just sent ~5 billion ZettaBytes. " +
 				"Now you need to reconnect manually. This is roughly 28 million times all the data humanity has ever created.")
 		}
-		s.conn.epochCryptoSnd++
-		s.conn.snCrypto = 0
+		conn.epochCryptoSnd++
+		conn.snCrypto = 0
 	}
 	return encData, nil
 }
