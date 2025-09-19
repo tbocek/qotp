@@ -4,7 +4,6 @@ set -e
 
 # Default values
 VERSION_TYPE="patch"
-DRY_RUN=false
 
 # Function to show usage
 show_usage() {
@@ -14,14 +13,12 @@ show_usage() {
     echo "  --patch     Increment patch version (default)"
     echo "  --minor     Increment minor version"
     echo "  --major     Increment major version"
-    echo "  --dry-run   Show what would be done without making changes"
     echo "  -h, --help  Show this help message"
     echo ""
     echo "Examples:"
     echo "  $0              # Increment patch version"
     echo "  $0 --minor      # Increment minor version"
     echo "  $0 --major      # Increment major version"
-    echo "  $0 --dry-run    # Show what would happen"
 }
 
 # Parse command line arguments
@@ -37,10 +34,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --major)
             VERSION_TYPE="major"
-            shift
-            ;;
-        --dry-run)
-            DRY_RUN=true
             shift
             ;;
         -h|--help)
@@ -127,11 +120,7 @@ fi
 
 # Fetch all tags from remote
 echo "Fetching tags from remote..."
-if [[ "$DRY_RUN" == "false" ]]; then
-    git fetch --tags
-else
-    echo "[DRY RUN] Would run: git fetch --tags"
-fi
+git fetch --tags
 
 # Get the latest tag
 echo "Finding latest tag..."
@@ -149,16 +138,6 @@ NEW_VERSION=$(increment_version "$LATEST_TAG" "$VERSION_TYPE")
 NEW_TAG="v$NEW_VERSION"
 
 echo "New version will be: $NEW_TAG (incrementing $VERSION_TYPE)"
-
-if [[ "$DRY_RUN" == "true" ]]; then
-    echo ""
-    echo "[DRY RUN] Would perform the following actions:"
-    echo "1. Create tag: $NEW_TAG"
-    echo "2. Push tag to remote"
-    echo ""
-    echo "To actually create the release, run without --dry-run"
-    exit 0
-fi
 
 # Confirm before proceeding
 read -p "Create and push tag $NEW_TAG? (y/N): " -n 1 -r
