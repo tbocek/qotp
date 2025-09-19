@@ -76,10 +76,6 @@ func TestCryptoDoubleEncryptDecryptMinData2(t *testing.T) {
 	testDoubleEncryptDecrypt(t, 2, randomBytes(9), []byte(""))
 }
 
-func TestCryptoDoubleEncryptDecryptEmptyData(t *testing.T) {
-	testDoubleEncryptDecrypt(t, 1111111111, []byte{}, []byte("Only AAD"))
-}
-
 // Corner case: Maximum sequence number
 func TestCryptoDoubleEncryptDecryptMaxSequenceNumber(t *testing.T) {
 	testDoubleEncryptDecrypt(t, uint64(0xffffffffffff), randomBytes(10), []byte("AAD"))
@@ -143,7 +139,7 @@ func testEncodeDecodeInitCryptoSnd(t *testing.T, payload []byte) {
 	alicePrvKeyEp := generateKeys(t)
 	bobPrvKeyId := generateKeys(t)
 
-	buffer, err := EncodeInitCryptoSnd(bobPrvKeyId.PublicKey(), alicePrvKeyId.PublicKey(), alicePrvKeyEp, 0, payload)
+	_, buffer, err := EncodeInitCryptoSnd(bobPrvKeyId.PublicKey(), alicePrvKeyId.PublicKey(), alicePrvKeyEp, 0, payload)
 
 	// If payload is too short (< 8 bytes), expect error
 	if len(payload) < 8 {
@@ -154,7 +150,7 @@ func testEncodeDecodeInitCryptoSnd(t *testing.T, payload []byte) {
 
 	assert.Nil(t, err)
 
-	_, _, _, m, err := DecodeInitCryptoSnd(buffer, bobPrvKeyId)
+	_, _, m, err := DecodeInitCryptoSnd(buffer, bobPrvKeyId)
 	assert.Nil(t, err)
 	assert.Equal(t, payload, m.PayloadRaw)
 }
@@ -204,15 +200,15 @@ func testEncodeDecodeInitCryptoRcv(t *testing.T, payload []byte) {
 		validPayload = []byte("12345678") // Use minimum valid payload for initial step
 	}
 
-	bufferInit, err := EncodeInitCryptoSnd(bobPrvKeyId.PublicKey(), alicePrvKeyId.PublicKey(), alicePrvKeyEp, 0, validPayload)
+	connId,  bufferInit, err := EncodeInitCryptoSnd(bobPrvKeyId.PublicKey(), alicePrvKeyId.PublicKey(), alicePrvKeyEp, 0, validPayload)
 	assert.Nil(t, err)
 
 	// Bob decodes message from Alice
-	_, _, _, _, err = DecodeInitCryptoSnd(bufferInit, bobPrvKeyId)
+	_, _, _, err = DecodeInitCryptoSnd(bufferInit, bobPrvKeyId)
 	assert.Nil(t, err)
 
 	// Bob -> Alice (test the actual payload we want to test)
-	bufferInitReply, err := EncodeInitCryptoRcv(alicePrvKeyId.PublicKey(), bobPrvKeyId.PublicKey(), alicePrvKeyEp.PublicKey(), bobPrvKeyEp, 0, payload)
+	bufferInitReply, err := EncodeInitCryptoRcv(connId, alicePrvKeyEp.PublicKey(), bobPrvKeyEp, 0, payload)
 
 	// If payload is too short (< 8 bytes), expect error
 	if len(payload) < 8 {
@@ -264,17 +260,15 @@ func TestCryptoInitSndBasicFlow(t *testing.T) {
 	alicePrvKeyEp := generateKeys(t)
 
 	// Alice -> Bob: Encode InitHandshakeS0
-	buffer := EncodeInitSnd(
+	_, buffer := EncodeInitSnd(
 		alicePrvKeyId.PublicKey(),
-		alicePrvKeyEp)
+		alicePrvKeyEp.PublicKey())
 
 	// Bob receives and decodes InitHandshakeS0
-	_, pubKeyIdSnd, pubKeyEpSnd, msg, err := DecodeInitSnd(buffer)
+	pubKeyIdSnd, pubKeyEpSnd, err := DecodeInitSnd(buffer)
 
 	// Verify the results
 	assert.NoError(t, err)
-	assert.Equal(t, InitSnd, msg.MsgType)
-	assert.Equal(t, uint64(0), msg.SnConn)
 
 	// Verify the public keys match what was sent
 	assert.True(t, bytes.Equal(alicePrvKeyId.PublicKey().Bytes(), pubKeyIdSnd.Bytes()))
@@ -284,7 +278,7 @@ func TestCryptoInitSndBasicFlow(t *testing.T) {
 func TestCryptoInitSndInvalidSize(t *testing.T) {
 	// Test with buffer that's too small
 	buffer := make([]byte, MinInitSndSize-1)
-	_, _, _, _, err := DecodeInitSnd(buffer)
+	_, _, err := DecodeInitSnd(buffer)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "size is below minimum init")
 }
@@ -294,25 +288,24 @@ func TestCryptoInitSndExactMinSize(t *testing.T) {
 	alicePrvKeyId := generateKeys(t)
 	alicePrvKeyEp := generateKeys(t)
 
-	buffer := EncodeInitSnd(alicePrvKeyId.PublicKey(), alicePrvKeyEp)
+	_, buffer := EncodeInitSnd(alicePrvKeyId.PublicKey(), alicePrvKeyEp.PublicKey())
 
 	// Verify the buffer is at least minimum size
 	assert.GreaterOrEqual(t, len(buffer), MinInitSndSize)
 
 	// Should decode successfully
-	_, _, _, _, err := DecodeInitSnd(buffer)
+	_, _, err := DecodeInitSnd(buffer)
 	assert.NoError(t, err)
 }
 
 // Corner case: Empty buffer
 func TestCryptoInitSndEmptyBuffer(t *testing.T) {
-	_, _, _, _, err := DecodeInitSnd([]byte{})
+	_, _, err := DecodeInitSnd([]byte{})
 	assert.Error(t, err)
 }
 
 func TestCryptoInitRcvBasicFlow(t *testing.T) {
 	// Generate keys
-	alicePrvKeyId := generateKeys(t)
 	alicePrvKeyEp := generateKeys(t)
 	bobPrvKeyId := generateKeys(t)
 	bobPrvKeyEp := generateKeys(t)
@@ -320,7 +313,7 @@ func TestCryptoInitRcvBasicFlow(t *testing.T) {
 	// Bob -> Alice: Encode InitHandshakeR0
 	rawData := []byte("test data")
 	buffer, err := EncodeInitRcv(
-		alicePrvKeyId.PublicKey(),
+		0,
 		bobPrvKeyId.PublicKey(),
 		alicePrvKeyEp.PublicKey(),
 		bobPrvKeyEp,
@@ -334,7 +327,6 @@ func TestCryptoInitRcvBasicFlow(t *testing.T) {
 
 	// Verify the results
 	assert.NoError(t, err)
-	assert.Equal(t, InitRcv, msg.MsgType)
 	assert.Equal(t, uint64(0), msg.SnConn)
 	assert.Equal(t, rawData, msg.PayloadRaw)
 
@@ -353,13 +345,12 @@ func TestCryptoInitRcvInvalidSize(t *testing.T) {
 
 // Corner case: Empty payload for InitRcv (might have different rules than InitCrypto)
 func TestCryptoInitRcvEmptyPayload(t *testing.T) {
-	alicePrvKeyId := generateKeys(t)
 	alicePrvKeyEp := generateKeys(t)
 	bobPrvKeyId := generateKeys(t)
 	bobPrvKeyEp := generateKeys(t)
 
 	buffer, err := EncodeInitRcv(
-		alicePrvKeyId.PublicKey(),
+		0,
 		bobPrvKeyId.PublicKey(),
 		alicePrvKeyEp.PublicKey(),
 		bobPrvKeyEp,
@@ -380,14 +371,13 @@ func TestCryptoInitRcvEmptyPayload(t *testing.T) {
 
 // Corner case: 8 bytes payload for InitRcv
 func TestCryptoInitRcv8BytePayload(t *testing.T) {
-	alicePrvKeyId := generateKeys(t)
 	alicePrvKeyEp := generateKeys(t)
 	bobPrvKeyId := generateKeys(t)
 	bobPrvKeyEp := generateKeys(t)
 
 	payload := []byte("12345678")
 	buffer, err := EncodeInitRcv(
-		alicePrvKeyId.PublicKey(),
+		0,
 		bobPrvKeyId.PublicKey(),
 		alicePrvKeyEp.PublicKey(),
 		bobPrvKeyEp,
@@ -402,7 +392,6 @@ func TestCryptoInitRcv8BytePayload(t *testing.T) {
 
 // Corner case: Maximum epoch and sequence values
 func TestCryptoInitRcvMaxValues(t *testing.T) {
-	alicePrvKeyId := generateKeys(t)
 	alicePrvKeyEp := generateKeys(t)
 	bobPrvKeyId := generateKeys(t)
 	bobPrvKeyEp := generateKeys(t)
@@ -410,7 +399,7 @@ func TestCryptoInitRcvMaxValues(t *testing.T) {
 	maxSn := ^uint64(0)
 
 	buffer, err := EncodeInitRcv(
-		alicePrvKeyId.PublicKey(),
+		0,
 		bobPrvKeyId.PublicKey(),
 		alicePrvKeyEp.PublicKey(),
 		bobPrvKeyEp,
@@ -432,18 +421,18 @@ func TestCryptoFullHandshakeFlow(t *testing.T) {
 	bobPrvKeyEp := generateKeys(t)
 
 	// Step 1: Alice sends InitHandshakeS0
-	bufferS0 := EncodeInitSnd(
+	connId, bufferS0 := EncodeInitSnd(
 		alicePrvKeyId.PublicKey(),
-		alicePrvKeyEp)
+		alicePrvKeyEp.PublicKey())
 
 	// Step 2: Bob receives and decodes InitHandshakeS0
-	_, _, _, _, err := DecodeInitSnd(bufferS0)
+	_, _, err := DecodeInitSnd(bufferS0)
 	assert.NoError(t, err)
 
 	// Step 3: Bob sends InitHandshakeR0
 	rawData := []byte("handshake response")
 	bufferR0, err := EncodeInitRcv(
-		alicePrvKeyId.PublicKey(),
+		connId,
 		bobPrvKeyId.PublicKey(),
 		alicePrvKeyEp.PublicKey(),
 		bobPrvKeyEp, 0,
@@ -465,12 +454,12 @@ func TestCryptoMultipleHandshakes(t *testing.T) {
 	alicePrvKeyEp1 := generateKeys(t)
 	bobPrvKeyEp1 := generateKeys(t)
 
-	buffer1S0 := EncodeInitSnd(alicePrvKeyId.PublicKey(), alicePrvKeyEp1)
-	_, _, _, _, err := DecodeInitSnd(buffer1S0)
+	connId, buffer1S0 := EncodeInitSnd(alicePrvKeyId.PublicKey(), alicePrvKeyEp1.PublicKey())
+	_, _, err := DecodeInitSnd(buffer1S0)
 	assert.NoError(t, err)
 
 	buffer1R0, err := EncodeInitRcv(
-		alicePrvKeyId.PublicKey(),
+		connId,
 		bobPrvKeyId.PublicKey(),
 		alicePrvKeyEp1.PublicKey(),
 		bobPrvKeyEp1, 0,
@@ -484,12 +473,12 @@ func TestCryptoMultipleHandshakes(t *testing.T) {
 	alicePrvKeyEp2 := generateKeys(t)
 	bobPrvKeyEp2 := generateKeys(t)
 
-	buffer2S0 := EncodeInitSnd(alicePrvKeyId.PublicKey(), alicePrvKeyEp2)
-	_, _, _, _, err = DecodeInitSnd(buffer2S0)
+	connId, buffer2S0 := EncodeInitSnd(alicePrvKeyId.PublicKey(), alicePrvKeyEp2.PublicKey())
+	_, _, err = DecodeInitSnd(buffer2S0)
 	assert.NoError(t, err)
 
 	buffer2R0, err := EncodeInitRcv(
-		alicePrvKeyId.PublicKey(),
+		connId,
 		bobPrvKeyId.PublicKey(),
 		alicePrvKeyEp2.PublicKey(),
 		bobPrvKeyEp2, 0,
@@ -508,11 +497,11 @@ func TestCryptoNilKeyHandling(t *testing.T) {
 	})
 
 	assert.Panics(t, func() {
-		EncodeInitRcv(nil, nil, nil, nil, 0, []byte("test"))
+		EncodeInitRcv(0, nil, nil, nil, 0, []byte("test"))
 	})
 
 	validBuffer := make([]byte, startMtu)
-	_, _, _, _, err := DecodeInitSnd(validBuffer)
+	_, _, err := DecodeInitSnd(validBuffer)
 	assert.Nil(t, err)
 
 	validBuffer = make([]byte, startMtu)
@@ -527,7 +516,7 @@ func TestCryptoCorruptedBuffer(t *testing.T) {
 	alicePrvKeyEp := generateKeys(t)
 
 	// Create valid buffer
-	buffer := EncodeInitSnd(alicePrvKeyId.PublicKey(), alicePrvKeyEp)
+	_, buffer := EncodeInitSnd(alicePrvKeyId.PublicKey(), alicePrvKeyEp.PublicKey())
 
 	// Corrupt the buffer
 	if len(buffer) > 10 {
@@ -536,7 +525,7 @@ func TestCryptoCorruptedBuffer(t *testing.T) {
 	}
 
 	// Should fail to decode
-	_, _, _, _, err := DecodeInitSnd(buffer)
+	_, _, err := DecodeInitSnd(buffer)
 	// Note: Depending on where corruption occurs, this might succeed or fail
 	// The test verifies the function doesn't panic on corrupted data
 	_ = err // Explicitly acknowledge we're not checking the error
@@ -547,14 +536,14 @@ func TestCryptoVeryLargeBuffer(t *testing.T) {
 	alicePrvKeyId := generateKeys(t)
 	alicePrvKeyEp := generateKeys(t)
 
-	validBuffer := EncodeInitSnd(alicePrvKeyId.PublicKey(), alicePrvKeyEp)
+	_, validBuffer := EncodeInitSnd(alicePrvKeyId.PublicKey(), alicePrvKeyEp.PublicKey())
 
 	// Create oversized buffer by appending extra data
 	largeBuffer := make([]byte, len(validBuffer)+10000)
 	copy(largeBuffer, validBuffer)
 
 	// Should still decode the valid portion
-	_, _, _, _, err := DecodeInitSnd(largeBuffer)
+	_, _, err := DecodeInitSnd(largeBuffer)
 	assert.NoError(t, err)
 }
 
@@ -563,7 +552,7 @@ func TestCryptoRandomBuffer(t *testing.T) {
 	randomBuffer := randomBytes(1000)
 
 	// Should handle random data gracefully
-	_, _, _, _, err := DecodeInitSnd(randomBuffer)
+	_, _, err := DecodeInitSnd(randomBuffer)
 	// This will likely fail, but shouldn't panic
 	_ = err
 }

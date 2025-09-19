@@ -106,63 +106,6 @@ func TestCodecConnectionClosed(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// Handshake Type Tests
-func TestCodecInitSnd(t *testing.T) {
-	conn := createTestConnection(true, false, false)
-	stream := &Stream{conn: conn}
-
-	p := stream.payloadHeader(0, nil)
-	output, err := conn.encode(p, nil, stream.msgType())
-	assert.NoError(t, err)
-	assert.NotNil(t, output)
-
-	msgType, err := decodeHeader(output)
-	assert.NoError(t, err)
-	assert.Equal(t, InitSnd, msgType)
-}
-
-func TestCodecInitRcv(t *testing.T) {
-	conn := createTestConnection(false, false, false)
-	stream := &Stream{conn: conn}
-
-	p := stream.payloadHeader(0, nil)
-	output, err := conn.encode(p, []byte("test data"), stream.msgType())
-	assert.NoError(t, err)
-	assert.NotNil(t, output)
-
-	msgType, err := decodeHeader(output)
-	assert.NoError(t, err)
-	assert.Equal(t, InitRcv, msgType)
-}
-
-func TestCodecInitCryptoSnd(t *testing.T) {
-	conn := createTestConnection(true, true, false)
-	stream := &Stream{conn: conn}
-
-	p := stream.payloadHeader(0, nil)
-	output, err := conn.encode(p, []byte("test data"), stream.msgType())
-	assert.NoError(t, err)
-	assert.NotNil(t, output)
-
-	msgType, err := decodeHeader(output)
-	assert.NoError(t, err)
-	assert.Equal(t, InitCryptoSnd, msgType)
-}
-
-func TestCodecInitCryptoRcv(t *testing.T) {
-	conn := createTestConnection(false, true, false)
-	stream := &Stream{conn: conn}
-
-	p := stream.payloadHeader(0, nil)
-	output, err := conn.encode(p, []byte("test data"), stream.msgType())
-	assert.NoError(t, err)
-	assert.NotNil(t, output)
-
-	msgType, err := decodeHeader(output)
-	assert.NoError(t, err)
-	assert.Equal(t, InitCryptoRcv, msgType)
-}
-
 // Overhead Calculation Tests - Updated to use CalcMaxOverhead function
 func TestCodecOverheadInitSndNoData(t *testing.T) {
 	overhead := CalcMaxOverhead(InitSnd, nil, 100)

@@ -55,27 +55,19 @@ func (conn *Connection) encode(p *PayloadHeader, userData []byte, msgType MsgTyp
 		slog.Int("l(userData)", len(userData)),
 		slog.String("b…", string(userData[:min(16, len(userData))])))
 
-	// Special case: InitHandshakeS0 doesn't need payload
-	if msgType == InitSnd {
-		encData = EncodeInitSnd(
-			conn.listener.prvKeyId.PublicKey(),
-			conn.keys.prvKeyEpSnd,
-		)
-		slog.Debug("   Encode/InitSnd", gId(), conn.debug(),
-			slog.Int("l(encData)", len(encData)))
-		conn.snCrypto++
-		conn.state.isInitSentOnSnd = true
-		return encData, nil
-	}
-
-	// Create payload for all other message types
-	
-	packetData, _ = EncodePayload(p, userData)
-
 	// Handle message encoding based on connection state
 	switch msgType {
+	case InitSnd:
+		_, encData = EncodeInitSnd(
+			conn.listener.prvKeyId.PublicKey(),
+			conn.keys.prvKeyEpSnd.PublicKey(),
+		)
+		conn.state.isInitSentOnSnd = true
+		slog.Debug("   Encode/InitSnd", gId(), conn.debug(),
+			slog.Int("l(encData)", len(encData)))
 	case InitCryptoSnd:
-		encData, err = EncodeInitCryptoSnd(
+		packetData, _ = EncodePayload(p, userData)
+		_, encData, err = EncodeInitCryptoSnd(
 			conn.keys.pubKeyIdRcv,
 			conn.listener.prvKeyId.PublicKey(),
 			conn.keys.prvKeyEpSnd,
@@ -90,9 +82,9 @@ func (conn *Connection) encode(p *PayloadHeader, userData []byte, msgType MsgTyp
 			slog.Int("l(packetData)", len(packetData)),
 			slog.Int("l(encData)", len(encData)))
 	case InitCryptoRcv:
+		packetData, _ = EncodePayload(p, userData)
 		encData, err = EncodeInitCryptoRcv(
-			conn.keys.pubKeyIdRcv,
-			conn.listener.prvKeyId.PublicKey(),
+			conn.connId,
 			conn.keys.pubKeyEpRcv,
 			conn.keys.prvKeyEpSnd,
 			conn.snCrypto,
@@ -106,8 +98,9 @@ func (conn *Connection) encode(p *PayloadHeader, userData []byte, msgType MsgTyp
 			slog.Int("l(packetData)", len(packetData)),
 			slog.Int("l(encData)", len(encData)))
 	case InitRcv:
+		packetData, _ = EncodePayload(p, userData)
 		encData, err = EncodeInitRcv(
-			conn.keys.pubKeyIdRcv,
+			conn.connId,
 			conn.listener.prvKeyId.PublicKey(),
 			conn.keys.pubKeyEpRcv,
 			conn.keys.prvKeyEpSnd,
@@ -122,9 +115,9 @@ func (conn *Connection) encode(p *PayloadHeader, userData []byte, msgType MsgTyp
 			slog.Int("l(packetData)", len(packetData)),
 			slog.Int("l(encData)", len(encData)))
 	case Data:
+		packetData, _ = EncodePayload(p, userData)
 		encData, err = EncodeData(
-			conn.keys.prvKeyEpSnd.PublicKey(),
-			conn.keys.pubKeyEpRcv,
+			conn.connId,
 			conn.state.isSenderOnInit,
 			conn.sharedSecret,
 			conn.snCrypto,
@@ -138,7 +131,7 @@ func (conn *Connection) encode(p *PayloadHeader, userData []byte, msgType MsgTyp
 			slog.Int("len(payRaw)", len(packetData)),
 			slog.Int("len(dataEnc)", len(encData)))
 	default:
-		return nil, fmt.Errorf("unknown message type: %v", msgType)
+		return nil, errors.New("unknown message type")
 	}
 
 	//update state ofter encode of packet
@@ -157,16 +150,29 @@ func (conn *Connection) encode(p *PayloadHeader, userData []byte, msgType MsgTyp
 }
 
 func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (conn *Connection, payload []byte, msgType MsgType, err error) {
-	msgType, err = decodeHeader(buffer)
-	if err != nil {
-		return nil, nil, 0, fmt.Errorf("failed to decode header: %w", err)
+
+	// Read the header byte and connId
+	if len(buffer) < MinPacketSize {
+		return nil, nil, 0, fmt.Errorf("header needs to be at least %v bytes", MinPacketSize)
 	}
+
+	header := buffer[0]
+	version := header >> 3
+
+	if version != Version {
+		return nil, nil, 0, errors.New("unsupported version version")
+	}
+
+	msgType = MsgType(header & 0x07)
+
+	connId := Uint64(buffer[HeaderSize : ConnIdSize+HeaderSize])
+
 	slog.Debug("  Decode", gId(), l.debug(), slog.Int("l(data)", len(buffer)), slog.Any("msgType", msgType))
 
 	switch msgType {
 	case InitSnd:
 		// Decode S0 message
-		connId, pubKeyIdSnd, pubKeyEpSnd, message, err := DecodeInitSnd(buffer)
+		pubKeyIdSnd, pubKeyEpSnd, err := DecodeInitSnd(buffer)
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("failed to decode InitHandshakeS0: %w", err)
 		}
@@ -179,7 +185,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (conn *Conne
 			if err != nil {
 				return nil, nil, 0, fmt.Errorf("failed to generate keys: %w", err)
 			}
-			conn, err = l.newConn(remoteAddr, prvKeyEpRcv, pubKeyIdSnd, pubKeyEpSnd, false, false)
+			conn, err = l.newConn(connId, remoteAddr, prvKeyEpRcv, pubKeyIdSnd, pubKeyEpSnd, false, false)
 			if err != nil {
 				return nil, nil, 0, fmt.Errorf("failed to create connection: %w", err)
 			}
@@ -194,7 +200,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (conn *Conne
 		}
 		conn.sharedSecret = sharedSecret
 		slog.Debug(" Decode/InitSnd", gId(), l.debug())
-		return conn, message.PayloadRaw, InitSnd, nil
+		return conn, []byte{}, InitSnd, nil
 	case InitRcv:
 		connId := Uint64(buffer[HeaderSize : HeaderSize+ConnIdSize])
 		conn := l.connMap.Get(connId)
@@ -218,7 +224,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (conn *Conne
 		return conn, message.PayloadRaw, InitRcv, nil
 	case InitCryptoSnd:
 		// Decode crypto S0 message
-		connId, pubKeyIdSnd, pubKeyEpSnd, message, err := DecodeInitCryptoSnd(
+		pubKeyIdSnd, pubKeyEpSnd, message, err := DecodeInitCryptoSnd(
 			buffer,
 			l.prvKeyId)
 		if err != nil {
@@ -234,7 +240,7 @@ func (l *Listener) decode(buffer []byte, remoteAddr netip.AddrPort) (conn *Conne
 			if err != nil {
 				return nil, nil, 0, fmt.Errorf("failed to generate keys: %w", err)
 			}
-			conn, err = l.newConn(remoteAddr, prvKeyEpRcv, pubKeyIdSnd, pubKeyEpSnd, false, true)
+			conn, err = l.newConn(connId, remoteAddr, prvKeyEpRcv, pubKeyIdSnd, pubKeyEpSnd, false, true)
 			if err != nil {
 				return nil, nil, 0, fmt.Errorf("failed to create connection: %w", err)
 			}
@@ -300,7 +306,7 @@ func decodeHex(pubKeyHex string) ([]byte, error) {
 	return hex.DecodeString(pubKeyHex)
 }
 
-//////////////////////////////////////////// 
+// //////////////////////////////////////////
 func PutUint16(b []byte, v uint16) int {
 	b[0] = byte(v)
 	b[1] = byte(v >> 8)

@@ -4,7 +4,6 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"log/slog"
@@ -223,7 +222,7 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 	}
 
 	var p *PayloadHeader
-	if msgType == InitSnd { //InitSnd is the only message without any payload
+	if len(payload) == 0 && msgType == InitSnd { //InitSnd is the only message without any payload
 		p = conn.payloadHeader()
 		data = []byte{}
 	} else {
@@ -319,17 +318,13 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 }
 
 func (l *Listener) newConn(
+	connId uint64,
 	remoteAddr netip.AddrPort,
 	prvKeyEpSnd *ecdh.PrivateKey,
 	pubKeyIdRcv *ecdh.PublicKey,
 	pubKeyEdRcv *ecdh.PublicKey,
 	isSender bool,
 	withCrypto bool) (*Connection, error) {
-
-	connId := binary.LittleEndian.Uint64(prvKeyEpSnd.PublicKey().Bytes()) // prvKeyEpSnd is never nil
-	if pubKeyEdRcv != nil {
-		connId = connId ^ binary.LittleEndian.Uint64(pubKeyEdRcv.Bytes()) //this is the id for regular data flow
-	}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()

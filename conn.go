@@ -88,12 +88,6 @@ func (c *Connection) Stream(streamID uint32) (s *Stream) {
 }
 
 func (c *Connection) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uint64) (s *Stream, err error) {
-
-	if err != nil {
-		slog.Info("error in decoding payload from new connection", slog.Any("error", err))
-		return nil, err
-	}
-
 	c.rcvWndSize = p.RcvWndSize
 	s = c.Stream(p.StreamID)
 
