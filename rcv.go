@@ -75,6 +75,8 @@ func (rb *ReceiveBuffer) Insert(streamID uint32, offset uint64, userData []byte,
 	if reqAck {
 		// Now we need to add the ack to the list even if it's a duplicate,
 		// as the ack may have been lost, we need to send it again
+		// 
+		// but only if an ack is requested, otherwise do not send acks
 		rb.ackList = append(rb.ackList, &Ack{streamID: streamID, offset: offset, len: uint16(dataLen)})
 	}
 

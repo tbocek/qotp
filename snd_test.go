@@ -50,7 +50,7 @@ func TestSndReadyToSend(t *testing.T) {
 	sb.QueueData(2, []byte("test2"))
 
 	// Basic send
-	data, offset := sb.ReadyToSend(1, Data, nil, 1000, nowNano)
+	data, offset := sb.ReadyToSend(1, Data, nil, 1000, false, nowNano)
 	assert.Equal(t, []byte("test1"), data)
 	assert.Equal(t, uint64(0), offset)
 
@@ -64,19 +64,19 @@ func TestSndReadyToSend(t *testing.T) {
 
 	// Test MTU limiting with small MTU
 	sb.QueueData(3, []byte("toolongdata"))
-	data, offset = sb.ReadyToSend(3, Data, nil, 15, nowNano) // Use larger MTU to account for overhead
+	data, offset = sb.ReadyToSend(3, Data, nil, 15, false, nowNano) // Use larger MTU to account for overhead
 	// Should get limited data based on MTU minus overhead
 	assert.True(t, len(data) <= 15)
 	assert.Equal(t, uint64(0), offset)
 
 	// Test no data available
-	data, offset = sb.ReadyToSend(4, Data, nil, 1000, nowNano)
+	data, offset = sb.ReadyToSend(4, Data, nil, 1000, false, nowNano)
 	assert.Nil(t, data)
 	assert.Equal(t, uint64(0), offset)
 
 	// Test InitSnd message type (no overhead calculation, maxData = 0)
 	sb.QueueData(5, []byte("initdata"))
-	data, offset = sb.ReadyToSend(5, InitSnd, nil, 4, nowNano)
+	data, offset = sb.ReadyToSend(5, InitSnd, nil, 4, false, nowNano)
 	// InitSnd with maxData=0 results in empty data because length = min(0, remainingData) = 0
 	assert.Equal(t, []byte{}, data)
 	assert.Equal(t, uint64(0), offset)
@@ -89,8 +89,8 @@ func TestSndReadyToRetransmit(t *testing.T) {
 	sb.QueueData(1, []byte("test1"))
 	sb.QueueData(2, []byte("test2"))
 
-	sb.ReadyToSend(1, Data, nil, 1000, 100) // Initial send at time 100
-	sb.ReadyToSend(2, Data, nil, 1000, 100) // Initial send at time 100
+	sb.ReadyToSend(1, Data, nil, 1000, false, 100) // Initial send at time 100
+	sb.ReadyToSend(2, Data, nil, 1000, false, 100) // Initial send at time 100
 
 	// Test basic retransmit
 	data, offset, msgType, err := sb.ReadyToRetransmit(1, nil, 1000, 50, 200) // RTO = 50, now = 200. 200-100 > 50
@@ -113,7 +113,7 @@ func TestSndReadyToRetransmit(t *testing.T) {
 	// Test MTU split scenario with proper MTU that should trigger splitting
 	sb2 := NewSendBuffer(1000, nil)
 	sb2.QueueData(1, []byte("testdata"))
-	sb2.ReadyToSend(1, Data, nil, 1000, 100) // Initial send
+	sb2.ReadyToSend(1, Data, nil, 1000, false, 100) // Initial send
 
 	// Use very small MTU to force splitting
 	data, offset, msgType, err = sb2.ReadyToRetransmit(1, nil, 20, 99, 200) // Small MTU should trigger split
@@ -136,7 +136,7 @@ func TestSndAcknowledgeRangeBasic(t *testing.T) {
 	sb := NewSendBuffer(1000, nil)
 
 	sb.QueueData(1, []byte("testdata"))
-	sb.ReadyToSend(1, Data, nil, 1000, 100)
+	sb.ReadyToSend(1, Data, nil, 1000, false, 100)
 	stream := sb.streams[1]
 
 	status, sentTime := sb.AcknowledgeRange(&Ack{
@@ -198,9 +198,9 @@ func TestSndMultipleStreams(t *testing.T) {
 	sb.QueueData(3, []byte("stream3"))
 
 	// Send from different streams
-	data1, offset1 := sb.ReadyToSend(1, Data, nil, 1000, 100)
-	data2, offset2 := sb.ReadyToSend(2, Data, nil, 1000, 200)
-	data3, offset3 := sb.ReadyToSend(3, Data, nil, 1000, 300)
+	data1, offset1 := sb.ReadyToSend(1, Data, nil, 1000, false, 100)
+	data2, offset2 := sb.ReadyToSend(2, Data, nil, 1000, false, 00)
+	data3, offset3 := sb.ReadyToSend(3, Data, nil, 1000, false, 300)
 
 	assert.Equal(t, []byte("stream1"), data1)
 	assert.Equal(t, []byte("stream2"), data2)

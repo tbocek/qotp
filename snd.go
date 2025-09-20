@@ -126,7 +126,7 @@ func (sb *SendBuffer) QueueData(streamID uint32, userData []byte) (n int, status
 }
 
 // ReadyToSend gets data from dataToSend and creates an entry in dataInFlightMap
-func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType MsgType, ack *Ack, mtu int, nowNano uint64) (
+func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType MsgType, ack *Ack, mtu int, noAck bool, nowNano uint64) (
 	packetData []byte, offset uint64) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
@@ -151,18 +151,19 @@ func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType MsgType, ack *Ack, mt
 		}
 
 		//the max length we can send
-		length := uint16(min(uint64(maxData), remainingData))
-
-		// Pack offset and length into key
-		key := createPacketKey(stream.sentOffset, length)
+		length := uint16(min(uint64(maxData), remainingData))		
 
 		// Get userData slice accounting for bias
 		offset := stream.sentOffset - stream.bias
 		packetData = stream.userData[offset : offset+uint64(length)]
-
-		// Track range
-		m := &SendInfo{sentNr: 1, msgType: msgType, offset: stream.sentOffset, sentTimeNano: nowNano} //we do not know the msg type yet
-		stream.dataInFlightMap.Put(key, m)
+		
+		if !noAck {
+			// Pack offset and length into key
+			key := createPacketKey(stream.sentOffset, length)
+			// Track range
+			m := &SendInfo{sentNr: 1, msgType: msgType, offset: stream.sentOffset, sentTimeNano: nowNano} //we do not know the msg type yet
+			stream.dataInFlightMap.Put(key, m)
+		}
 
 		// Update tracking
 		currentOffset := stream.sentOffset

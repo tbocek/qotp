@@ -254,12 +254,12 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 
 	//next check if we can send packets, during handshake we can only send 1 packet
 	if c.isHandshakeDoneOnRcv || !c.isInitSentOnSnd {
-		splitData, offset := c.snd.ReadyToSend(s.streamID, c.msgType(), ack, c.listener.mtu, nowNano)
+		splitData, offset := c.snd.ReadyToSend(s.streamID, c.msgType(), ack, c.listener.mtu, s.noAck, nowNano)
 		if len(splitData) > 0 {
 			slog.Debug(" Flush/Send", gId(), s.debug(), c.debug())
 
 			p := &PayloadHeader{
-				IsReqAck:     true,
+				IsReqAck:     !s.noAck,
 				IsClose:      s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
 				RcvWndSize:   uint64(s.conn.rcv.capacity) - uint64(s.conn.rcv.Size()),
 				Ack:          ack,
