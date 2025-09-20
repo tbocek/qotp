@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func setupStreamTest(t *testing.T) (connA *Connection, listenerB *Listener, connPair *ConnPair) {
+func setupStreamTest(t *testing.T) (connA *Conn, listenerB *Listener, connPair *ConnPair) {
     // Setup code   
     connPair = NewConnPair("alice", "bob")
    	listenerA, err := Listen(WithNetworkConn(connPair.Conn1), WithPrvKeyId(testPrvKey1))

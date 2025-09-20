@@ -21,7 +21,7 @@ var (
 
 type Stream struct {
 	streamID uint32
-	conn     *Connection
+	conn     *Conn
 	state    StreamState
 	callback func()
 	mu       sync.Mutex

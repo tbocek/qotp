@@ -9,20 +9,7 @@ import (
 	"sync"
 )
 
-type ConnectionKeys struct {
-	pubKeyIdRcv *ecdh.PublicKey
-	prvKeyEpSnd *ecdh.PrivateKey
-	pubKeyEpRcv *ecdh.PublicKey
-}
-
-type ConnectionState struct {
-	isSenderOnInit       bool
-	isWithCryptoOnInit   bool
-	isHandshakeDoneOnRcv bool
-	isInitSentOnSnd      bool
-}
-
-type Connection struct {
+type Conn struct {
 	// Connection identification
 	connId     uint64
 	remoteAddr netip.AddrPort
@@ -32,7 +19,9 @@ type Connection struct {
 	streams  *LinkedMap[uint32, *Stream]
 
 	// Cryptographic keys
-	keys ConnectionKeys
+	prvKeyEpSnd *ecdh.PrivateKey
+	pubKeyEpRcv *ecdh.PublicKey
+	pubKeyIdRcv *ecdh.PublicKey
 
 	// Shared secrets
 	sharedSecret []byte
@@ -45,7 +34,11 @@ type Connection struct {
 	mtu          uint64
 
 	// Connection state
-	state         ConnectionState
+	isSenderOnInit       bool
+	isWithCryptoOnInit   bool
+	isHandshakeDoneOnRcv bool
+	isInitSentOnSnd      bool
+	
 	nextWriteTime uint64
 
 	// Crypto and performance
@@ -57,7 +50,7 @@ type Connection struct {
 	mu sync.Mutex
 }
 
-func (c *Connection) Close() {
+func (c *Conn) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -68,7 +61,7 @@ func (c *Connection) Close() {
 	}
 }
 
-func (c *Connection) Stream(streamID uint32) (s *Stream) {
+func (c *Conn) Stream(streamID uint32) (s *Stream) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -87,7 +80,7 @@ func (c *Connection) Stream(streamID uint32) (s *Stream) {
 	return s
 }
 
-func (c *Connection) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uint64) (s *Stream, err error) {
+func (c *Conn) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uint64) (s *Stream, err error) {
 	c.rcvWndSize = p.RcvWndSize
 	s = c.Stream(p.StreamID)
 
@@ -118,7 +111,7 @@ func (c *Connection) decode(p *PayloadHeader, userData []byte, rawLen int, nowNa
 	return s, nil
 }
 
-func (c *Connection) updateState(s *Stream, isClose bool) {
+func (c *Conn) updateState(s *Stream, isClose bool) {
 	//update state
 	if s.state == StreamStateOpen && isClose {
 		s.state = StreamStateCloseReceived
@@ -130,7 +123,7 @@ func (c *Connection) updateState(s *Stream, isClose bool) {
 }
 
 // We need to check if we remove the current state, if yes, then move the state to the previous stream
-func (c *Connection) cleanupStream(streamID uint32) {
+func (c *Conn) cleanupStream(streamID uint32) {
 	slog.Debug("Cleanup/Stream", gId(), c.debug(), slog.Uint64("streamID", uint64(streamID)))
 
 	if c.listener.currentStreamID != nil && streamID == *c.listener.currentStreamID {
@@ -141,8 +134,9 @@ func (c *Connection) cleanupStream(streamID uint32) {
 	// so that BBR, RTT, is preserved for a bit
 }
 
-func (c *Connection) cleanupConn() {
-	slog.Debug("Cleanup/Stream", gId(), c.debug(), slog.Uint64("connID", c.connId), slog.Any("currId", c.listener.currentConnID))
+func (c *Conn) cleanupConn() {
+	slog.Debug("Cleanup/Stream", gId(), c.debug(), 
+		slog.Uint64("connID", c.connId), slog.Any("currId", c.listener.currentConnID))
 
 	if c.listener.currentConnID != nil && c.connId == *c.listener.currentConnID {
 		*c.listener.currentConnID, _, _ = c.listener.connMap.Next(c.connId)
@@ -150,7 +144,7 @@ func (c *Connection) cleanupConn() {
 	c.listener.connMap.Remove(c.connId)
 }
 
-func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacingIntervalNano uint64, err error) {
+func (c *Conn) Flush(s *Stream, nowNano uint64) (raw int, data int, pacingNano uint64, err error) {
 	//update state for receiver
 	ack := c.rcv.GetSndAck()
 
@@ -211,14 +205,14 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 		}
 
 		packetLen := len(splitData)
-		pacingIntervalNano = c.CalcPacingInterval(uint64(packetLen))
+		pacingNano = c.calcPacing(uint64(packetLen))
 
-		c.nextWriteTime = nowNano + pacingIntervalNano
-		return raw, packetLen, pacingIntervalNano, nil
+		c.nextWriteTime = nowNano + pacingNano
+		return raw, packetLen, pacingNano, nil
 	}
 
 	//next check if we can send packets, during handshake we can only send 1 packet
-	if c.state.isHandshakeDoneOnRcv || !c.state.isInitSentOnSnd {
+	if c.isHandshakeDoneOnRcv || !c.isInitSentOnSnd {
 		splitData, offset := c.snd.ReadyToSend(s.streamID, s.msgType(), ack, startMtu, nowNano)
 		if splitData != nil {
 			slog.Debug(" Flush/Send", gId(), s.debug(), c.debug())
@@ -238,10 +232,10 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 
 			packetLen := len(splitData)
 			c.dataInFlight += packetLen
-			pacingIntervalNano = c.CalcPacingInterval(uint64(len(encData)))
-			c.nextWriteTime = nowNano + pacingIntervalNano
-			return raw, packetLen, pacingIntervalNano, nil
-		} else if ack != nil || !c.state.isInitSentOnSnd {
+			pacingNano = c.calcPacing(uint64(len(encData)))
+			c.nextWriteTime = nowNano + pacingNano
+			return raw, packetLen, pacingNano, nil
+		} else if ack != nil || !c.isInitSentOnSnd {
 			slog.Debug(" Flush/Ack", gId(), s.debug(), c.debug())
 			return c.writeAck(s, ack, nowNano)
 		}
@@ -250,7 +244,7 @@ func (c *Connection) Flush(s *Stream, nowNano uint64) (raw int, data int, pacing
 	return 0, 0, MinDeadLine, nil
 }
 
-func (c *Connection) writeAck(stream *Stream, ack *Ack, nowNano uint64) (raw int, data int, pacingIntervalNano uint64, err error) {
+func (c *Conn) writeAck(stream *Stream, ack *Ack, nowNano uint64) (raw int, data int, pacingNano uint64, err error) {
 	p := stream.payloadHeader(0, ack)
 	encData, err := c.encode(p, []byte{}, stream.msgType())
 	if err != nil {
@@ -263,18 +257,18 @@ func (c *Connection) writeAck(stream *Stream, ack *Ack, nowNano uint64) (raw int
 	if raw != len(encData) {
 		return 0, 0, 0, fmt.Errorf("could not send all data. This should not happen.")
 	}
-	pacingIntervalNano = c.CalcPacingInterval(uint64(len(encData)))
-	c.nextWriteTime = nowNano + pacingIntervalNano
-	return raw, 0, pacingIntervalNano, nil
+	pacingNano = c.calcPacing(uint64(len(encData)))
+	c.nextWriteTime = nowNano + pacingNano
+	return raw, 0, pacingNano, nil
 }
 
-func (c *Connection) payloadHeader() *PayloadHeader{
+func (c *Conn) payloadHeader() *PayloadHeader{
 	return &PayloadHeader{
 			RcvWndSize:   uint64(c.rcv.capacity) - uint64(c.rcv.Size()),
 		}
 }
 
-func (c *Connection) debug() slog.Attr {
+func (c *Conn) debug() slog.Attr {
 	return slog.Group("connection",
 		slog.Uint64("nextWrt:ms", c.nextWriteTime/msNano),
 		//slog.Uint64("nextWrt:ns", c.nextWriteTime),

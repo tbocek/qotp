@@ -27,7 +27,8 @@ func NewUDPNetworkConn(conn *net.UDPConn) NetworkConn {
 	}
 }
 
-func (c *UDPNetworkConn) ReadFromUDPAddrPort(p []byte, timeoutNano uint64, nowNano uint64) (n int, sourceAddress netip.AddrPort, err error) {
+func (c *UDPNetworkConn) ReadFromUDPAddrPort(p []byte, timeoutNano uint64, nowNano uint64) (
+	n int, sourceAddress netip.AddrPort, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

@@ -10,8 +10,8 @@ import (
 )
 
 // Helper function to create a minimal Connection for testing
-func newTestConnection() *Connection {
-	return &Connection{
+func newTestConnection() *Conn {
+	return &Conn{
 		Measurements: NewMeasurements(),
 	}
 }
@@ -343,12 +343,12 @@ func TestMeasurementsPacingNoBandwidth(t *testing.T) {
 	conn := newTestConnection()
 
 	// Test with no SRTT
-	interval := conn.CalcPacingInterval(1000)
+	interval := conn.calcPacing(1000)
 	assert.Equal(t, uint64(10*msNano), interval, "Should return 10ms default when no SRTT")
 
 	// Test with SRTT but no bandwidth
 	conn.srtt = 100_000_000 // 100ms in nanoseconds
-	interval = conn.CalcPacingInterval(1000)
+	interval = conn.calcPacing(1000)
 	assert.Equal(t, uint64(10_000_000), interval, "Should return SRTT/10 when no bandwidth")
 }
 
@@ -359,12 +359,12 @@ func TestMeasurementsPacingWithBandwidth(t *testing.T) {
 	conn.pacingGainPct = 100 // 1.0x
 
 	// 1KB packet: (1000 bytes / 10000 bytes/sec) * 1e9 ns = 100,000,000 ns
-	interval := conn.CalcPacingInterval(1000)
+	interval := conn.calcPacing(1000)
 	assert.Equal(t, uint64(100_000_000), interval, "Should calculate correct interval")
 
 	// Test with pacing gain
 	conn.pacingGainPct = 200 // 2.0x
-	interval = conn.CalcPacingInterval(1000)
+	interval = conn.calcPacing(1000)
 	assert.Equal(t, uint64(50_000_000), interval, "Higher gain should reduce interval")
 }
 
@@ -420,7 +420,7 @@ func TestMeasurementsOverflowProtection(t *testing.T) {
 	assert.Greater(t, conn.bwMax, uint64(0), "Should calculate some bandwidth")
 	
 	// Test pacing calculation doesn't overflow
-	interval := conn.CalcPacingInterval(1000)
+	interval := conn.calcPacing(1000)
 	assert.Greater(t, interval, uint64(0), "Should handle large values gracefully")
 }
 
@@ -490,13 +490,13 @@ func TestMeasurementsPacingCalculationEdgeCases(t *testing.T) {
 	conn.UpdateMeasurements(100_000_000, 1000, 1_000_000_000)
 	
 	// Test with zero packet size - should give zero interval
-	interval := conn.CalcPacingInterval(0)
+	interval := conn.calcPacing(0)
 	assert.Equal(t, uint64(0), interval, "Zero packet should give zero interval")
 	
 	// Test with very large packet size and low bandwidth
 	conn.bwMax = 1 // Very low bandwidth
 	conn.pacingGainPct = 100
-	interval = conn.CalcPacingInterval(1000)
+	interval = conn.calcPacing(1000)
 	
 	// Should not overflow
 	assert.Greater(t, interval, uint64(0), "Should handle large intervals")
@@ -567,7 +567,7 @@ func TestMeasurementsConcurrentAccess(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 10; i++ {
-			conn.CalcPacingInterval(1000)
+			conn.calcPacing(1000)
 			time.Sleep(time.Microsecond)
 		}
 	}()
@@ -608,6 +608,6 @@ func TestMeasurementsIntegration(t *testing.T) {
 	assert.False(t, conn.isStartup, "Should transition to normal")
 
 	// Verify pacing calculation works
-	interval := conn.CalcPacingInterval(1000)
+	interval := conn.calcPacing(1000)
 	assert.Greater(t, interval, uint64(0), "Should calculate valid pacing interval")
 }

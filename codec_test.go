@@ -27,19 +27,15 @@ var (
 )
 
 // Helper functions
-func createTestConnection(isSender, withCrypto, handshakeDone bool) *Connection {
-	conn := &Connection{
-		state: ConnectionState{
-			isSenderOnInit:       isSender,
-			isWithCryptoOnInit:   withCrypto,
-			isHandshakeDoneOnRcv: handshakeDone,
-		},
+func createTestConnection(isSender, withCrypto, handshakeDone bool) *Conn {
+	conn := &Conn{	
+		isSenderOnInit:       isSender,
+		isWithCryptoOnInit:   withCrypto,
+		isHandshakeDoneOnRcv: handshakeDone,
 		snCrypto: 0,
 		mtu:      1400,
-		keys: ConnectionKeys{
-			pubKeyIdRcv: prvIdBob.PublicKey(),
-			prvKeyEpSnd: prvEpAlice,
-		},
+		pubKeyIdRcv: prvIdBob.PublicKey(),
+		prvKeyEpSnd: prvEpAlice,
 		listener:     &Listener{prvKeyId: prvIdAlice},
 		rcv:          NewReceiveBuffer(1000),
 		streams:      NewLinkedMap[uint32, *Stream](),
@@ -47,12 +43,12 @@ func createTestConnection(isSender, withCrypto, handshakeDone bool) *Connection 
 	}
 
 	if !isSender {
-		conn.keys.pubKeyIdRcv = prvIdAlice.PublicKey()
-		conn.keys.pubKeyEpRcv = prvEpAlice.PublicKey()
+		conn.pubKeyIdRcv = prvIdAlice.PublicKey()
+		conn.pubKeyEpRcv = prvEpAlice.PublicKey()
 	}
 
 	if handshakeDone {
-		conn.keys.pubKeyEpRcv = prvEpBob.PublicKey()
+		conn.pubKeyEpRcv = prvEpBob.PublicKey()
 	}
 
 	return conn
@@ -60,11 +56,11 @@ func createTestConnection(isSender, withCrypto, handshakeDone bool) *Connection 
 
 func createTestListeners() (*Listener, *Listener) {
 	lAlice := &Listener{
-		connMap:  NewLinkedMap[uint64, *Connection](),
+		connMap:  NewLinkedMap[uint64, *Conn](),
 		prvKeyId: prvIdAlice,
 	}
 	lBob := &Listener{
-		connMap:  NewLinkedMap[uint64, *Connection](),
+		connMap:  NewLinkedMap[uint64, *Conn](),
 		prvKeyId: prvIdBob,
 	}
 	return lAlice, lBob
@@ -108,51 +104,51 @@ func TestCodecConnectionClosed(t *testing.T) {
 
 // Overhead Calculation Tests - Updated to use CalcMaxOverhead function
 func TestCodecOverheadInitSndNoData(t *testing.T) {
-	overhead := CalcMaxOverhead(InitSnd, nil, 100)
+	overhead := calcCryptoOverhead(InitSnd, nil, 100)
 	assert.Equal(t, -1, overhead)
 }
 
 func TestCodecOverheadInitRcvNoAck(t *testing.T) {
-	overhead := CalcMaxOverhead(InitRcv, nil, 100)
-	expected := calcOverhead(false, false) + MinInitRcvSizeHdr + FooterDataSize
+	overhead := calcCryptoOverhead(InitRcv, nil, 100)
+	expected := calcProtoOverhead(false, false) + MinInitRcvSizeHdr + FooterDataSize
 	assert.Equal(t, expected, overhead)
 }
 
 func TestCodecOverheadInitCryptoSnd(t *testing.T) {
-	overhead := CalcMaxOverhead(InitCryptoSnd, nil, 100)
-	expected := calcOverhead(false, false) + MinInitCryptoSndSizeHdr + FooterDataSize + MsgInitFillLenSize
+	overhead := calcCryptoOverhead(InitCryptoSnd, nil, 100)
+	expected := calcProtoOverhead(false, false) + MinInitCryptoSndSizeHdr + FooterDataSize + MsgInitFillLenSize
 	assert.Equal(t, expected, overhead)
 }
 
 func TestCodecOverheadInitCryptoRcv(t *testing.T) {
-	overhead := CalcMaxOverhead(InitCryptoRcv, nil, 100)
-	expected := calcOverhead(false, false) + MinInitCryptoRcvSizeHdr + FooterDataSize
+	overhead := calcCryptoOverhead(InitCryptoRcv, nil, 100)
+	expected := calcProtoOverhead(false, false) + MinInitCryptoRcvSizeHdr + FooterDataSize
 	assert.Equal(t, expected, overhead)
 }
 
 func TestCodecOverheadDataLargeAckOffset(t *testing.T) {
 	ack := &Ack{offset: 0xFFFFFF + 1}
-	overhead := CalcMaxOverhead(Data, ack, 100)
-	expected := calcOverhead(true, true) + MinDataSizeHdr + FooterDataSize
+	overhead := calcCryptoOverhead(Data, ack, 100)
+	expected := calcProtoOverhead(true, true) + MinDataSizeHdr + FooterDataSize
 	assert.Equal(t, expected, overhead)
 }
 
 func TestCodecOverheadDataLargeDataOffset(t *testing.T) {
-	overhead := CalcMaxOverhead(Data, nil, 0xFFFFFF+1)
-	expected := calcOverhead(false, true) + MinDataSizeHdr + FooterDataSize
+	overhead := calcCryptoOverhead(Data, nil, 0xFFFFFF+1)
+	expected := calcProtoOverhead(false, true) + MinDataSizeHdr + FooterDataSize
 	assert.Equal(t, expected, overhead)
 }
 
 func TestCodecOverheadDataSmallOffsets(t *testing.T) {
 	ack := &Ack{offset: 1000}
-	overhead := CalcMaxOverhead(Data, ack, 2000)
-	expected := calcOverhead(true, false) + MinDataSizeHdr + FooterDataSize
+	overhead := calcCryptoOverhead(Data, ack, 2000)
+	expected := calcProtoOverhead(true, false) + MinDataSizeHdr + FooterDataSize
 	assert.Equal(t, expected, overhead)
 }
 
 func TestCodecOverheadDataNoAck(t *testing.T) {
-	overhead := CalcMaxOverhead(Data, nil, 2000)
-	expected := calcOverhead(false, false) + MinDataSizeHdr + FooterDataSize
+	overhead := calcCryptoOverhead(Data, nil, 2000)
+	expected := calcProtoOverhead(false, false) + MinDataSizeHdr + FooterDataSize
 	assert.Equal(t, expected, overhead)
 }
 
@@ -309,16 +305,12 @@ func TestCodecFullHandshake(t *testing.T) {
 	remoteAddr := getTestRemoteAddr()
 
 	// Alice's initial connection
-	connAlice := &Connection{
+	connAlice := &Conn{
 		connId: Uint64(prvEpAlice.PublicKey().Bytes()),
-		state: ConnectionState{
-			isSenderOnInit: true,
-		},
+		isSenderOnInit: true,
 		snCrypto: 0,
 		mtu:      1400,
-		keys: ConnectionKeys{
-			prvKeyEpSnd: prvEpAlice,
-		},
+		prvKeyEpSnd: prvEpAlice,
 		listener: lAlice,
 		rcv:      NewReceiveBuffer(1000),
 		streams:  NewLinkedMap[uint32, *Stream](),
@@ -361,13 +353,13 @@ func TestCodecFullHandshake(t *testing.T) {
 	// Step 5: Setup for Data message flow after handshake
 	connId := binary.LittleEndian.Uint64(prvIdAlice.PublicKey().Bytes()) ^ binary.LittleEndian.Uint64(prvIdBob.PublicKey().Bytes())
 
-	connAlice.state.isHandshakeDoneOnRcv = true
-	connAlice.keys.pubKeyIdRcv = prvIdBob.PublicKey()
-	connAlice.keys.pubKeyEpRcv = prvEpBob.PublicKey()
+	connAlice.isHandshakeDoneOnRcv = true
+	connAlice.pubKeyIdRcv = prvIdBob.PublicKey()
+	connAlice.pubKeyEpRcv = prvEpBob.PublicKey()
 	connAlice.sharedSecret = seed1[:]
 	lAlice.connMap.Put(connId, connAlice)
 
-	connBob.state.isHandshakeDoneOnRcv = true
+	connBob.isHandshakeDoneOnRcv = true
 	connBob.sharedSecret = seed1[:]
 	lBob.connMap.Put(connId, connBob)
 
@@ -441,7 +433,7 @@ func TestCodecInvalidMessageType(t *testing.T) {
 
 func TestCodecDecodeEmptyBuffer(t *testing.T) {
 	l := &Listener{
-		connMap:  NewLinkedMap[uint64, *Connection](),
+		connMap:  NewLinkedMap[uint64, *Conn](),
 		prvKeyId: prvIdAlice,
 	}
 
@@ -451,7 +443,7 @@ func TestCodecDecodeEmptyBuffer(t *testing.T) {
 
 func TestCodecDecodeInvalidHeader(t *testing.T) {
 	l := &Listener{
-		connMap:  NewLinkedMap[uint64, *Connection](),
+		connMap:  NewLinkedMap[uint64, *Conn](),
 		prvKeyId: prvIdAlice,
 	}
 
@@ -461,7 +453,7 @@ func TestCodecDecodeInvalidHeader(t *testing.T) {
 
 func TestCodecDecodeConnectionNotFoundInitRcv(t *testing.T) {
 	l := &Listener{
-		connMap:  NewLinkedMap[uint64, *Connection](),
+		connMap:  NewLinkedMap[uint64, *Conn](),
 		prvKeyId: prvIdAlice,
 	}
 
@@ -472,7 +464,7 @@ func TestCodecDecodeConnectionNotFoundInitRcv(t *testing.T) {
 
 func TestCodecDecodeConnectionNotFoundData(t *testing.T) {
 	l := &Listener{
-		connMap:  NewLinkedMap[uint64, *Connection](),
+		connMap:  NewLinkedMap[uint64, *Conn](),
 		prvKeyId: prvIdAlice,
 	}
 

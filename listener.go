@@ -17,7 +17,7 @@ type Listener struct {
 	// this is the port we are listening to
 	localConn       NetworkConn
 	prvKeyId        *ecdh.PrivateKey                //never nil
-	connMap         *LinkedMap[uint64, *Connection] // here we store the connection to remote peers, we can have up to
+	connMap         *LinkedMap[uint64, *Conn] // here we store the connection to remote peers, we can have up to
 	currentConnID   *uint64
 	currentStreamID *uint32
 	closed          bool
@@ -160,7 +160,7 @@ func Listen(options ...ListenFunc) (*Listener, error) {
 	l := &Listener{
 		localConn: lOpts.localConn,
 		prvKeyId:  lOpts.prvKeyId,
-		connMap:   NewLinkedMap[uint64, *Connection](),
+		connMap:   NewLinkedMap[uint64, *Conn](),
 		mu:        sync.Mutex{},
 	}
 
@@ -239,14 +239,14 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 	}
 
 	//Set state
-	if !conn.state.isHandshakeDoneOnRcv {
-		if conn.state.isSenderOnInit {
+	if !conn.isHandshakeDoneOnRcv {
+		if conn.isSenderOnInit {
 			if msgType == InitRcv || msgType == InitCryptoRcv {
-				conn.state.isHandshakeDoneOnRcv = true
+				conn.isHandshakeDoneOnRcv = true
 			}
 		} else {
 			if msgType == Data {
-				conn.state.isHandshakeDoneOnRcv = true
+				conn.isHandshakeDoneOnRcv = true
 			}
 		}
 	}
@@ -263,10 +263,10 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 		return minPacing
 	}
 	
-	closeConn := []*Connection{}
-	closeStream := map[*Connection]uint32{}
+	closeConn := []*Conn{}
+	closeStream := map[*Conn]uint32{}
 
-	iter := NestedIterator(l.connMap, func(conn *Connection) *LinkedMap[uint32, *Stream] {
+	iter := NestedIterator(l.connMap, func(conn *Conn) *LinkedMap[uint32, *Stream] {
 		return conn.streams
 	}, l.currentConnID, l.currentStreamID)
 
@@ -295,7 +295,8 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 
 		//no data sent, check if we reached the timeout for the activity
 		if conn.lastReadTimeNano != 0 && nowNano > conn.lastReadTimeNano+ReadDeadLine {
-			slog.Info("closing connection, timeout", conn.debug(), slog.Uint64("now", nowNano), slog.Uint64("last", conn.lastReadTimeNano))
+			slog.Info("closing connection, timeout", conn.debug(), slog.Uint64("now", nowNano), 
+				slog.Uint64("last", conn.lastReadTimeNano))
 			closeConn = append(closeConn, conn)
 			break
 		}
@@ -324,7 +325,7 @@ func (l *Listener) newConn(
 	pubKeyIdRcv *ecdh.PublicKey,
 	pubKeyEdRcv *ecdh.PublicKey,
 	isSender bool,
-	withCrypto bool) (*Connection, error) {
+	withCrypto bool) (*Conn, error) {
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -334,21 +335,17 @@ func (l *Listener) newConn(
 		return nil, errors.New("conn already exists")
 	}
 
-	conn := &Connection{
+	conn := &Conn{
 		connId:     connId,
 		streams:    NewLinkedMap[uint32, *Stream](),
 		remoteAddr: remoteAddr,
-		keys: ConnectionKeys{
-			pubKeyIdRcv: pubKeyIdRcv,
-			prvKeyEpSnd: prvKeyEpSnd,
-			pubKeyEpRcv: pubKeyEdRcv,
-		},
+		pubKeyIdRcv: pubKeyIdRcv,
+		prvKeyEpSnd: prvKeyEpSnd,
+		pubKeyEpRcv: pubKeyEdRcv,
 		mu:       sync.Mutex{},
 		listener: l,
-		state: ConnectionState{
-			isSenderOnInit:     isSender,
-			isWithCryptoOnInit: withCrypto,
-		},
+		isSenderOnInit:     isSender,
+		isWithCryptoOnInit: withCrypto,
 		snCrypto:     0,
 		mtu:          startMtu,
 		snd:          NewSendBuffer(sndBufferCapacity, nil),
@@ -386,6 +383,6 @@ func (l *Listener) debug() slog.Attr {
 	return slog.String("net", l.localConn.LocalAddrString())
 }
 
-func (l *Listener) ForceClose(c *Connection) {
+func (l *Listener) ForceClose(c *Conn) {
 	c.cleanupConn()
 }

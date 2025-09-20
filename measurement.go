@@ -64,7 +64,7 @@ func NewMeasurements() Measurements {
 	}
 }
 
-func (c *Connection) UpdateMeasurements(rttMeasurementNano uint64, bytesAcked uint64, nowNano uint64) {
+func (c *Conn) UpdateMeasurements(rttMeasurementNano uint64, bytesAcked uint64, nowNano uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -153,7 +153,7 @@ func (c *Connection) UpdateMeasurements(rttMeasurementNano uint64, bytesAcked ui
 	}
 }
 
-func (c *Connection) rtoNano() uint64 {
+func (c *Conn) rtoNano() uint64 {
 	rto := c.srtt + 4*c.rttvar
 
 	switch {
@@ -168,7 +168,7 @@ func (c *Connection) rtoNano() uint64 {
 	}
 }
 
-func (c *Connection) OnDuplicateAck() {
+func (c *Conn) OnDuplicateAck() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -180,7 +180,7 @@ func (c *Connection) OnDuplicateAck() {
 	}
 }
 
-func (c *Connection) OnPacketLoss() {
+func (c *Conn) OnPacketLoss() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -196,7 +196,7 @@ func (c *Connection) OnPacketLoss() {
 	c.isStartup = false
 }
 
-func (c *Connection) CalcPacingInterval(packetSize uint64) uint64 {
+func (c *Conn) calcPacing(packetSize uint64) uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

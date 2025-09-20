@@ -5,7 +5,7 @@ import (
 	"net/netip"
 )
 
-func (l *Listener) DialString(remoteAddrString string) (*Connection, error) {
+func (l *Listener) DialString(remoteAddrString string) (*Conn, error) {
 	remoteAddr, err := netip.ParseAddrPort(remoteAddrString)
 	if err != nil {
 		return nil, err
@@ -14,7 +14,7 @@ func (l *Listener) DialString(remoteAddrString string) (*Connection, error) {
 	return l.Dial(remoteAddr)
 }
 
-func (l *Listener) DialWithCryptoString(remoteAddrString string, pubKeyIdRcvHex string) (*Connection, error) {
+func (l *Listener) DialWithCryptoString(remoteAddrString string, pubKeyIdRcvHex string) (*Conn, error) {
 	remoteAddr, err := netip.ParseAddrPort(remoteAddrString)
 	if err != nil {
 		return nil, err
@@ -28,7 +28,7 @@ func (l *Listener) DialWithCryptoString(remoteAddrString string, pubKeyIdRcvHex 
 	return l.DialWithCrypto(remoteAddr, pubKeyIdRcv)
 }
 
-func (l *Listener) DialWithCrypto(remoteAddr netip.AddrPort, pubKeyIdRcv *ecdh.PublicKey) (*Connection, error) {
+func (l *Listener) DialWithCrypto(remoteAddr netip.AddrPort, pubKeyIdRcv *ecdh.PublicKey) (*Conn, error) {
 	prvKeyEp, err := generateKey()
 	if err != nil {
 		return nil, err
@@ -38,7 +38,7 @@ func (l *Listener) DialWithCrypto(remoteAddr netip.AddrPort, pubKeyIdRcv *ecdh.P
 	return l.newConn(connId, remoteAddr, prvKeyEp, pubKeyIdRcv, nil, true, true)
 }
 
-func (l *Listener) Dial(remoteAddr netip.AddrPort) (*Connection, error) {
+func (l *Listener) Dial(remoteAddr netip.AddrPort) (*Conn, error) {
 	prvKeyEp, err := generateKey()
 	if err != nil {
 		return nil, err

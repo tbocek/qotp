@@ -28,7 +28,7 @@ func TestConnection_GetOrNewStreamRcv(t *testing.T) {
 			setup:    false,
 		},
 	}
-	conn := &Connection{
+	conn := &Conn{
 		streams: NewLinkedMap[uint32, *Stream](),
 	}
 	for _, tt := range tests {

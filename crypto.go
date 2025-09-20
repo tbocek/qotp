@@ -51,7 +51,7 @@ type Message struct {
 
 // ************************************* Encoder *************************************
 
-func EncodeInitSnd(
+func encryptInitSnd(
 	pubKeyIdSnd *ecdh.PublicKey,
 	pubKeyEpSnd *ecdh.PublicKey) (connId uint64, encData []byte) {
 
@@ -73,7 +73,7 @@ func EncodeInitSnd(
 	return Uint64(headerCryptoDataBuffer[HeaderSize:]), headerCryptoDataBuffer
 }
 
-func EncodeInitRcv(
+func encryptInitRcv(
 	connId uint64,
 	pubKeyIdSnd *ecdh.PublicKey,
 	pubKeyEpRcv *ecdh.PublicKey,
@@ -112,7 +112,7 @@ func EncodeInitRcv(
 	return chainedEncrypt(snCrypto, 0, false, sharedSecret, headerWithKeys, packetData)
 }
 
-func EncodeInitCryptoSnd(
+func encryptInitCryptoSnd(
 	pubKeyIdRcv *ecdh.PublicKey,
 	pubKeyIdSnd *ecdh.PublicKey,
 	prvKeyEpSnd *ecdh.PrivateKey,
@@ -165,7 +165,7 @@ func EncodeInitCryptoSnd(
 	return Uint64(headerWithKeys[HeaderSize:]), encData, err
 }
 
-func EncodeInitCryptoRcv(
+func encryptInitCryptoRcv(
 	connId uint64,
 	pubKeyEpRcv *ecdh.PublicKey,
 	prvKeyEpSnd *ecdh.PrivateKey,
@@ -200,7 +200,7 @@ func EncodeInitCryptoRcv(
 	return chainedEncrypt(snCrypto, 0, false, sharedSecret, headerWithKeys, packetData)
 }
 
-func EncodeData(
+func encryptData(
 	connId uint64,
 	isSender bool,
 	sharedSecret []byte,
@@ -226,7 +226,8 @@ func EncodeData(
 	return chainedEncrypt(snCrypto, epochCrypto, isSender, sharedSecret, headerBuffer, packetData)
 }
 
-func chainedEncrypt(snCrypt uint64, epochConn uint64, isSender bool, sharedSecret []byte, headerAndCrypto []byte, packetData []byte) (encData []byte, err error) {
+func chainedEncrypt(snCrypt uint64, epochConn uint64, isSender bool, sharedSecret []byte, 
+	headerAndCrypto []byte, packetData []byte) (encData []byte, err error) {
 	nonceDet := make([]byte, chacha20poly1305.NonceSize)
 
 	PutUint48(nonceDet, epochConn)
@@ -265,7 +266,7 @@ func chainedEncrypt(snCrypt uint64, epochConn uint64, isSender bool, sharedSecre
 
 // ************************************* Decoder *************************************
 
-func DecodeInitSnd(encData []byte) (
+func decryptInitSnd(encData []byte) (
 	pubKeyIdSnd *ecdh.PublicKey,
 	pubKeyEpSnd *ecdh.PublicKey,
 	err error) {
@@ -287,7 +288,7 @@ func DecodeInitSnd(encData []byte) (
 	return pubKeyIdSnd, pubKeyEpSnd, nil
 }
 
-func DecodeInitRcv(encData []byte, prvKeyEpSnd *ecdh.PrivateKey) (
+func decryptInitRcv(encData []byte, prvKeyEpSnd *ecdh.PrivateKey) (
 	sharedSecret []byte,
 	pubKeyIdRcv *ecdh.PublicKey,
 	pubKeyEpRcv *ecdh.PublicKey,
@@ -303,7 +304,8 @@ func DecodeInitRcv(encData []byte, prvKeyEpSnd *ecdh.PrivateKey) (
 		return nil, nil, nil, nil, err
 	}
 
-	pubKeyIdRcv, err = ecdh.X25519().NewPublicKey(encData[HeaderSize+ConnIdSize+PubKeySize : HeaderSize+ConnIdSize+2*PubKeySize])
+	pubKeyIdRcv, err = ecdh.X25519().NewPublicKey(
+		encData[HeaderSize+ConnIdSize+PubKeySize : HeaderSize+ConnIdSize+(2*PubKeySize)])
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -333,7 +335,7 @@ func DecodeInitRcv(encData []byte, prvKeyEpSnd *ecdh.PrivateKey) (
 
 }
 
-func DecodeInitCryptoSnd(
+func decryptInitCryptoSnd(
 	encData []byte,
 	prvKeyIdRcv *ecdh.PrivateKey) (
 	pubKeyIdSnd *ecdh.PublicKey,
@@ -383,8 +385,8 @@ func DecodeInitCryptoSnd(
 	}, nil
 }
 
-// DecodeInitCryptoRcv is decoded by the isSender
-func DecodeInitCryptoRcv(
+// decryptInitCryptoRcv is decoded by the isSender
+func decryptInitCryptoRcv(
 	encData []byte,
 	prvKeyEpSnd *ecdh.PrivateKey) (
 	sharedSecret []byte,
@@ -427,7 +429,7 @@ func DecodeInitCryptoRcv(
 	}, nil
 }
 
-func DecodeData(
+func decryptData(
 	encData []byte,
 	isSender bool,
 	epochCrypt uint64,
@@ -455,7 +457,8 @@ func DecodeData(
 	}, nil
 }
 
-func chainedDecrypt(isSender bool, epochCrypt uint64, sharedSecret []byte, header []byte, encData []byte) (snConn uint64, currentEpochCrypt uint64, packetData []byte, err error) {
+func chainedDecrypt(isSender bool, epochCrypt uint64, sharedSecret []byte, header []byte, encData []byte) (
+	snConn uint64, currentEpochCrypt uint64, packetData []byte, err error) {
 	snConnBytes := make([]byte, SnSize)
 
 	encSn := encData[0:SnSize]
@@ -534,4 +537,26 @@ func generateKey() (*ecdh.PrivateKey, error) {
 		return nil, err
 	}
 	return prvKey1, nil
+}
+
+func calcCryptoOverhead(msgType MsgType, ack *Ack, offset uint64) (overhead int) {
+	hasAck := ack != nil
+	needsExtension := (hasAck && ack.offset > 0xFFFFFF) || offset > 0xFFFFFF
+
+	overhead = calcProtoOverhead(hasAck, needsExtension)
+
+	switch msgType {
+	case InitSnd:
+		return -1 //we cannot send data, this is unencrypted
+	case InitRcv:
+		overhead += MinInitRcvSizeHdr + FooterDataSize
+	case InitCryptoSnd:
+		overhead += MinInitCryptoSndSizeHdr + FooterDataSize + MsgInitFillLenSize
+	case InitCryptoRcv:
+		overhead += MinInitCryptoRcvSizeHdr + FooterDataSize
+	case Data:
+		overhead += MinDataSizeHdr + FooterDataSize
+	}
+
+	return overhead
 }
