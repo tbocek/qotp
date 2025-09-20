@@ -23,16 +23,16 @@ type Stream struct {
 	streamID uint32
 	conn     *Conn
 	state    StreamState
-	noAck   bool
+	noRetry  bool
 	callback func()
 	mu       sync.Mutex
 }
 
-func (s *Stream) NoAck(noAck bool) {
+func (s *Stream) NoRetry(noRetry bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.noAck = noAck
+	s.noRetry = noRetry
 }
 
 func (s *Stream) NotifyDataAvailable() error {

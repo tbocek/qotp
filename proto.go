@@ -7,16 +7,16 @@ import (
 )
 
 const (
-	FlagRequetAckShift     = 0
-	FlagAckPakShift   = 1
-	FlagRcvCloseShift = 3
+	FlagRetryAckShift = 0
+	FlagAckPakShift    = 1
+	FlagRcvCloseShift  = 3
 
 	MinProtoSize = 8
 	CloseFlag    = uint8(31)
 )
 
 type PayloadHeader struct {
-	IsReqAck     bool
+	IsNoRetry    bool
 	IsClose      bool
 	Ack          *Ack
 	RcvWndSize   uint64
@@ -118,16 +118,16 @@ func DecodePacketType(packetType uint8) (isAck bool, isExtend bool) {
 func EncodePayload(p *PayloadHeader, userData []byte) (encoded []byte, offset int) {
 	// Calculate flags
 	var flags uint8
-	
+
 	// Ping flag
-	if p.IsReqAck {
-		flags = 1 << FlagRequetAckShift
+	if p.IsNoRetry {
+		flags = 1 << FlagRetryAckShift
 	}
 
 	// Ack flags
 	ackPak, isExtend := EncodePacketType(p.Ack, p.StreamOffset)
 	flags |= ackPak << FlagAckPakShift
-	
+
 	// Close / RcvWnd Flag
 	if p.IsClose {
 		flags |= CloseFlag << FlagRcvCloseShift
@@ -186,7 +186,7 @@ func DecodePayload(data []byte) (payload *PayloadHeader, userData []byte, err er
 	// Flags (8 bits)
 	flags := data[offset]
 
-	payload.IsReqAck = flags&1 != 0
+	payload.IsNoRetry = flags&1 != 0
 
 	ackPack := (flags >> FlagAckPakShift) & 3
 	isAck, isExtend := DecodePacketType(ackPack)
@@ -198,13 +198,13 @@ func DecodePayload(data []byte) (payload *PayloadHeader, userData []byte, err er
 		payload.RcvWndSize = DecodeRcvWindow(rcvClose)
 	}
 	offset++ //we processed the header
-	
+
 	//now we know the correct header size, check again
 	overhead := calcProtoOverhead(isAck, isExtend)
 	if dataLen < overhead {
 		return nil, nil, errors.New("payload Size below minimum")
 	}
-	
+
 	// Decode ACKs if present
 	if isAck {
 		payload.Ack = &Ack{}

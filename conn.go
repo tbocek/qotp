@@ -121,9 +121,9 @@ func (c *Conn) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uin
 	}
 
 	if len(userData) > 0 {
-		c.rcv.Insert(s.streamID, p.StreamOffset, userData, p.IsReqAck)
+		c.rcv.Insert(s.streamID, p.StreamOffset, userData)
 	}
-	if len(userData) == 0 && p.IsReqAck {
+	if len(userData) == 0 && p.IsNoRetry {
 		c.rcv.EmptyInsert(s.streamID, p.StreamOffset)
 	}
 
@@ -170,7 +170,7 @@ func (c *Conn) cleanupConn() {
 func (c *Conn) Ping(streamId uint32, nowNano uint64) error {
 	ack := c.rcv.GetSndAck()
 	p := &PayloadHeader{
-		IsReqAck:     true, //important as our data will be empty
+		IsNoRetry:    true, //important as our data will be empty
 		Ack:          ack,
 		StreamID:     streamId,
 		StreamOffset: nowNano,
@@ -230,7 +230,6 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 		slog.Debug(" Flush/Retransmit", gId(), s.debug(), c.debug())
 
 		p := &PayloadHeader{
-			IsReqAck:     true,
 			Ack:          ack,
 			StreamOffset: offset,
 		}
@@ -254,12 +253,12 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 
 	//next check if we can send packets, during handshake we can only send 1 packet
 	if c.isHandshakeDoneOnRcv || !c.isInitSentOnSnd {
-		splitData, offset := c.snd.ReadyToSend(s.streamID, c.msgType(), ack, c.listener.mtu, s.noAck, nowNano)
+		splitData, offset := c.snd.ReadyToSend(s.streamID, c.msgType(), ack, c.listener.mtu, s.noRetry, nowNano)
 		if len(splitData) > 0 {
 			slog.Debug(" Flush/Send", gId(), s.debug(), c.debug())
 
 			p := &PayloadHeader{
-				IsReqAck:     !s.noAck,
+				IsNoRetry:    s.noRetry,
 				IsClose:      s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
 				RcvWndSize:   uint64(s.conn.rcv.capacity) - uint64(s.conn.rcv.Size()),
 				Ack:          ack,

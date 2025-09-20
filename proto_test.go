@@ -28,7 +28,7 @@ func assertPayloadMatches(t *testing.T, expected, actual *PayloadHeader) {
 	assert.Equal(t, expected.StreamID, actual.StreamID)
 	assert.Equal(t, expected.StreamOffset, actual.StreamOffset)
 	assert.Equal(t, expected.IsClose, actual.IsClose)
-	assert.Equal(t, expected.IsReqAck, actual.IsReqAck)
+	assert.Equal(t, expected.IsNoRetry, actual.IsNoRetry)
 
 	// Don't compare RcvWndSize directly - it gets encoded/decoded with precision loss
 	// Instead, compare the expected behavior:
@@ -91,7 +91,7 @@ func TestPayloadEmptyData(t *testing.T) {
 func TestPayloadWithAllFeaturesCloseFlag(t *testing.T) {
 	original := &PayloadHeader{
 		IsClose:      true,
-		IsReqAck:     true,
+		IsNoRetry:    true,
 		StreamID:     1,
 		StreamOffset: 9999,
 		RcvWndSize:   1000,
@@ -109,7 +109,7 @@ func TestPayloadWithAllFeaturesCloseFlag(t *testing.T) {
 func TestPayloadWithAllFeaturesNoCloseFlag(t *testing.T) {
 	original := &PayloadHeader{
 		IsClose:      false,
-		IsReqAck:     true,
+		IsNoRetry:    true,
 		StreamID:     1,
 		StreamOffset: 9999,
 		RcvWndSize:   1000,
@@ -126,7 +126,7 @@ func TestPayloadWithAllFeaturesNoCloseFlag(t *testing.T) {
 
 func TestPayloadMultipleFlagsWithAck(t *testing.T) {
 	original := &PayloadHeader{
-		IsReqAck:     true,
+		IsNoRetry:    true,
 		IsClose:      true,
 		RcvWndSize:   0, // Will be ignored due to IsClose
 		StreamID:     6,
@@ -160,7 +160,7 @@ func TestPayloadAckHandling(t *testing.T) {
 
 func TestPayloadAckOnlyNoData(t *testing.T) {
 	original := &PayloadHeader{
-		IsReqAck:     false,
+		IsNoRetry:    false,
 		IsClose:      false,
 		RcvWndSize:   1000,
 		StreamID:     1,
@@ -176,7 +176,7 @@ func TestPayloadAckOnlyNoData(t *testing.T) {
 
 func TestPayloadAckWithData(t *testing.T) {
 	original := &PayloadHeader{
-		IsReqAck:     true,
+		IsNoRetry:    true,
 		IsClose:      false,
 		RcvWndSize:   2000,
 		StreamID:     2,
@@ -193,7 +193,7 @@ func TestPayloadAckWithData(t *testing.T) {
 
 func TestPayloadNoAckDataOnly(t *testing.T) {
 	original := &PayloadHeader{
-		IsReqAck:     true,
+		IsNoRetry:    true,
 		IsClose:      false,
 		RcvWndSize:   3000,
 		StreamID:     3,
@@ -210,7 +210,7 @@ func TestPayloadNoAckDataOnly(t *testing.T) {
 
 func TestPayloadAckLargeOffset24Bit(t *testing.T) {
 	original := &PayloadHeader{
-		IsReqAck:     false,
+		IsNoRetry:    false,
 		IsClose:      false,
 		RcvWndSize:   4000,
 		StreamID:     4,
@@ -226,7 +226,7 @@ func TestPayloadAckLargeOffset24Bit(t *testing.T) {
 
 func TestPayloadAckLargeOffset48Bit(t *testing.T) {
 	original := &PayloadHeader{
-		IsReqAck:     false,
+		IsNoRetry:    false,
 		IsClose:      false,
 		RcvWndSize:   5000,
 		StreamID:     5,

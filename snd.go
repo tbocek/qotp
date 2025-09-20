@@ -28,6 +28,7 @@ type SendInfo struct {
 	offset                 uint64
 	expectedRtoBackoffNano uint64
 	actualRtoNano          uint64
+	noRetry                bool
 }
 
 func (s *SendInfo) debug() slog.Attr {
@@ -126,7 +127,7 @@ func (sb *SendBuffer) QueueData(streamID uint32, userData []byte) (n int, status
 }
 
 // ReadyToSend gets data from dataToSend and creates an entry in dataInFlightMap
-func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType MsgType, ack *Ack, mtu int, noAck bool, nowNano uint64) (
+func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType MsgType, ack *Ack, mtu int, noRetry bool, nowNano uint64) (
 	packetData []byte, offset uint64) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
@@ -151,23 +152,26 @@ func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType MsgType, ack *Ack, mt
 		}
 
 		//the max length we can send
-		length := uint16(min(uint64(maxData), remainingData))		
+		length := uint16(min(uint64(maxData), remainingData))
 
 		// Get userData slice accounting for bias
 		offset := stream.sentOffset - stream.bias
 		packetData = stream.userData[offset : offset+uint64(length)]
-		
-		if !noAck {
-			// Pack offset and length into key
-			key := createPacketKey(stream.sentOffset, length)
-			// Track range
-			m := &SendInfo{sentNr: 1, msgType: msgType, offset: stream.sentOffset, sentTimeNano: nowNano} //we do not know the msg type yet
-			stream.dataInFlightMap.Put(key, m)
-		}
+
+		// Pack offset and length into key
+		key := createPacketKey(stream.sentOffset, length)
+		// Track range
+		m := &SendInfo{sentNr: 1, msgType: msgType, offset: stream.sentOffset, sentTimeNano: nowNano, noRetry: noRetry}
+		stream.dataInFlightMap.Put(key, m)
 
 		// Update tracking
 		currentOffset := stream.sentOffset
 		stream.sentOffset = stream.sentOffset + uint64(length)
+
+		if noRetry {
+			//TODO: remove data now instead of in the ack or retransmit
+			slog.Debug("we should remove data now, currently we do it later.")
+		}
 
 		return packetData, currentOffset
 	}
@@ -204,6 +208,14 @@ func (sb *SendBuffer) ReadyToRetransmit(streamID uint32, ack *Ack, mtu int, expe
 	actualRtoNano := nowNano - rtoData.sentTimeNano
 	if actualRtoNano <= expectedRtoBackoffNano {
 		return nil, 0, 0, nil // or continue to next logic
+	}
+
+	//Timeout
+	if rtoData.noRetry {
+		//just remove as we do not expect a retransmission
+		stream.dataInFlightMap.Remove(packetKey)
+		slog.Debug("removed a packet, which was not acked, we could have done this earlier")
+		return nil, 0, 0, nil
 	}
 
 	// Calculate data slice once
@@ -291,6 +303,9 @@ func (sb *SendBuffer) AcknowledgeRange(ack *Ack) (status AckStatus, sentTimeNano
 		if minInFlightOffset > stream.bias {
 			bytesToRemove := minInFlightOffset - stream.bias
 			stream.userData = stream.userData[bytesToRemove:]
+			if rangePair.noRetry {
+				slog.Debug("removed a packet, which was acked, we could have done this earlier")
+			}
 			sb.size -= int(bytesToRemove)
 			stream.bias = minInFlightOffset
 		}

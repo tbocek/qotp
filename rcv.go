@@ -54,7 +54,7 @@ func (rb *ReceiveBuffer) EmptyInsert(streamID uint32, pindId uint64) RcvInsertSt
 	return RcvInsertOk
 }
 
-func (rb *ReceiveBuffer) Insert(streamID uint32, offset uint64, userData []byte, reqAck bool) RcvInsertStatus {
+func (rb *ReceiveBuffer) Insert(streamID uint32, offset uint64, userData []byte) RcvInsertStatus {
 	dataLen := len(userData)
 
 	rb.mu.Lock()
@@ -72,13 +72,9 @@ func (rb *ReceiveBuffer) Insert(streamID uint32, offset uint64, userData []byte,
 		return RcvInsertBufferFull
 	}
 
-	if reqAck {
-		// Now we need to add the ack to the list even if it's a duplicate,
-		// as the ack may have been lost, we need to send it again
-		// 
-		// but only if an ack is requested, otherwise do not send acks
-		rb.ackList = append(rb.ackList, &Ack{streamID: streamID, offset: offset, len: uint16(dataLen)})
-	}
+	// Now we need to add the ack to the list even if it's a duplicate,
+	// as the ack may have been lost, we need to send it again
+	rb.ackList = append(rb.ackList, &Ack{streamID: streamID, offset: offset, len: uint16(dataLen)})
 
 	// Check if the incoming segment is completely before the next expected offset.
 	// This means all data in this segment has already been delivered to the user application.
