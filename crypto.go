@@ -33,7 +33,7 @@ const (
 	ConnIdSize         = 8
 	MsgInitFillLenSize = 2
 
-	MinInitSndSize          = minMtu
+	//MinInitSndSize          = minMtu
 	MinInitRcvSizeHdr       = HeaderSize + ConnIdSize + (2 * PubKeySize)
 	MinInitCryptoSndSizeHdr = HeaderSize + (2 * PubKeySize)
 	MinInitCryptoRcvSizeHdr = HeaderSize + ConnIdSize + PubKeySize
@@ -51,16 +51,15 @@ type Message struct {
 
 // ************************************* Encoder *************************************
 
-func encryptInitSnd(
-	pubKeyIdSnd *ecdh.PublicKey,
-	pubKeyEpSnd *ecdh.PublicKey) (connId uint64, encData []byte) {
+func encryptInitSnd(pubKeyIdSnd *ecdh.PublicKey, pubKeyEpSnd *ecdh.PublicKey, mtu int) (
+	connId uint64, encData []byte) {
 
 	if pubKeyIdSnd == nil || pubKeyEpSnd == nil {
 		panic("handshake keys cannot be nil")
 	}
 
 	// Create the buffer with the correct size
-	headerCryptoDataBuffer := make([]byte, minMtu)
+	headerCryptoDataBuffer := make([]byte, mtu)
 
 	headerCryptoDataBuffer[0] = (Version << 3) | uint8(InitSnd)
 
@@ -73,8 +72,7 @@ func encryptInitSnd(
 	return Uint64(headerCryptoDataBuffer[HeaderSize:]), headerCryptoDataBuffer
 }
 
-func encryptInitRcv(
-	connId uint64,
+func encryptInitRcv(connId uint64,
 	pubKeyIdSnd *ecdh.PublicKey,
 	pubKeyEpRcv *ecdh.PublicKey,
 	prvKeyEpSnd *ecdh.PrivateKey,
@@ -84,7 +82,7 @@ func encryptInitRcv(
 	if pubKeyIdSnd == nil || pubKeyEpRcv == nil || prvKeyEpSnd == nil {
 		panic("handshake keys cannot be nil")
 	}
-	
+
 	if len(packetData) < MinPayloadSize {
 		return nil, errors.New("dataToSend too short")
 	}
@@ -117,12 +115,13 @@ func encryptInitCryptoSnd(
 	pubKeyIdSnd *ecdh.PublicKey,
 	prvKeyEpSnd *ecdh.PrivateKey,
 	snCrypto uint64,
+	mtu int,
 	packetData []byte) (connId uint64, encData []byte, err error) {
 
 	if pubKeyIdRcv == nil || pubKeyIdSnd == nil || prvKeyEpSnd == nil {
 		panic("handshake keys cannot be nil")
 	}
-	
+
 	if len(packetData) < MinPayloadSize {
 		return 0, nil, errors.New("dataToSend too short")
 	}
@@ -139,7 +138,7 @@ func encryptInitCryptoSnd(
 	copy(headerWithKeys[HeaderSize+PubKeySize:], pubKeyIdSnd.Bytes())
 
 	// Encrypt and write dataToSend
-	fillLen := minMtu - (MinInitCryptoSndSizeHdr + FooterDataSize + MsgInitFillLenSize + len(packetData))
+	fillLen := mtu - (MinInitCryptoSndSizeHdr + FooterDataSize + MsgInitFillLenSize + len(packetData))
 
 	if fillLen < 0 {
 		return 0, nil, errors.New("packet dataToSend cannot be larger than MTU")
@@ -175,7 +174,7 @@ func encryptInitCryptoRcv(
 	if pubKeyEpRcv == nil || prvKeyEpSnd == nil {
 		panic("handshake keys cannot be nil")
 	}
-	
+
 	if len(packetData) < MinPayloadSize {
 		return nil, errors.New("dataToSend too short")
 	}
@@ -211,7 +210,7 @@ func encryptData(
 	if sharedSecret == nil {
 		panic("pubKeyEpSnd/pubKeyEpRcv keys cannot be nil")
 	}
-	
+
 	if len(packetData) < MinPayloadSize {
 		return nil, errors.New("dataToSend too short")
 	}
@@ -226,7 +225,7 @@ func encryptData(
 	return chainedEncrypt(snCrypto, epochCrypto, isSender, sharedSecret, headerBuffer, packetData)
 }
 
-func chainedEncrypt(snCrypt uint64, epochConn uint64, isSender bool, sharedSecret []byte, 
+func chainedEncrypt(snCrypt uint64, epochConn uint64, isSender bool, sharedSecret []byte,
 	headerAndCrypto []byte, packetData []byte) (encData []byte, err error) {
 	nonceDet := make([]byte, chacha20poly1305.NonceSize)
 
@@ -266,12 +265,12 @@ func chainedEncrypt(snCrypt uint64, epochConn uint64, isSender bool, sharedSecre
 
 // ************************************* Decoder *************************************
 
-func decryptInitSnd(encData []byte) (
+func decryptInitSnd(encData []byte, mtu int) (
 	pubKeyIdSnd *ecdh.PublicKey,
 	pubKeyEpSnd *ecdh.PublicKey,
 	err error) {
 
-	if len(encData) < MinInitSndSize {
+	if len(encData) < mtu {
 		return nil, nil, errors.New("size is below minimum init")
 	}
 
@@ -337,13 +336,14 @@ func decryptInitRcv(encData []byte, prvKeyEpSnd *ecdh.PrivateKey) (
 
 func decryptInitCryptoSnd(
 	encData []byte,
-	prvKeyIdRcv *ecdh.PrivateKey) (
+	prvKeyIdRcv *ecdh.PrivateKey,
+	mtu int) (
 	pubKeyIdSnd *ecdh.PublicKey,
 	pubKeyEpSnd *ecdh.PublicKey,
 	m *Message,
 	err error) {
 
-	if len(encData) < MinInitSndSize {
+	if len(encData) < mtu {
 		return nil, nil, nil, errors.New("size is below minimum init")
 	}
 

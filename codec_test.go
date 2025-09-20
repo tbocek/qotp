@@ -33,10 +33,9 @@ func createTestConnection(isSender, withCrypto, handshakeDone bool) *Conn {
 		isWithCryptoOnInit:   withCrypto,
 		isHandshakeDoneOnRcv: handshakeDone,
 		snCrypto: 0,
-		mtu:      1400,
 		pubKeyIdRcv: prvIdBob.PublicKey(),
 		prvKeyEpSnd: prvEpAlice,
-		listener:     &Listener{prvKeyId: prvIdAlice},
+		listener:     &Listener{prvKeyId: prvIdAlice, mtu: 1400},
 		rcv:          NewReceiveBuffer(1000),
 		streams:      NewLinkedMap[uint32, *Stream](),
 		sharedSecret: bytes.Repeat([]byte{1}, 32),
@@ -58,10 +57,12 @@ func createTestListeners() (*Listener, *Listener) {
 	lAlice := &Listener{
 		connMap:  NewLinkedMap[uint64, *Conn](),
 		prvKeyId: prvIdAlice,
+		mtu: 1400,
 	}
 	lBob := &Listener{
 		connMap:  NewLinkedMap[uint64, *Conn](),
 		prvKeyId: prvIdBob,
+		mtu: 1400,
 	}
 	return lAlice, lBob
 }
@@ -304,7 +305,6 @@ func TestCodecFullHandshake(t *testing.T) {
 		connId: Uint64(prvEpAlice.PublicKey().Bytes()),
 		isSenderOnInit: true,
 		snCrypto: 0,
-		mtu:      1400,
 		prvKeyEpSnd: prvEpAlice,
 		listener: lAlice,
 		rcv:      NewReceiveBuffer(1000),

@@ -24,6 +24,7 @@ func (conn *Conn) encode(p *PayloadHeader, userData []byte, msgType MsgType) (en
 		_, encData = encryptInitSnd(
 			conn.listener.prvKeyId.PublicKey(),
 			conn.prvKeyEpSnd.PublicKey(),
+			conn.listener.mtu,
 		)
 		conn.isInitSentOnSnd = true
 		slog.Debug("   Encode/InitSnd", gId(), conn.debug(),
@@ -35,6 +36,7 @@ func (conn *Conn) encode(p *PayloadHeader, userData []byte, msgType MsgType) (en
 			conn.listener.prvKeyId.PublicKey(),
 			conn.prvKeyEpSnd,
 			conn.snCrypto,
+			conn.listener.mtu,
 			packetData,
 		)
 		if err != nil {
@@ -137,7 +139,7 @@ func (l *Listener) decode(encData []byte, rAddr netip.AddrPort) (
 	switch msgType {
 	case InitSnd:
 		// Decode S0 message
-		pubKeyIdSnd, pubKeyEpSnd, err := decryptInitSnd(encData)
+		pubKeyIdSnd, pubKeyEpSnd, err := decryptInitSnd(encData, l.mtu)
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("failed to decode InitHandshakeS0: %w", err)
 		}
@@ -190,8 +192,7 @@ func (l *Listener) decode(encData []byte, rAddr netip.AddrPort) (
 	case InitCryptoSnd:
 		// Decode crypto S0 message
 		pubKeyIdSnd, pubKeyEpSnd, message, err := decryptInitCryptoSnd(
-			encData,
-			l.prvKeyId)
+			encData, l.prvKeyId, l.mtu)
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("failed to decode InitWithCryptoS0: %w", err)
 		}

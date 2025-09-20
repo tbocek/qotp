@@ -16,11 +16,12 @@ import (
 type Listener struct {
 	// this is the port we are listening to
 	localConn       NetworkConn
-	prvKeyId        *ecdh.PrivateKey                //never nil
+	prvKeyId        *ecdh.PrivateKey          //never nil
 	connMap         *LinkedMap[uint64, *Conn] // here we store the connection to remote peers, we can have up to
 	currentConnID   *uint64
 	currentStreamID *uint32
 	closed          bool
+	mtu             int
 	mu              sync.Mutex
 }
 
@@ -29,9 +30,20 @@ type ListenOption struct {
 	prvKeyId   *ecdh.PrivateKey
 	localConn  NetworkConn
 	listenAddr *net.UDPAddr
+	mtu        int
 }
 
 type ListenFunc func(*ListenOption) error
+
+func WithMtu(mtu int) ListenFunc {
+	return func(o *ListenOption) error {
+		if o.seed != nil {
+			return errors.New("seed already set")
+		}
+		o.mtu = mtu
+		return nil
+	}
+}
 
 func WithSeed(seed [32]byte) ListenFunc {
 	return func(o *ListenOption) error {
@@ -120,6 +132,9 @@ func fillListenOpts(options ...ListenFunc) (*ListenOption, error) {
 		}
 	}
 
+	if lOpts.mtu == 0 {
+		lOpts.mtu = 1400 //default MTU
+	}
 	if lOpts.seed != nil {
 		prvKeyId, err := ecdh.X25519().NewPrivateKey(lOpts.seed[:])
 		if err != nil {
@@ -160,6 +175,7 @@ func Listen(options ...ListenFunc) (*Listener, error) {
 	l := &Listener{
 		localConn: lOpts.localConn,
 		prvKeyId:  lOpts.prvKeyId,
+		mtu:       lOpts.mtu,
 		connMap:   NewLinkedMap[uint64, *Conn](),
 		mu:        sync.Mutex{},
 	}
@@ -191,7 +207,7 @@ func (l *Listener) Close() error {
 }
 
 func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err error) {
-	data := make([]byte, minMtu)
+	data := make([]byte, l.mtu)
 	n, remoteAddr, err := l.localConn.ReadFromUDPAddrPort(data, timeoutNano, nowNano)
 
 	if err != nil {
@@ -262,7 +278,7 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 		//if we do not have at least one connection, exit
 		return minPacing
 	}
-	
+
 	closeConn := []*Conn{}
 	closeStream := map[*Conn]uint32{}
 
@@ -270,7 +286,7 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 		return conn.streams
 	}, l.currentConnID, l.currentStreamID)
 
-	for conn, stream := range iter {	
+	for conn, stream := range iter {
 		dataSent, pacingNano, err := conn.Flush(stream, nowNano)
 		if err != nil {
 			slog.Info("closing connection, err", conn.debug(), slog.Any("err", err))
@@ -295,7 +311,7 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 
 		//no data sent, check if we reached the timeout for the activity
 		if conn.lastReadTimeNano != 0 && nowNano > conn.lastReadTimeNano+ReadDeadLine {
-			slog.Info("closing connection, timeout", conn.debug(), slog.Uint64("now", nowNano), 
+			slog.Info("closing connection, timeout", conn.debug(), slog.Uint64("now", nowNano),
 				slog.Uint64("last", conn.lastReadTimeNano))
 			closeConn = append(closeConn, conn)
 			break
@@ -336,22 +352,21 @@ func (l *Listener) newConn(
 	}
 
 	conn := &Conn{
-		connId:     connId,
-		streams:    NewLinkedMap[uint32, *Stream](),
-		remoteAddr: remoteAddr,
-		pubKeyIdRcv: pubKeyIdRcv,
-		prvKeyEpSnd: prvKeyEpSnd,
-		pubKeyEpRcv: pubKeyEdRcv,
-		mu:       sync.Mutex{},
-		listener: l,
+		connId:             connId,
+		streams:            NewLinkedMap[uint32, *Stream](),
+		remoteAddr:         remoteAddr,
+		pubKeyIdRcv:        pubKeyIdRcv,
+		prvKeyEpSnd:        prvKeyEpSnd,
+		pubKeyEpRcv:        pubKeyEdRcv,
+		mu:                 sync.Mutex{},
+		listener:           l,
 		isSenderOnInit:     isSender,
 		isWithCryptoOnInit: withCrypto,
-		snCrypto:     0,
-		mtu:          minMtu,
-		snd:          NewSendBuffer(sndBufferCapacity, nil),
-		rcv:          NewReceiveBuffer(rcvBufferCapacity),
-		Measurements: NewMeasurements(),
-		rcvWndSize:   rcvBufferCapacity, //initially our capacity, correct value will be sent to us in the 1st handshake
+		snCrypto:           0,
+		snd:                NewSendBuffer(sndBufferCapacity, nil),
+		rcv:                NewReceiveBuffer(rcvBufferCapacity),
+		Measurements:       NewMeasurements(),
+		rcvWndSize:         rcvBufferCapacity, //initially our capacity, correct value will be sent to us in the 1st handshake
 	}
 
 	l.connMap.Put(connId, conn)

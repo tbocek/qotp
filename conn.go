@@ -30,7 +30,6 @@ type Conn struct {
 	rcv          *ReceiveBuffer
 	dataInFlight int
 	rcvWndSize   uint64
-	mtu          uint64
 
 	// Connection state
 	isSenderOnInit       bool
@@ -106,7 +105,10 @@ func (c *Conn) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uin
 			c.dataInFlight -= rawLen
 		} else if ackStatus == AckDup {
 			c.OnDuplicateAck()
+		} else {
+			slog.Debug("No stream?")
 		}
+
 		if nowNano > sentTimeNano {
 			if ackStatus == AckStatusOk {
 				rttNano := nowNano - sentTimeNano
@@ -115,6 +117,7 @@ func (c *Conn) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uin
 				return nil, errors.New("stream does not exist")
 			}
 		}
+
 	}
 
 	if len(userData) > 0 {
@@ -164,11 +167,12 @@ func (c *Conn) cleanupConn() {
 	c.listener.connMap.Remove(c.connId)
 }
 
-func (c *Conn) Ping(nowNano uint64) error {
+func (c *Conn) Ping(streamId uint32, nowNano uint64) error {
 	ack := c.rcv.GetSndAck()
 	p := &PayloadHeader{
-		IsReqAck:     true,
+		IsReqAck:     true, //important as our data will be empty
 		Ack:          ack,
+		StreamID:     streamId,
 		StreamOffset: nowNano,
 	}
 	encData, err := c.encode(p, []byte{}, c.msgType())
@@ -177,7 +181,7 @@ func (c *Conn) Ping(nowNano uint64) error {
 	if err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
@@ -206,7 +210,7 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 		return c.writeAck(s, ack, nowNano)
 	}
 	//Respect rwnd
-	if c.dataInFlight+minMtu > int(c.rcvWndSize) {
+	if c.dataInFlight+int(c.listener.mtu) > int(c.rcvWndSize) {
 		slog.Debug(" Flush/Rwnd/Rcv", gId(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
 		if ack == nil {
 			return 0, MinDeadLine, nil
@@ -215,15 +219,14 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 	}
 
 	// Retransmission case
-	splitData, offset, msgType, err := c.snd.ReadyToRetransmit(s.streamID, ack, minMtu, c.rtoNano(), nowNano)
+	splitData, offset, msgType, err := c.snd.ReadyToRetransmit(s.streamID, ack, c.listener.mtu, c.rtoNano(), nowNano)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	//during handshake, if we have something to retransmit, it will always be the first packet
-	//otherwise go ahead
 	if splitData != nil {
 		c.OnPacketLoss()
+
 		slog.Debug(" Flush/Retransmit", gId(), s.debug(), c.debug())
 
 		p := &PayloadHeader{
@@ -251,10 +254,10 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 
 	//next check if we can send packets, during handshake we can only send 1 packet
 	if c.isHandshakeDoneOnRcv || !c.isInitSentOnSnd {
-		splitData, offset := c.snd.ReadyToSend(s.streamID, c.msgType(), ack, minMtu, nowNano)
+		splitData, offset := c.snd.ReadyToSend(s.streamID, c.msgType(), ack, c.listener.mtu, nowNano)
 		if len(splitData) > 0 {
 			slog.Debug(" Flush/Send", gId(), s.debug(), c.debug())
-			
+
 			p := &PayloadHeader{
 				IsReqAck:     true,
 				IsClose:      s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
@@ -263,8 +266,7 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 				StreamID:     s.streamID,
 				StreamOffset: offset,
 			}
-			
-			
+
 			encData, err := c.encode(p, splitData, c.msgType())
 			if err != nil {
 				return 0, 0, err
@@ -291,12 +293,12 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 
 func (c *Conn) writeAck(s *Stream, ack *Ack, nowNano uint64) (data int, pacingNano uint64, err error) {
 	p := &PayloadHeader{
-		IsClose:      s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
-		RcvWndSize:   uint64(s.conn.rcv.capacity) - uint64(s.conn.rcv.Size()),
-		Ack:          ack,
-		StreamID:     s.streamID,
+		IsClose:    s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
+		RcvWndSize: uint64(s.conn.rcv.capacity) - uint64(s.conn.rcv.Size()),
+		Ack:        ack,
+		StreamID:   s.streamID,
 	}
-	
+
 	encData, err := c.encode(p, []byte{}, c.msgType())
 	if err != nil {
 		return 0, 0, err
@@ -321,7 +323,7 @@ func (c *Conn) debug() slog.Attr {
 	return slog.Group("connection",
 		slog.Uint64("nextWrt:ms", c.nextWriteTime/msNano),
 		//slog.Uint64("nextWrt:ns", c.nextWriteTime),
-		slog.Int("inFlight", c.dataInFlight+minMtu),
+		slog.Int("inFlight", c.dataInFlight+c.listener.mtu),
 		slog.Int("rcvBuf", c.rcv.capacity-c.rcv.size),
 		slog.Uint64("rcvWnd", c.rcvWndSize),
 		slog.Uint64("snCrypto", c.snCrypto),

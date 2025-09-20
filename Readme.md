@@ -39,7 +39,7 @@ only mentions 9 primary RFCs and 48 extensions and informational RFCs, totalling
 * [x] Congestion control: BBR (Bottleneck Bandwidth and Round-trip propagation time) estimates network capacity by 
   measuring bottleneck bandwidth and minimum round-trip time
 * [x] FIN/ACK teardown with timeout
-* [ ] MTU detection - not yet implemented
+* [x] MTU configuration
 * [x] Goal: less than 3k LoC
 
 ## Assumptions

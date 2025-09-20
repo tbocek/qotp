@@ -126,7 +126,7 @@ func (sb *SendBuffer) QueueData(streamID uint32, userData []byte) (n int, status
 }
 
 // ReadyToSend gets data from dataToSend and creates an entry in dataInFlightMap
-func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType MsgType, ack *Ack, mtu uint16, nowNano uint64) (
+func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType MsgType, ack *Ack, mtu int, nowNano uint64) (
 	packetData []byte, offset uint64) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
@@ -144,10 +144,10 @@ func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType MsgType, ack *Ack, mt
 	if stream.unsentOffset > stream.sentOffset {
 		remainingData := stream.unsentOffset - stream.sentOffset
 
-		maxData := uint16(0)
+		maxData := 0
 		if msgType != InitSnd {
 			overhead := calcCryptoOverhead(msgType, ack, stream.sentOffset)
-			maxData = mtu - uint16(overhead)
+			maxData = mtu - overhead
 		}
 
 		//the max length we can send
@@ -175,7 +175,7 @@ func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType MsgType, ack *Ack, mt
 }
 
 // ReadyToRetransmit finds expired dataInFlightMap that need to be resent
-func (sb *SendBuffer) ReadyToRetransmit(streamID uint32, ack *Ack, mtu uint16, expectedRtoNano uint64, nowNano uint64) (
+func (sb *SendBuffer) ReadyToRetransmit(streamID uint32, ack *Ack, mtu int, expectedRtoNano uint64, nowNano uint64) (
 	data []byte, offset uint64, msgType MsgType, err error) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
@@ -212,10 +212,10 @@ func (sb *SendBuffer) ReadyToRetransmit(streamID uint32, ack *Ack, mtu uint16, e
 	data = stream.userData[dataOffset : dataOffset+uint64(rangeLen)]
 
 	// Calculate available space once
-	maxData := uint16(0)
+	maxData := 0
 	if rtoData.msgType != InitSnd {
 		overhead := calcCryptoOverhead(rtoData.msgType, ack, dataOffset)
-		maxData = mtu - uint16(overhead)
+		maxData = mtu - overhead
 	}
 
 	baseSendInfo := &SendInfo{
@@ -227,16 +227,16 @@ func (sb *SendBuffer) ReadyToRetransmit(streamID uint32, ack *Ack, mtu uint16, e
 		actualRtoNano:          actualRtoNano,
 	}
 
-	if rangeLen <= maxData {
+	if rangeLen <= uint16(maxData) {
 		// Resend entire range
-		slog.Debug("Resend", slog.Uint64("free-space", uint64(maxData-rangeLen)))
+		slog.Debug("Resend", slog.Uint64("free-space", uint64(uint16(maxData)-rangeLen)))
 		stream.dataInFlightMap.Replace(packetKey, packetKey, baseSendInfo)
 		return data, rangeOffset, rtoData.msgType, nil
 	} else {
 		// Split range
-		leftKey := createPacketKey(rangeOffset, maxData)
+		leftKey := createPacketKey(rangeOffset, uint16(maxData))
 		remainingOffset := rangeOffset + uint64(maxData)
-		rightKey := createPacketKey(remainingOffset, rangeLen-maxData)
+		rightKey := createPacketKey(remainingOffset, rangeLen-uint16(maxData))
 
 		stream.dataInFlightMap.Put(leftKey, baseSendInfo)
 
@@ -250,8 +250,8 @@ func (sb *SendBuffer) ReadyToRetransmit(streamID uint32, ack *Ack, mtu uint16, e
 		}
 		stream.dataInFlightMap.Replace(packetKey, rightKey, rightSendInfo)
 
-		slog.Debug("Resend/Split", slog.Uint64("send", uint64(maxData)), 
-			slog.Uint64("remain", uint64(rangeLen-maxData)))
+		slog.Debug("Resend/Split", slog.Uint64("send", uint64(maxData)),
+			slog.Uint64("remain", uint64(rangeLen-uint16(maxData))))
 		return data[:maxData], rangeOffset, rtoData.msgType, nil
 	}
 }
