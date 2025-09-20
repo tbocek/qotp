@@ -110,15 +110,3 @@ func (s *Stream) currentOffset() uint64 {
 	}
 	return streamBuffer.sentOffset
 }
-
-func (s *Stream) payloadHeader(offset uint64, ack *Ack) *PayloadHeader{
-	return &PayloadHeader{
-			IsClose:      s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
-			RcvWndSize:   uint64(s.conn.rcv.capacity) - uint64(s.conn.rcv.Size()),
-			Ack:          ack,
-			StreamID:     s.streamID,
-			StreamOffset: offset,
-		}
-}
-
-

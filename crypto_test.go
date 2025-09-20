@@ -500,11 +500,11 @@ func TestCryptoNilKeyHandling(t *testing.T) {
 		encryptInitRcv(0, nil, nil, nil, 0, []byte("test"))
 	})
 
-	validBuffer := make([]byte, startMtu)
+	validBuffer := make([]byte, minMtu)
 	_, _, err := decryptInitSnd(validBuffer)
 	assert.Nil(t, err)
 
-	validBuffer = make([]byte, startMtu)
+	validBuffer = make([]byte, minMtu)
 	assert.Panics(t, func() {
 		decryptInitRcv(validBuffer, nil)
 	})

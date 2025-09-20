@@ -4,11 +4,17 @@ import (
 	"errors"
 	"log/slog"
 	"net/netip"
+	"os"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestMain(m *testing.M) {
+	setupLogger(slog.LevelDebug)
+	os.Exit(m.Run())
+}
 
 func init() {
 	specificNano = 0
@@ -138,24 +144,28 @@ func (p *PairedConn) TimeoutReadNow() error {
 }
 
 // WriteToUDPAddrPort writes data to the partner connection
-func (p *PairedConn) WriteToUDPAddrPort(data []byte, remoteAddr netip.AddrPort, nowNano uint64) (int, error) {
+func (p *PairedConn) WriteToUDPAddrPort(b []byte, remoteAddr netip.AddrPort, nowNano uint64) error {
 	if p.isClosed() {
-		return 0, errors.New("connection closed")
+		return errors.New("connection closed")
 	}
 
 	// Make a copy of the data
-	dataCopy := make([]byte, len(data))
-	n := copy(dataCopy, data)
+	dataCopy := make([]byte, len(b))
+	n := copy(dataCopy, b)
+	
+	if n != len(b) {
+		return errors.New("could not send all data. This should not happen")
+	}
 
 	// Calculate transmission time based on bandwidth
 	// bandwidth is in bits per second, data is in bytes
 	transmissionNano := uint64(0)
 	if p.bandwidth > 0 {
-		transmissionNano = (uint64(len(data)) * secondNano) / p.bandwidth
+		transmissionNano = (uint64(len(b)) * secondNano) / p.bandwidth
 	}
 
 	slog.Debug("    WriteUDP",
-		slog.Int("len(data)", len(data)),
+		slog.Int("len(data)", len(b)),
 		slog.Uint64("bandwidth:B/s", p.bandwidth),
 		slog.Uint64("latency:ms", p.latencyNano/msNano),
 		slog.Uint64("tx-time:ms", transmissionNano/msNano))
@@ -168,7 +178,7 @@ func (p *PairedConn) WriteToUDPAddrPort(data []byte, remoteAddr netip.AddrPort, 
 	})
 	p.writeQueueMu.Unlock()
 
-	return n, nil
+	return nil
 }
 
 func (p *PairedConn) CopyData(sequence ...int) (int, error) {
@@ -288,16 +298,15 @@ func TestWriteAndReadUDP(t *testing.T) {
 	testData := []byte("hello world")
 
 	// Write from isSender to receiver
-	n, err := sender.WriteToUDPAddrPort(testData, netip.AddrPort{}, 0)
+	err := sender.WriteToUDPAddrPort(testData, netip.AddrPort{}, 0)
 	assert.NoError(t, err)
-	assert.Equal(t, len(testData), n)
 
 	_, err = connPair.senderToRecipient(1)
 	assert.NoError(t, err)
 
 	// Read on receiver side
 	buffer := make([]byte, 100)
-	n, _, err = receiver.ReadFromUDPAddrPort(buffer, 0, 1100000)
+	n, _, err := receiver.ReadFromUDPAddrPort(buffer, 0, 1100000)
 	assert.NoError(t, err)
 	assert.Equal(t, len(testData), n)
 	assert.Equal(t, testData, buffer[:n])
@@ -314,9 +323,8 @@ func TestWriteAndReadUDPBidirectional(t *testing.T) {
 	dataFromEndpoint2 := []byte("response from endpoint 2")
 
 	// Endpoint 1 writes to Endpoint 2
-	n1, err := endpoint1.WriteToUDPAddrPort(dataFromEndpoint1, netip.AddrPort{}, 0)
+	err := endpoint1.WriteToUDPAddrPort(dataFromEndpoint1, netip.AddrPort{}, 0)
 	assert.NoError(t, err)
-	assert.Equal(t, len(dataFromEndpoint1), n1)
 
 	_, err = connPair.senderToRecipient(1)
 	assert.NoError(t, err)
@@ -329,9 +337,8 @@ func TestWriteAndReadUDPBidirectional(t *testing.T) {
 	assert.Equal(t, dataFromEndpoint1, buffer[:n2])
 
 	// Endpoint 2 writes back to Endpoint 1
-	n3, err := endpoint2.WriteToUDPAddrPort(dataFromEndpoint2, netip.AddrPort{}, 0)
+	err = endpoint2.WriteToUDPAddrPort(dataFromEndpoint2, netip.AddrPort{}, 0)
 	assert.NoError(t, err)
-	assert.Equal(t, len(dataFromEndpoint2), n3)
 
 	_, err = connPair.recipientToSender(1)
 	assert.NoError(t, err)
@@ -354,7 +361,7 @@ func TestWriteToClosedConnection(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Attempt to write to the closed connection
-	_, err = conn1.WriteToUDPAddrPort([]byte("test data"), netip.AddrPort{}, 0)
+	err = conn1.WriteToUDPAddrPort([]byte("test data"), netip.AddrPort{}, 0)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
 }
@@ -405,9 +412,8 @@ func TestMultipleWrites(t *testing.T) {
 
 	// Send all messages
 	for _, msg := range messages {
-		n, err := sender.WriteToUDPAddrPort(msg, netip.AddrPort{}, 0)
+		err := sender.WriteToUDPAddrPort(msg, netip.AddrPort{}, 0)
 		assert.NoError(t, err)
-		assert.Equal(t, len(msg), n)
 	}
 
 	_, err := connPair.senderToRecipient(3)
@@ -445,13 +451,11 @@ func TestWriteAndReadUDPWithDrop(t *testing.T) {
 	testData2 := []byte("packet 2")
 
 	// Write both packets from isSender to receiver
-	n1, err := sender.WriteToUDPAddrPort(testData1, netip.AddrPort{}, 0)
+	err := sender.WriteToUDPAddrPort(testData1, netip.AddrPort{}, 0)
 	assert.NoError(t, err)
-	assert.Equal(t, len(testData1), n1)
 
-	n2, err := sender.WriteToUDPAddrPort(testData2, netip.AddrPort{}, 0)
+	err = sender.WriteToUDPAddrPort(testData2, netip.AddrPort{}, 0)
 	assert.NoError(t, err)
-	assert.Equal(t, len(testData2), n2)
 
 	// Copy the first packet and drop the second one
 	_, err = connPair.senderToRecipient(1, -1) // Copy packet 1, Drop packet 2

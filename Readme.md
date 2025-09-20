@@ -277,7 +277,7 @@ To simplify the implementation, there is only one payload header.
 title: "TomTP Payload Packet"
 ---
 packet-beta
-  0: "P/M"
+  0: "REQ/ACK"
   1-2: "ACK/PAK"
   3-7: "RCV_WND_SIZE" 
   8-39: "Opt. ACKs: Example ACK: StreamId 32bit"
@@ -289,13 +289,15 @@ packet-beta
 ```
 The TomTP payload packet begins with a header byte containing several control bits:
 
-* Bit 0 is the "P/M" flag for MTU discovery, which is not implemented yet
+* Bit 0 is indicates if ACK is required
 * Bits 1-2: 
   * 00: No ACK/Data with 24bit,
   * 01: No ACK/Data with 48bit,
   * 10: ACK with 24bit/Data with 24bit, 
   * 11: ACK with 48bit/Data with 48bit,
-* Bits 3-7: Receiver window size: 1024 << (bits - 1), 31 is not used for rcv, but means CLOSE. Max receiver size is 512GB
+* Bits 3-7: Receiver window size: 1024 << (bits - 1), 
+  * 31 is not used for rcv, but means CLOSE
+  * Max receiver size is 512GB
 
 If ACK bit is present then:
 

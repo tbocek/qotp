@@ -33,7 +33,7 @@ const (
 	ConnIdSize         = 8
 	MsgInitFillLenSize = 2
 
-	MinInitSndSize          = startMtu
+	MinInitSndSize          = minMtu
 	MinInitRcvSizeHdr       = HeaderSize + ConnIdSize + (2 * PubKeySize)
 	MinInitCryptoSndSizeHdr = HeaderSize + (2 * PubKeySize)
 	MinInitCryptoRcvSizeHdr = HeaderSize + ConnIdSize + PubKeySize
@@ -60,7 +60,7 @@ func encryptInitSnd(
 	}
 
 	// Create the buffer with the correct size
-	headerCryptoDataBuffer := make([]byte, startMtu)
+	headerCryptoDataBuffer := make([]byte, minMtu)
 
 	headerCryptoDataBuffer[0] = (Version << 3) | uint8(InitSnd)
 
@@ -139,7 +139,7 @@ func encryptInitCryptoSnd(
 	copy(headerWithKeys[HeaderSize+PubKeySize:], pubKeyIdSnd.Bytes())
 
 	// Encrypt and write dataToSend
-	fillLen := startMtu - (MinInitCryptoSndSizeHdr + FooterDataSize + MsgInitFillLenSize + len(packetData))
+	fillLen := minMtu - (MinInitCryptoSndSizeHdr + FooterDataSize + MsgInitFillLenSize + len(packetData))
 
 	if fillLen < 0 {
 		return 0, nil, errors.New("packet dataToSend cannot be larger than MTU")

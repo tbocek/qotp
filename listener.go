@@ -191,7 +191,7 @@ func (l *Listener) Close() error {
 }
 
 func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err error) {
-	data := make([]byte, startMtu)
+	data := make([]byte, minMtu)
 	n, remoteAddr, err := l.localConn.ReadFromUDPAddrPort(data, timeoutNano, nowNano)
 
 	if err != nil {
@@ -271,7 +271,7 @@ func (l *Listener) Flush(nowNano uint64) (minPacing uint64) {
 	}, l.currentConnID, l.currentStreamID)
 
 	for conn, stream := range iter {	
-		_, dataSent, pacingNano, err := conn.Flush(stream, nowNano)
+		dataSent, pacingNano, err := conn.Flush(stream, nowNano)
 		if err != nil {
 			slog.Info("closing connection, err", conn.debug(), slog.Any("err", err))
 			closeConn = append(closeConn, conn)
@@ -347,7 +347,7 @@ func (l *Listener) newConn(
 		isSenderOnInit:     isSender,
 		isWithCryptoOnInit: withCrypto,
 		snCrypto:     0,
-		mtu:          startMtu,
+		mtu:          minMtu,
 		snd:          NewSendBuffer(sndBufferCapacity, nil),
 		rcv:          NewReceiveBuffer(rcvBufferCapacity),
 		Measurements: NewMeasurements(),

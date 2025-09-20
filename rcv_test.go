@@ -9,7 +9,7 @@ import (
 func TestReceiveBuffer_SingleSegment(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 
-	status := rb.Insert(1, 0, []byte("data"))
+	status := rb.Insert(1, 0, []byte("data"), true)
 	assert.Equal(t, RcvInsertOk, status)
 
 	offset, data := rb.RemoveOldestInOrder(1)
@@ -24,10 +24,10 @@ func TestReceiveBuffer_SingleSegment(t *testing.T) {
 func TestReceiveBuffer_DuplicateSegment(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 
-	status := rb.Insert(1, 0, []byte("data"))
+	status := rb.Insert(1, 0, []byte("data"), true)
 	assert.Equal(t, RcvInsertOk, status)
 
-	status = rb.Insert(1, 0, []byte("data"))
+	status = rb.Insert(1, 0, []byte("data"), true)
 	assert.Equal(t, RcvInsertDuplicate, status)
 
 	offset, data := rb.RemoveOldestInOrder(1)
@@ -38,10 +38,10 @@ func TestReceiveBuffer_DuplicateSegment(t *testing.T) {
 func TestReceiveBuffer_GapBetweenSegments(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 
-	status := rb.Insert(1, 10, []byte("later"))
+	status := rb.Insert(1, 10, []byte("later"), true)
 	assert.Equal(t, RcvInsertOk, status)
 
-	status = rb.Insert(1, 0, []byte("early"))
+	status = rb.Insert(1, 0, []byte("early"), true)
 	assert.Equal(t, RcvInsertOk, status)
 
 	// Should get early segment first
@@ -59,13 +59,13 @@ func TestReceiveBuffer_MultipleStreams(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 
 	// Insert segments from different streams
-	status := rb.Insert(1, 0, []byte("stream1-first"))
+	status := rb.Insert(1, 0, []byte("stream1-first"), true)
 	assert.Equal(t, RcvInsertOk, status)
 
-	status = rb.Insert(2, 0, []byte("stream2-first"))
+	status = rb.Insert(2, 0, []byte("stream2-first"), true)
 	assert.Equal(t, RcvInsertOk, status)
 
-	status = rb.Insert(1, 13, []byte("stream1-second"))
+	status = rb.Insert(1, 13, []byte("stream1-second"), true)
 	assert.Equal(t, RcvInsertOk, status)
 
 	// Read from stream 1
@@ -87,10 +87,10 @@ func TestReceiveBuffer_MultipleStreams(t *testing.T) {
 func TestReceiveBuffer_BufferFullExact(t *testing.T) {
 	rb := NewReceiveBuffer(4)
 
-	status := rb.Insert(1, 0, []byte("data"))
+	status := rb.Insert(1, 0, []byte("data"), true)
 	assert.Equal(t, RcvInsertOk, status)
 
-	status = rb.Insert(1, 4, []byte("more"))
+	status = rb.Insert(1, 4, []byte("more"), true)
 	assert.Equal(t, RcvInsertBufferFull, status)
 
 	offset, data := rb.RemoveOldestInOrder(1)
@@ -101,7 +101,7 @@ func TestReceiveBuffer_BufferFullExact(t *testing.T) {
 func TestReceiveBuffer_RemoveWithHigherOffset(t *testing.T) {
 	rb := NewReceiveBuffer(4)
 
-	status := rb.Insert(1, 0, []byte("12345"))
+	status := rb.Insert(1, 0, []byte("12345"), true)
 	assert.Equal(t, RcvInsertBufferFull, status)
 
 	offset, data := rb.RemoveOldestInOrder(1)
@@ -112,7 +112,7 @@ func TestReceiveBuffer_RemoveWithHigherOffset(t *testing.T) {
 func TestReceiveBuffer_RemoveWithHigherOffset_EmptyAfterLast(t *testing.T) {
 	rb := NewReceiveBuffer(4)
 
-	status := rb.Insert(1, 0, []byte("1"))
+	status := rb.Insert(1, 0, []byte("1"), true)
 	assert.Equal(t, RcvInsertOk, status)
 
 	offset, data := rb.RemoveOldestInOrder(1)
@@ -128,12 +128,12 @@ func TestReceiveBuffer_PreviousOverlapPartialIntegrityViolation(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 	
 	// Insert previous segment: offset=100, data="ABCDE"
-	status := rb.Insert(1, 100, []byte("ABCDE"))
+	status := rb.Insert(1, 100, []byte("ABCDE"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	// Insert overlapping segment with mismatched data - should panic
 	assert.PanicsWithValue(t, "Previous segment overlap mismatch - data integrity violation", func() {
-		rb.Insert(1, 102, []byte("CDFG")) // "CD" doesn't match "CD" from previous
+		rb.Insert(1, 102, []byte("CDFG"), true) // "CD" doesn't match "CD" from previous
 	})
 }
 
@@ -144,11 +144,11 @@ func TestReceiveBuffer_PreviousOverlapComplete(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 	
 	// Insert previous segment: offset=100, data="ABCDEFGH"
-	status := rb.Insert(1, 100, []byte("ABCDEFGH"))
+	status := rb.Insert(1, 100, []byte("ABCDEFGH"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	// Insert completely overlapped segment: offset=102, data="CD"
-	status = rb.Insert(1, 102, []byte("CD"))
+	status = rb.Insert(1, 102, []byte("CD"), true)
 	assert.Equal(t, RcvInsertDuplicate, status)
 	
 	// Should still only have the original segment
@@ -166,13 +166,13 @@ func TestReceiveBuffer_NextOverlapMismatchPanic(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 	
 	// Insert next segment first: offset=105, data="EFGH"
-	status := rb.Insert(1, 105, []byte("EFGH"))
+	status := rb.Insert(1, 105, []byte("EFGH"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	// Insert overlapping segment with mismatched overlap data - should panic
 	// Next segment has "E" at position 105, but incoming has "F" at position 105
 	assert.PanicsWithValue(t, "Next segment partial overlap mismatch - data integrity violation", func() {
-		rb.Insert(1, 100, []byte("ABCDEF")) // "F" at position 105 doesn't match "E"
+		rb.Insert(1, 100, []byte("ABCDEF"), true) // "F" at position 105 doesn't match "E"
 	})
 }
 
@@ -180,11 +180,11 @@ func TestReceiveBuffer_NextOverlapPartial(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 	
 	// Insert next segment first: offset=105, data="EFGH"
-	status := rb.Insert(1, 105, []byte("EFGH"))
+	status := rb.Insert(1, 105, []byte("EFGH"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	// Insert overlapping segment: offset=100, data="ABCDEE"
-	status = rb.Insert(1, 100, []byte("ABCDEE"))
+	status = rb.Insert(1, 100, []byte("ABCDEE"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	stream := rb.streams[1]
@@ -205,13 +205,13 @@ func TestReceiveBuffer_NextOverlapCompleteMismatchPanic(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 	
 	// Insert next segment first: offset=105, data="EF"
-	status := rb.Insert(1, 105, []byte("EF"))
+	status := rb.Insert(1, 105, []byte("EF"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	// Insert segment with mismatched complete overlap data - should panic
 	// Next segment has "EF" at positions 105-106, but incoming has "FG" at same positions
 	assert.PanicsWithValue(t, "Next segment complete overlap mismatch - data integrity violation", func() {
-		rb.Insert(1, 100, []byte("ABCDEFGH")) // "FG" at positions 105-106 doesn't match "EF"
+		rb.Insert(1, 100, []byte("ABCDEFGH"), true) // "FG" at positions 105-106 doesn't match "EF"
 	})
 }
 
@@ -219,12 +219,12 @@ func TestReceiveBuffer_NextOverlapComplete(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 	
 	// Insert next segment first: offset=105, data="EF"
-	status := rb.Insert(1, 105, []byte("EF"))
+	status := rb.Insert(1, 105, []byte("EF"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	// Insert segment that completely covers the next with matching overlap data
 	// Positions 105-106 should contain "EF" in both segments
-	status = rb.Insert(1, 100, []byte("ABCDEEFGH"))
+	status = rb.Insert(1, 100, []byte("ABCDEEFGH"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	stream := rb.streams[1]
@@ -243,18 +243,18 @@ func TestReceiveBuffer_BothOverlaps(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 	
 	// Insert previous segment: offset=90, data="12345"
-	status := rb.Insert(1, 90, []byte("12345"))
+	status := rb.Insert(1, 90, []byte("12345"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	// Insert next segment: offset=105, data="WXYZ"
-	status = rb.Insert(1, 105, []byte("WXYZ"))
+	status = rb.Insert(1, 105, []byte("WXYZ"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	// Insert segment that overlaps both with matching data:
 	// Previous overlap: "345" at positions 92-94
 	// After adjustment, will be at offset 95 with remaining data
 	// Must ensure positions 105-108 contain "WXYZ" to match next segment
-	status = rb.Insert(1, 92, []byte("345ABCDEFGHIJWXYZUV"))
+	status = rb.Insert(1, 92, []byte("345ABCDEFGHIJWXYZUV"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	stream := rb.streams[1]
@@ -278,11 +278,11 @@ func TestReceiveBuffer_ExactSameOffset_SmallerData(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 	
 	// Insert larger segment first
-	status := rb.Insert(1, 100, []byte("ABCDEFGH"))
+	status := rb.Insert(1, 100, []byte("ABCDEFGH"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	// Insert smaller segment at same offset - should be duplicate
-	status = rb.Insert(1, 100, []byte("ABCD"))
+	status = rb.Insert(1, 100, []byte("ABCD"), true)
 	assert.Equal(t, RcvInsertDuplicate, status)
 	
 	stream := rb.streams[1]
@@ -297,11 +297,11 @@ func TestReceiveBuffer_ExactSameOffset_LargerData(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 	
 	// Insert smaller segment first
-	status := rb.Insert(1, 100, []byte("ABCD"))
+	status := rb.Insert(1, 100, []byte("ABCD"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	// Insert larger segment at same offset - should replace
-	status = rb.Insert(1, 100, []byte("ABCDEFGH"))
+	status = rb.Insert(1, 100, []byte("ABCDEFGH"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	stream := rb.streams[1]
@@ -316,7 +316,7 @@ func TestReceiveBuffer_AlreadyDeliveredSegment(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 	
 	// Insert and read a segment to advance nextInOrderOffsetToWaitFor
-	status := rb.Insert(1, 0, []byte("ABCD"))
+	status := rb.Insert(1, 0, []byte("ABCD"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	offset, data := rb.RemoveOldestInOrder(1)
@@ -328,15 +328,15 @@ func TestReceiveBuffer_AlreadyDeliveredSegment(t *testing.T) {
 	assert.Equal(t, uint64(4), stream.nextInOrderOffsetToWaitFor)
 	
 	// Try to insert segment that's completely before delivered data
-	status = rb.Insert(1, 0, []byte("AB"))
+	status = rb.Insert(1, 0, []byte("AB"), true)
 	assert.Equal(t, RcvInsertDuplicate, status)
 	
 	// Try to insert segment that partially overlaps delivered data
-	status = rb.Insert(1, 2, []byte("CD"))
+	status = rb.Insert(1, 2, []byte("CD"), true)
 	assert.Equal(t, RcvInsertDuplicate, status)
 	
 	// Insert segment that starts exactly at next expected offset
-	status = rb.Insert(1, 4, []byte("EFGH"))
+	status = rb.Insert(1, 4, []byte("EFGH"), true)
 	assert.Equal(t, RcvInsertOk, status)
 }
 
@@ -344,12 +344,12 @@ func TestReceiveBuffer_SizeAccountingCorrect(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 	
 	// Insert first segment
-	status := rb.Insert(1, 100, []byte("ABCDE")) // 5 bytes
+	status := rb.Insert(1, 100, []byte("ABCDE"), true) // 5 bytes
 	assert.Equal(t, RcvInsertOk, status)
 	assert.Equal(t, 5, rb.Size())
 	
 	// Insert overlapping segment with matching overlap data
-	status = rb.Insert(1, 102, []byte("CDEFG")) // overlaps with "CDE", matches exactly
+	status = rb.Insert(1, 102, []byte("CDEFG"), true) // overlaps with "CDE", matches exactly
 	assert.Equal(t, RcvInsertOk, status)
 	
 	// Previous segment stays: "ABCDE" (5 bytes)
@@ -358,7 +358,7 @@ func TestReceiveBuffer_SizeAccountingCorrect(t *testing.T) {
 	assert.Equal(t, 7, rb.Size())
 	
 	// Insert segment that completely covers the first segment but not the second
-	status = rb.Insert(1, 90, []byte("1234567890ABCDEFGHIJK")) // 21 bytes
+	status = rb.Insert(1, 90, []byte("1234567890ABCDEFGHIJK"), true) // 21 bytes
 	assert.Equal(t, RcvInsertOk, status)
 	
 	// Final size: 21 bytes (new segment) + 2 bytes (remaining "FG" segment) = 23 bytes
@@ -369,11 +369,11 @@ func TestReceiveBuffer_OverlapDataMismatchPanic(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 	
 	// Insert previous segment
-	status := rb.Insert(1, 100, []byte("ABCDE"))
+	status := rb.Insert(1, 100, []byte("ABCDE"), true)
 	assert.Equal(t, RcvInsertOk, status)
 	
 	// Try to insert overlapping segment with different data - should panic
 	assert.Panics(t, func() {
-		rb.Insert(1, 102, []byte("XXFG")) // "XX" doesn't match "CD"
+		rb.Insert(1, 102, []byte("XXFG"), true) // "XX" doesn't match "CD"
 	})
 }

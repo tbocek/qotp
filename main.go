@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	startMtu = 1400 // QUIC uses 1200 based on studies done around 2016-2018
+	minMtu = 1400 // QUIC uses 1200 based on studies done around 2016-2018
+	maxMtu = 9000
 	//maxMtu            = 9000             // support larger packets
 	rcvBufferCapacity = 16 * 1024 * 1024 // 16MB
 	sndBufferCapacity = 16 * 1024 * 1024 // 16MB
@@ -22,9 +23,7 @@ const (
 )
 
 func init() {
-
 	levelStr := strings.ToLower(os.Getenv("LOG_LEVEL"))
-
 	var slogLevel slog.Level
 	switch levelStr {
 	case "debug":
@@ -38,9 +37,12 @@ func init() {
 	default:
 		slogLevel = slog.LevelInfo
 	}
+	setupLogger(slogLevel)
+}
 
+func setupLogger(level slog.Level) {
 	logger := slog.New(slogcolor.NewHandler(os.Stderr, &slogcolor.Options{
-		Level:         slogLevel,
+		Level:         level,
 		TimeFormat:    "15:04:05.000",
 		SrcFileMode:   slogcolor.ShortFile,
 		SrcFileLength: 16,
@@ -48,7 +50,6 @@ func init() {
 		MsgColor:      color.New(color.FgHiWhite),
 		MsgLength:     16,
 	}))
-
 	color.NoColor = false
 	slog.SetDefault(logger)
 }

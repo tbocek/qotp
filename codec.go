@@ -10,23 +10,6 @@ import (
 	"strings"
 )
 
-func (s *Stream) msgType() MsgType {
-	if s.conn.isHandshakeDoneOnRcv {
-		return Data
-	}
-
-	switch {
-	case s.conn.isWithCryptoOnInit && s.conn.isSenderOnInit:
-		return InitCryptoSnd
-	case s.conn.isWithCryptoOnInit && !s.conn.isSenderOnInit:
-		return InitCryptoRcv
-	case s.conn.isSenderOnInit:
-		return InitSnd
-	default:
-		return InitRcv
-	}
-}
-
 func (conn *Conn) encode(p *PayloadHeader, userData []byte, msgType MsgType) (encData []byte, err error) {
 	// Create payload early for cases that need it
 	var packetData []byte

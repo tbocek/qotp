@@ -85,8 +85,8 @@ func TestCodecStreamClosed(t *testing.T) {
 	stream := conn.Stream(1)
 	stream.Close()
 
-	p := stream.payloadHeader(0, nil)
-	output, err := conn.encode(p, []byte("test data"), stream.msgType())
+	p := &PayloadHeader{}
+	output, err := conn.encode(p, []byte("test data"), conn.msgType())
 	assert.NotNil(t, output)
 	assert.NoError(t, err)
 }
@@ -96,8 +96,8 @@ func TestCodecConnectionClosed(t *testing.T) {
 	stream := conn.Stream(1)
 	stream.conn.Close()
 
-	p := stream.payloadHeader(0, nil)
-	output, err := conn.encode(p, []byte("test data"), stream.msgType())
+	p := &PayloadHeader{}
+	output, err := conn.encode(p, []byte("test data"), conn.msgType())
 	assert.NotNil(t, output)
 	assert.NoError(t, err)
 }
@@ -164,11 +164,10 @@ func TestCodecDataSizeZero(t *testing.T) {
 	lAlice.connMap.Put(connId, connAlice)
 	connAlice.connId = connId
 
-	streamAlice := &Stream{conn: connAlice}
 	testData := createTestData(0)
 
-	p := streamAlice.payloadHeader(0, nil)
-	encoded, err := connAlice.encode(p, testData, streamAlice.msgType())
+	p := &PayloadHeader{}
+	encoded, err := connAlice.encode(p, testData, connAlice.msgType())
 	assert.NoError(t, err)
 	assert.NotNil(t, encoded)
 
@@ -194,11 +193,10 @@ func TestCodecDataSizeOne(t *testing.T) {
 	lAlice.connMap.Put(connId, connAlice)
 	connAlice.connId = connId
 
-	streamAlice := &Stream{conn: connAlice}
 	testData := createTestData(1)
 
-	p := streamAlice.payloadHeader(0, nil)
-	encoded, err := connAlice.encode(p, testData, streamAlice.msgType())
+	p := &PayloadHeader{}
+	encoded, err := connAlice.encode(p, testData, connAlice.msgType())
 	assert.NoError(t, err)
 	assert.NotNil(t, encoded)
 
@@ -223,11 +221,10 @@ func TestCodecDataSizeHundred(t *testing.T) {
 	lAlice.connMap.Put(connId, connAlice)
 	connAlice.connId = connId
 
-	streamAlice := &Stream{conn: connAlice}
 	testData := createTestData(100)
 
-	p := streamAlice.payloadHeader(0, nil)
-	encoded, err := connAlice.encode(p, testData, streamAlice.msgType())
+	p := &PayloadHeader{}
+	encoded, err := connAlice.encode(p, testData, connAlice.msgType())
 	assert.NoError(t, err)
 	assert.NotNil(t, encoded)
 
@@ -252,11 +249,10 @@ func TestCodecDataSizeThousand(t *testing.T) {
 	lAlice.connMap.Put(connId, connAlice)
 	connAlice.connId = connId
 
-	streamAlice := &Stream{conn: connAlice}
 	testData := createTestData(1000)
 
-	p := streamAlice.payloadHeader(0, nil)
-	encoded, err := connAlice.encode(p, testData, streamAlice.msgType())
+	p := &PayloadHeader{}
+	encoded, err := connAlice.encode(p, testData, connAlice.msgType())
 	assert.NoError(t, err)
 	assert.NotNil(t, encoded)
 
@@ -281,11 +277,10 @@ func TestCodecDataSizeLarge(t *testing.T) {
 	lAlice.connMap.Put(connId, connAlice)
 	connAlice.connId = connId
 
-	streamAlice := &Stream{conn: connAlice}
 	testData := createTestData(1295)
 
-	p := streamAlice.payloadHeader(0, nil)
-	encoded, err := connAlice.encode(p, testData, streamAlice.msgType())
+	p := &PayloadHeader{}
+	encoded, err := connAlice.encode(p, testData, connAlice.msgType())
 	assert.NoError(t, err)
 	assert.NotNil(t, encoded)
 
@@ -317,11 +312,9 @@ func TestCodecFullHandshake(t *testing.T) {
 	}
 	lAlice.connMap.Put(connAlice.connId, connAlice)
 
-	streamAlice := &Stream{conn: connAlice}
-
 	// Step 1: Alice encodes InitSnd
-	p := streamAlice.payloadHeader(0, nil)
-	encoded, err := connAlice.encode(p, nil, streamAlice.msgType())
+	p := &PayloadHeader{}
+	encoded, err := connAlice.encode(p, nil, connAlice.msgType())
 	assert.NoError(t, err)
 	assert.NotNil(t, encoded)
 
@@ -332,10 +325,9 @@ func TestCodecFullHandshake(t *testing.T) {
 	assert.Equal(t, InitSnd, msgTypeS0)
 
 	// Step 3: Bob responds with InitRcv
-	streamBob := &Stream{conn: connBob}
 	testData := []byte("handshake response")
-	p = streamBob.payloadHeader(0, nil)
-	encodedR0, err := connBob.encode(p, testData, streamBob.msgType())
+	p = &PayloadHeader{}
+	encodedR0, err := connBob.encode(p, testData, connBob.msgType())
 	assert.NoError(t, err)
 	assert.NotNil(t, encodedR0)
 
@@ -365,8 +357,8 @@ func TestCodecFullHandshake(t *testing.T) {
 
 	// Step 6: Alice sends Data message
 	dataMsg := []byte("data message")
-	p = streamAlice.payloadHeader(0, nil)
-	encoded, err = connAlice.encode(p, dataMsg, streamAlice.msgType())
+	p = &PayloadHeader{}
+	encoded, err = connAlice.encode(p, dataMsg, connAlice.msgType())
 	assert.NoError(t, err)
 	assert.NotNil(t, encoded)
 
@@ -389,16 +381,14 @@ func TestCodecSequenceNumberRollover(t *testing.T) {
 	conn.snCrypto = (1 << 48) - 2 // Near rollover
 	conn.epochCryptoSnd = 0
 
-	stream := &Stream{conn: conn}
-
 	// First encode should succeed and rollover snCrypto
-	p := stream.payloadHeader(0, nil)
+	p := &PayloadHeader{}
 	_, err := conn.encode(p, []byte("test"), Data)
 	assert.NoError(t, err)
 	assert.Equal(t, uint64((1<<48)-1), conn.snCrypto)
 
 	// Second encode should trigger rollover
-	p = stream.payloadHeader(0, nil)
+	p = &PayloadHeader{}
 	_, err = conn.encode(p, []byte("test"), Data)
 	assert.NoError(t, err)
 	assert.Equal(t, uint64(0), conn.snCrypto)
@@ -410,10 +400,8 @@ func TestCodecSequenceNumberExhaustion(t *testing.T) {
 	conn.snCrypto = (1 << 48) - 1
 	conn.epochCryptoSnd = (1 << 47) - 1 // Max epoch
 
-	stream := &Stream{conn: conn}
-
 	// Should fail with exhaustion error
-	p := stream.payloadHeader(0, nil)
+	p := &PayloadHeader{}
 	_, err := conn.encode(p, []byte("test"), Data)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "exhausted")
@@ -422,10 +410,9 @@ func TestCodecSequenceNumberExhaustion(t *testing.T) {
 // Error Tests
 func TestCodecInvalidMessageType(t *testing.T) {
 	conn := createTestConnection(true, false, true)
-	stream := &Stream{conn: conn}
 
 	// Test with invalid message type
-	p := stream.payloadHeader(0, nil)
+	p := &PayloadHeader{}
 	_, err := conn.encode(p, []byte("test"), MsgType(99))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown message type")
@@ -476,40 +463,30 @@ func TestCodecDecodeConnectionNotFoundData(t *testing.T) {
 // Message Type Logic Tests
 func TestCodecMsgTypeInitCryptoSnd(t *testing.T) {
 	conn := createTestConnection(true, true, false)
-	stream := &Stream{conn: conn}
-
-	msgType := stream.msgType()
+	msgType := conn.msgType()
 	assert.Equal(t, InitCryptoSnd, msgType)
 }
 
 func TestCodecMsgTypeInitCryptoRcv(t *testing.T) {
 	conn := createTestConnection(false, true, false)
-	stream := &Stream{conn: conn}
-
-	msgType := stream.msgType()
+	msgType := conn.msgType()
 	assert.Equal(t, InitCryptoRcv, msgType)
 }
 
 func TestCodecMsgTypeInitSnd(t *testing.T) {
 	conn := createTestConnection(true, false, false)
-	stream := &Stream{conn: conn}
-
-	msgType := stream.msgType()
+	msgType := conn.msgType()
 	assert.Equal(t, InitSnd, msgType)
 }
 
 func TestCodecMsgTypeInitRcv(t *testing.T) {
 	conn := createTestConnection(false, false, false)
-	stream := &Stream{conn: conn}
-
-	msgType := stream.msgType()
+	msgType := conn.msgType()
 	assert.Equal(t, InitRcv, msgType)
 }
 
 func TestCodecMsgTypeData(t *testing.T) {
 	conn := createTestConnection(true, false, true)
-	stream := &Stream{conn: conn}
-
-	msgType := stream.msgType()
+	msgType := conn.msgType()
 	assert.Equal(t, Data, msgType)
 }

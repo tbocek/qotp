@@ -1,6 +1,7 @@
 package qotp
 
 import (
+	"errors"
 	"net"
 	"net/netip"
 	"sync"
@@ -10,7 +11,7 @@ import (
 type NetworkConn interface {
 	ReadFromUDPAddrPort(p []byte, timeoutNano uint64, nowNano uint64) (n int, remoteAddr netip.AddrPort, err error)
 	TimeoutReadNow() error
-	WriteToUDPAddrPort(p []byte, remoteAddr netip.AddrPort, nowNano uint64) (n int, err error)
+	WriteToUDPAddrPort(p []byte, remoteAddr netip.AddrPort, nowNano uint64) (err error)
 	Close() error
 	LocalAddrString() string
 }
@@ -50,8 +51,12 @@ func (c *UDPNetworkConn) TimeoutReadNow() error {
 	return c.conn.SetReadDeadline(time.Time{})
 }
 
-func (c *UDPNetworkConn) WriteToUDPAddrPort(p []byte, remoteAddr netip.AddrPort, _ uint64) (int, error) {
-	return c.conn.WriteToUDPAddrPort(p, remoteAddr)
+func (c *UDPNetworkConn) WriteToUDPAddrPort(b []byte, remoteAddr netip.AddrPort, _ uint64) error {
+	n, err := c.conn.WriteToUDPAddrPort(b, remoteAddr)
+	if n != len(b) {
+		return errors.New("could not send all data. This should not happen")
+	}
+	return err
 }
 
 func (c *UDPNetworkConn) Close() error {

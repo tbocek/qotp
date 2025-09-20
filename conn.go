@@ -3,7 +3,6 @@ package qotp
 import (
 	"crypto/ecdh"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/netip"
 	"sync"
@@ -38,7 +37,7 @@ type Conn struct {
 	isWithCryptoOnInit   bool
 	isHandshakeDoneOnRcv bool
 	isInitSentOnSnd      bool
-	
+
 	nextWriteTime uint64
 
 	// Crypto and performance
@@ -48,6 +47,23 @@ type Conn struct {
 	Measurements
 
 	mu sync.Mutex
+}
+
+func (c *Conn) msgType() MsgType {
+	if c.isHandshakeDoneOnRcv {
+		return Data
+	}
+
+	switch {
+	case c.isWithCryptoOnInit && c.isSenderOnInit:
+		return InitCryptoSnd
+	case c.isWithCryptoOnInit && !c.isSenderOnInit:
+		return InitCryptoRcv
+	case c.isSenderOnInit:
+		return InitSnd
+	default:
+		return InitRcv
+	}
 }
 
 func (c *Conn) Close() {
@@ -102,8 +118,12 @@ func (c *Conn) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uin
 	}
 
 	if len(userData) > 0 {
-		c.rcv.Insert(s.streamID, p.StreamOffset, userData)
+		c.rcv.Insert(s.streamID, p.StreamOffset, userData, p.IsReqAck)
 	}
+	if len(userData) == 0 && p.IsReqAck {
+		c.rcv.EmptyInsert(s.streamID, p.StreamOffset)
+	}
+
 	if p.IsClose {
 		c.rcv.CloseAt(s.streamID, p.StreamOffset)
 	}
@@ -135,7 +155,7 @@ func (c *Conn) cleanupStream(streamID uint32) {
 }
 
 func (c *Conn) cleanupConn() {
-	slog.Debug("Cleanup/Stream", gId(), c.debug(), 
+	slog.Debug("Cleanup/Stream", gId(), c.debug(),
 		slog.Uint64("connID", c.connId), slog.Any("currId", c.listener.currentConnID))
 
 	if c.listener.currentConnID != nil && c.connId == *c.listener.currentConnID {
@@ -144,7 +164,24 @@ func (c *Conn) cleanupConn() {
 	c.listener.connMap.Remove(c.connId)
 }
 
-func (c *Conn) Flush(s *Stream, nowNano uint64) (raw int, data int, pacingNano uint64, err error) {
+func (c *Conn) Ping(nowNano uint64) error {
+	ack := c.rcv.GetSndAck()
+	p := &PayloadHeader{
+		IsReqAck:     true,
+		Ack:          ack,
+		StreamOffset: nowNano,
+	}
+	encData, err := c.encode(p, []byte{}, c.msgType())
+
+	err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowNano)
+	if err != nil {
+		return err
+	}
+	
+	return nil
+}
+
+func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, err error) {
 	//update state for receiver
 	ack := c.rcv.GetSndAck()
 
@@ -153,7 +190,7 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (raw int, data int, pacingNano u
 		s.state = StreamStateClosed
 		slog.Debug(" Flush/Close", gId(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
 		if ack == nil {
-			return 0, 0, MinDeadLine, nil
+			return 0, MinDeadLine, nil
 		}
 		return c.writeAck(s, ack, nowNano)
 	}
@@ -164,23 +201,23 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (raw int, data int, pacingNano u
 			slog.Uint64("waitTime:ms", (c.nextWriteTime-nowNano)/msNano),
 			slog.Bool("ack?", ack != nil))
 		if ack == nil {
-			return 0, 0, MinDeadLine, nil
+			return 0, MinDeadLine, nil
 		}
 		return c.writeAck(s, ack, nowNano)
 	}
 	//Respect rwnd
-	if c.dataInFlight+startMtu > int(c.rcvWndSize) {
+	if c.dataInFlight+minMtu > int(c.rcvWndSize) {
 		slog.Debug(" Flush/Rwnd/Rcv", gId(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
 		if ack == nil {
-			return 0, 0, MinDeadLine, nil
+			return 0, MinDeadLine, nil
 		}
 		return c.writeAck(s, ack, nowNano)
 	}
 
 	// Retransmission case
-	splitData, offset, msgType, err := c.snd.ReadyToRetransmit(s.streamID, ack, startMtu, c.rtoNano(), nowNano)
+	splitData, offset, msgType, err := c.snd.ReadyToRetransmit(s.streamID, ack, minMtu, c.rtoNano(), nowNano)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, err
 	}
 
 	//during handshake, if we have something to retransmit, it will always be the first packet
@@ -189,90 +226,102 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (raw int, data int, pacingNano u
 		c.OnPacketLoss()
 		slog.Debug(" Flush/Retransmit", gId(), s.debug(), c.debug())
 
-		p := s.payloadHeader(offset, ack)
+		p := &PayloadHeader{
+			IsReqAck:     true,
+			Ack:          ack,
+			StreamOffset: offset,
+		}
+
 		encData, err := c.encode(p, splitData, msgType)
 		if err != nil {
-			return 0, 0, 0, err
+			return 0, 0, err
 		}
 
-		raw, err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowNano)
+		err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowNano)
 		if err != nil {
-			return 0, 0, 0, err
-		}
-
-		if raw != len(encData) {
-			return 0, 0, 0, fmt.Errorf("could not send all data. This should not happen")
+			return 0, 0, err
 		}
 
 		packetLen := len(splitData)
 		pacingNano = c.calcPacing(uint64(packetLen))
 
 		c.nextWriteTime = nowNano + pacingNano
-		return raw, packetLen, pacingNano, nil
+		return packetLen, pacingNano, nil
 	}
 
 	//next check if we can send packets, during handshake we can only send 1 packet
 	if c.isHandshakeDoneOnRcv || !c.isInitSentOnSnd {
-		splitData, offset := c.snd.ReadyToSend(s.streamID, s.msgType(), ack, startMtu, nowNano)
-		if splitData != nil {
+		splitData, offset := c.snd.ReadyToSend(s.streamID, c.msgType(), ack, minMtu, nowNano)
+		if len(splitData) > 0 {
 			slog.Debug(" Flush/Send", gId(), s.debug(), c.debug())
-			p := s.payloadHeader(offset, ack)
-			encData, err := c.encode(p, splitData, s.msgType())
+			
+			p := &PayloadHeader{
+				IsReqAck:     true,
+				IsClose:      s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
+				RcvWndSize:   uint64(s.conn.rcv.capacity) - uint64(s.conn.rcv.Size()),
+				Ack:          ack,
+				StreamID:     s.streamID,
+				StreamOffset: offset,
+			}
+			
+			
+			encData, err := c.encode(p, splitData, c.msgType())
 			if err != nil {
-				return 0, 0, 0, err
+				return 0, 0, err
 			}
 
-			raw, err := c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowNano)
+			err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowNano)
 			if err != nil {
-				return 0, 0, 0, err
-			}
-			if raw != len(encData) {
-				return 0, 0, 0, fmt.Errorf("could not send all data. This should not happen")
+				return 0, 0, err
 			}
 
 			packetLen := len(splitData)
 			c.dataInFlight += packetLen
 			pacingNano = c.calcPacing(uint64(len(encData)))
 			c.nextWriteTime = nowNano + pacingNano
-			return raw, packetLen, pacingNano, nil
+			return packetLen, pacingNano, nil
 		} else if ack != nil || !c.isInitSentOnSnd {
 			slog.Debug(" Flush/Ack", gId(), s.debug(), c.debug())
 			return c.writeAck(s, ack, nowNano)
 		}
 	}
 
-	return 0, 0, MinDeadLine, nil
+	return 0, MinDeadLine, nil
 }
 
-func (c *Conn) writeAck(stream *Stream, ack *Ack, nowNano uint64) (raw int, data int, pacingNano uint64, err error) {
-	p := stream.payloadHeader(0, ack)
-	encData, err := c.encode(p, []byte{}, stream.msgType())
+func (c *Conn) writeAck(s *Stream, ack *Ack, nowNano uint64) (data int, pacingNano uint64, err error) {
+	p := &PayloadHeader{
+		IsClose:      s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
+		RcvWndSize:   uint64(s.conn.rcv.capacity) - uint64(s.conn.rcv.Size()),
+		Ack:          ack,
+		StreamID:     s.streamID,
+	}
+	
+	encData, err := c.encode(p, []byte{}, c.msgType())
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, err
 	}
-	raw, err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowNano)
+	err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowNano)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, err
 	}
-	if raw != len(encData) {
-		return 0, 0, 0, fmt.Errorf("could not send all data. This should not happen.")
-	}
+
 	pacingNano = c.calcPacing(uint64(len(encData)))
 	c.nextWriteTime = nowNano + pacingNano
-	return raw, 0, pacingNano, nil
+	return 0, pacingNano, nil
 }
 
-func (c *Conn) payloadHeader() *PayloadHeader{
+func (c *Conn) payloadHeader() *PayloadHeader {
 	return &PayloadHeader{
-			RcvWndSize:   uint64(c.rcv.capacity) - uint64(c.rcv.Size()),
-		}
+		RcvWndSize: uint64(c.rcv.capacity) - uint64(c.rcv.Size()),
+	}
 }
 
 func (c *Conn) debug() slog.Attr {
 	return slog.Group("connection",
 		slog.Uint64("nextWrt:ms", c.nextWriteTime/msNano),
 		//slog.Uint64("nextWrt:ns", c.nextWriteTime),
-		slog.Int("inFlight", c.dataInFlight+startMtu),
+		slog.Int("inFlight", c.dataInFlight+minMtu),
 		slog.Int("rcvBuf", c.rcv.capacity-c.rcv.size),
 		slog.Uint64("rcvWnd", c.rcvWndSize),
 		slog.Uint64("snCrypto", c.snCrypto),
