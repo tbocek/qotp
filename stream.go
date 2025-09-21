@@ -15,16 +15,11 @@ const (
 	StreamStateCloseReceived
 )
 
-var (
-	ErrStreamClosed = errors.New("stream closed")
-)
-
 type Stream struct {
 	streamID uint32
 	conn     *Conn
 	state    StreamState
 	noRetry  bool
-	callback func()
 	mu       sync.Mutex
 }
 
@@ -42,11 +37,8 @@ func (s *Stream) NotifyDataAvailable() error {
 	return s.conn.listener.localConn.TimeoutReadNow()
 }
 
-func (s *Stream) CallbackOnWriteBufferAvailable(c func()) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.callback = c
+func (s *Stream) Ping() {
+	s.conn.snd.QueuePing(s.streamID)
 }
 
 func (s *Stream) Read() (userData []byte, err error) {
@@ -54,7 +46,7 @@ func (s *Stream) Read() (userData []byte, err error) {
 	defer s.mu.Unlock()
 
 	if s.state == StreamStateClosed {
-		return nil, ErrStreamClosed
+		return nil, errors.New("stream closed")
 	}
 
 	offset, data := s.conn.rcv.RemoveOldestInOrder(s.streamID)
@@ -69,7 +61,7 @@ func (s *Stream) Write(userData []byte) (remainingUserData []byte, err error) {
 	defer s.mu.Unlock()
 
 	if s.state == StreamStateClosed {
-		return nil, ErrStreamClosed
+		return nil, errors.New("stream closed")
 	}
 
 	if len(userData) == 0 {

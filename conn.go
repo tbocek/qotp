@@ -167,24 +167,6 @@ func (c *Conn) cleanupConn() {
 	c.listener.connMap.Remove(c.connId)
 }
 
-func (c *Conn) Ping(streamId uint32, nowNano uint64) error {
-	ack := c.rcv.GetSndAck()
-	p := &PayloadHeader{
-		IsNoRetry:    true, //important as our data will be empty
-		Ack:          ack,
-		StreamID:     streamId,
-		StreamOffset: nowNano,
-	}
-	encData, err := c.encode(p, []byte{}, c.msgType())
-
-	err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowNano)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, err error) {
 	//update state for receiver
 	ack := c.rcv.GetSndAck()
@@ -253,6 +235,31 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 
 	//next check if we can send packets, during handshake we can only send 1 packet
 	if c.isHandshakeDoneOnRcv || !c.isInitSentOnSnd {
+		
+		ping := c.snd.ReadyToPing(s.streamID, nowNano) 
+		if ping {
+			p := &PayloadHeader{
+				IsNoRetry:    true,
+				IsPing:       true,
+				Ack:          ack,
+				StreamID:     s.streamID,
+				StreamOffset: nowNano,
+			}
+			encData, err := c.encode(p, []byte{}, c.msgType())
+			if err != nil {
+				return 0, 0, err
+			}
+			
+			err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowNano)
+			if err != nil {
+				return 0, 0, err
+			}
+			
+			pacingNano = c.calcPacing(uint64(len(encData)))
+			c.nextWriteTime = nowNano + pacingNano
+			return 0, pacingNano, nil
+		}
+		
 		splitData, offset := c.snd.ReadyToSend(s.streamID, c.msgType(), ack, c.listener.mtu, s.noRetry, nowNano)
 		if len(splitData) > 0 {
 			slog.Debug(" Flush/Send", gId(), s.debug(), c.debug())

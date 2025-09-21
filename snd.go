@@ -58,13 +58,13 @@ type StreamBuffer struct {
 	// offset: 500, len/mtu: 50 -> 1 range: 500/50,time
 	// retransmit with mtu:20 -> 3 dataInFlightMap: 500/20,time; 520/20,time; 540/10,time
 	dataInFlightMap *LinkedMap[packetKey, *SendInfo]
+	pingRequest     bool
 }
 
 type SendBuffer struct {
 	streams  map[uint32]*StreamBuffer // Changed to LinkedHashMap
 	capacity int                      //len(dataToSend) of all streams cannot become larger than capacity
 	size     int                      //len(dataToSend) of all streams
-	callback func()
 	mu       *sync.Mutex
 }
 
@@ -84,7 +84,7 @@ func NewSendBuffer(capacity int, callback func()) *SendBuffer {
 }
 
 // QueueData stores the userData in the dataMap, does not send yet
-func (sb *SendBuffer) QueueData(streamID uint32, userData []byte) (n int, status InsertStatus) {
+func (sb *SendBuffer) QueueData(streamId uint32, userData []byte) (n int, status InsertStatus) {
 	remainingData := userData
 
 	if len(remainingData) <= 0 {
@@ -112,10 +112,10 @@ func (sb *SendBuffer) QueueData(streamID uint32, userData []byte) (n int, status
 	}
 
 	// Get or create stream buffer
-	stream := sb.streams[streamID]
+	stream := sb.streams[streamId]
 	if stream == nil {
 		stream = NewStreamBuffer()
-		sb.streams[streamID] = stream
+		sb.streams[streamId] = stream
 	}
 
 	// Store chunk
@@ -124,6 +124,49 @@ func (sb *SendBuffer) QueueData(streamID uint32, userData []byte) (n int, status
 	sb.size += n
 
 	return n, status
+}
+
+func (sb *SendBuffer) QueuePing(streamId uint32) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+
+	// Get or create stream buffer
+	stream := sb.streams[streamId]
+	if stream == nil {
+		stream = NewStreamBuffer()
+		sb.streams[streamId] = stream
+	}
+
+	stream.pingRequest = true
+}
+
+func (sb *SendBuffer) ReadyToPing(streamID uint32, nowNano uint64) bool {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+
+	if len(sb.streams) == 0 {
+		return false
+	}
+
+	stream := sb.streams[streamID]
+	if stream == nil {
+		return false
+	}
+
+	if !stream.pingRequest {
+		return false
+	}
+
+	stream.pingRequest = false
+
+	// Pack offset and length into key
+	key := createPacketKey(stream.sentOffset, 0)
+	
+	// Track range
+	m := &SendInfo{sentNr: 1, msgType: -1, offset: stream.sentOffset, sentTimeNano: nowNano, noRetry: true}
+	stream.dataInFlightMap.Put(key, m)
+
+	return true
 }
 
 // ReadyToSend gets data from dataToSend and creates an entry in dataInFlightMap
@@ -288,61 +331,72 @@ func (sb *SendBuffer) AcknowledgeRange(ack *Ack) (status AckStatus, sentTimeNano
 
 	sentTimeNano = rangePair.sentTimeNano
 
-	// Only remove data if this ack is at the current bias point
-	if ack.offset == stream.bias {
-		// Find the lowest offset still in flight
-		minInFlightOffset := stream.sentOffset // Default to sent offset if no in-flight data
-
-		for _, inFlightKey := range stream.dataInFlightMap.Iterator(nil) {
-			if inFlightKey.offset < minInFlightOffset {
-				minInFlightOffset = inFlightKey.offset
+	// Try to advance the bias and remove acknowledged data
+	if ack.len > 0 {
+		// Find the lowest offset still in flight (excluding ping packets with len=0)
+		minInFlightOffset := stream.sentOffset // Default if no real data in flight
+		hasRealDataInFlight := false
+		
+		for inFlightKey, _ := range stream.dataInFlightMap.Iterator(nil) {
+			offset := inFlightKey.offset()
+			length := inFlightKey.length()
+			
+			// Skip ping packets (length = 0)
+			if length == 0 {
+				continue
+			}
+			
+			if offset < minInFlightOffset {
+				minInFlightOffset = offset
+				hasRealDataInFlight = true
 			}
 		}
-
-		// Only remove data up to the minimum in-flight offset
-		if minInFlightOffset > stream.bias {
-			bytesToRemove := minInFlightOffset - stream.bias
+		
+		// If no real data is in flight, we can remove up to sentOffset
+		// Otherwise, we can only remove up to the earliest in-flight data
+		targetBias := minInFlightOffset
+		if !hasRealDataInFlight {
+			targetBias = stream.sentOffset
+		}
+		
+		// Only advance if we're moving forward
+		if targetBias > stream.bias {
+			bytesToRemove := targetBias - stream.bias
+			
+			// Safety check
+			if int(bytesToRemove) > len(stream.userData) {
+				slog.Error("Attempted to remove more data than available",
+					slog.Uint64("bytesToRemove", bytesToRemove),
+					slog.Int("dataLen", len(stream.userData)),
+					slog.Uint64("bias", stream.bias),
+					slog.Uint64("targetBias", targetBias))
+				// Remove what we can
+				bytesToRemove = uint64(len(stream.userData))
+			}
+			
 			stream.userData = stream.userData[bytesToRemove:]
-			if rangePair.noRetry {
-				slog.Debug("removed a packet, which was acked, we could have done this earlier")
-			}
 			sb.size -= int(bytesToRemove)
-			stream.bias = minInFlightOffset
+			stream.bias = targetBias
+			
+			if rangePair.noRetry {
+				slog.Debug("removed a packet which was acked, we could have done this earlier")
+			}
 		}
 	}
 
-	//notify that data can be send to the buffer again
-	if sb.callback != nil {
-		sb.callback()
-	}
 	return AckStatusOk, sentTimeNano
 }
 
-type packetKey [10]byte
+type packetKey uint64
 
 func (p packetKey) offset() uint64 {
-	return Uint64(p[:8])
+	return uint64(p) >> 16
 }
 
 func (p packetKey) length() uint16 {
-	return Uint16(p[8:])
-}
-
-func (p packetKey) less(other packetKey) bool {
-	for i := range len(p) {
-		if p[i] < other[i] {
-			return true
-		}
-		if p[i] > other[i] {
-			return false
-		}
-	}
-	return false
+	return uint16(p & 0xFFFF)
 }
 
 func createPacketKey(offset uint64, length uint16) packetKey {
-	p := packetKey{}
-	PutUint64(p[:8], offset)
-	PutUint16(p[8:], length)
-	return p
+	return packetKey((offset << 16) | uint64(length))
 }

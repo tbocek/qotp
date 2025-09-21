@@ -382,7 +382,7 @@ func TestStreamFlowControl(t *testing.T) {
 	//send 16m back
 	streamB, err := listenerB.Listen(0, specificNano)
 	assert.Nil(t, err)
-	assert.Equal(t, uint64(0x1800000), streamB.conn.rcvWndSize)
+	assert.Equal(t, uint64(0x1000000), streamB.conn.rcvWndSize)
 	dataB1 := make([]byte, rcvBufferCapacity+1)
 	dataB1Remaining, err := streamB.Write(dataB1)
 	assert.Nil(t, err)
@@ -397,7 +397,7 @@ func TestStreamFlowControl(t *testing.T) {
 	assert.Equal(t, 1, connPair.nrIncomingPacketsSender())
 	streamA, err = connA.listener.Listen(0, specificNano)
 	assert.Nil(t, err)
-	assert.Equal(t, uint64(0xc00000), streamA.conn.rcvWndSize)
+	assert.Equal(t, uint64(0x1000000), streamA.conn.rcvWndSize)
 	
 	//respect pacing
 	for range 10 {

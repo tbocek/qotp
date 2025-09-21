@@ -7,17 +7,19 @@ import (
 )
 
 const (
-	FlagRetryAckShift = 0
-	FlagAckPakShift    = 1
-	FlagRcvCloseShift  = 3
+	FlagRetryAckShift     = 0
+	FlagAckPakShift       = 1
+	FlagRcvClosePingShift = 3
 
 	MinProtoSize = 8
 	CloseFlag    = uint8(31)
+	PingFlag     = uint8(30)
 )
 
 type PayloadHeader struct {
 	IsNoRetry    bool
 	IsClose      bool
+	IsPing       bool
 	Ack          *Ack
 	RcvWndSize   uint64
 	StreamID     uint32
@@ -31,48 +33,51 @@ type Ack struct {
 }
 
 /*
-encoded | actualBytes range        | decoded value (middle)
---------|--------------------------|------------------------
-0       | 0-511                    | 0
-1       | 512-1023                 | 768
-2       | 1024-2047                | 1536 (1.5KB)
-3       | 2048-4095                | 3072 (3KB)
-4       | 4096-8191                | 6144 (6KB)
-5       | 8192-16383               | 12288 (12KB)
-6       | 16384-32767              | 24576 (24KB)
-7       | 32768-65535              | 49152 (48KB)
-8       | 65536-131071             | 98304 (96KB)
-9       | 131072-262143            | 196608 (192KB)
-10      | 262144-524287            | 393216 (384KB)
-11      | 524288-1048575           | 786432 (768KB)
-12      | 1048576-2097151          | 1572864 (1.5MB)
-13      | 2097152-4194303          | 3145728 (3MB)
-14      | 4194304-8388607          | 6291456 (6MB)
-15      | 8388608-16777215         | 12582912 (12MB)
-16      | 16777216-33554431        | 25165824 (24MB)
-17      | 33554432-67108863        | 50331648 (48MB)
-18      | 67108864-134217727       | 100663296 (96MB)
-19      | 134217728-268435455      | 201326592 (192MB)
-20      | 268435456-536870911      | 402653184 (384MB)
-21      | 536870912-1073741823     | 805306368 (768MB)
-22      | 1073741824-2147483647    | 1610612736 (1.5GB)
-23      | 2147483648-4294967295    | 3221225472 (3GB)
-24      | 4294967296-8589934591    | 6442450944 (6GB)
-25      | 8589934592-17179869183   | 12884901888 (12GB)
-26      | 17179869184-34359738367  | 25769803776 (24GB)
-27      | 34359738368-68719476735  | 51539607552 (48GB)
-28      | 68719476736-137438953471 | 103079215104 (96GB)
-29      | 137438953472-274877906943| 206158430208 (192GB)
-30      | 274877906944+            | 412316860416 (384GB)
+RCV encoding / deconding sizes
+encoded | capacity                  | max capacity (human readable)
+--------|---------------------------|--------------------------
+ 0      | 0                         | 0
+ 1      | 1 - 512                   | 512B
+ 2      | 513 - 1024                | 1KB
+ 3      | 1025 - 2048               | 2KB
+ 4      | 2049 - 4096               | 4KB
+ 5      | 4097 - 8192               | 8KB
+ 6      | 8193 - 16384              | 16KB
+ 7      | 16385 - 32768             | 32KB
+ 8      | 32769 - 65536             | 64KB
+ 9      | 65537 - 131072            | 128KB
+10      | 131073 - 262144           | 256KB
+11      | 262145 - 524288           | 512KB
+12      | 524289 - 1048576          | 1MB
+13      | 1048577 - 2097152         | 2MB
+14      | 2097153 - 4194304         | 4MB
+15      | 4194305 - 8388608         | 8MB
+16      | 8388609 - 16777216        | 16MB
+17      | 16777217 - 33554432       | 32MB
+18      | 33554433 - 67108864       | 64MB
+19      | 67108865 - 134217728      | 128MB
+20      | 134217729 - 268435456     | 256MB
+21      | 268435457 - 536870912     | 512MB
+22      | 536870913 - 1073741824    | 1GB
+23      | 1073741825 - 2147483648   | 2GB
+24      | 2147483649 - 4294967296   | 4GB
+25      | 4294967297 - 8589934592   | 8GB
+26      | 8589934593 - 17179869184  | 16GB
+27      | 17179869185 - 34359738368 | 32GB
+28      | 34359738369 - 68719476736 | 64GB
+29      | 68719476737 - 137438953472| 128GB
 */
 
 func EncodeRcvWindow(actualBytes uint64) uint8 {
-	if actualBytes < 512 {
+	if actualBytes == 0 {
 		return 0
 	}
-	highBit := bits.Len64(actualBytes >> 9) // Divide by 512
-	if highBit > 30 {
-		return 30
+	if actualBytes <= 512 {
+		return 1
+	}
+	highBit := bits.Len64(actualBytes-1) - 8
+	if highBit > 29 {
+		return 29
 	}
 	return uint8(highBit)
 }
@@ -81,7 +86,7 @@ func DecodeRcvWindow(encoded uint8) uint64 {
 	if encoded == 0 {
 		return 0
 	}
-	return 768 << (encoded - 1)
+	return 512 << (encoded - 1) // 512 * 2^(encoded-1)
 }
 
 // Determine if we need extended (48-bit) encoding
@@ -130,10 +135,12 @@ func EncodePayload(p *PayloadHeader, userData []byte) (encoded []byte, offset in
 
 	// Close / RcvWnd Flag
 	if p.IsClose {
-		flags |= CloseFlag << FlagRcvCloseShift
+		flags |= CloseFlag << FlagRcvClosePingShift
+	} else if p.IsPing {
+		flags |= PingFlag << FlagRcvClosePingShift
 	} else {
 		rcvClose := EncodeRcvWindow(p.RcvWndSize)
-		flags |= rcvClose << FlagRcvCloseShift
+		flags |= rcvClose << FlagRcvClosePingShift
 	}
 
 	// Allocate buffer
@@ -191,9 +198,11 @@ func DecodePayload(data []byte) (payload *PayloadHeader, userData []byte, err er
 	ackPack := (flags >> FlagAckPakShift) & 3
 	isAck, isExtend := DecodePacketType(ackPack)
 
-	rcvClose := flags >> FlagRcvCloseShift
+	rcvClose := flags >> FlagRcvClosePingShift
 	if rcvClose == CloseFlag {
 		payload.IsClose = true
+	} else if rcvClose == PingFlag {
+		payload.IsPing = true
 	} else {
 		payload.RcvWndSize = DecodeRcvWindow(rcvClose)
 	}

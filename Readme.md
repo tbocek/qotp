@@ -277,7 +277,7 @@ To simplify the implementation, there is only one payload header.
 title: "TomTP Payload Packet"
 ---
 packet-beta
-  0: "REQ/ACK"
+  0: "RTRY"
   1-2: "ACK/PAK"
   3-7: "RCV_WND_SIZE" 
   8-39: "Opt. ACKs: Example ACK: StreamId 32bit"
@@ -289,13 +289,14 @@ packet-beta
 ```
 The TomTP payload packet begins with a header byte containing several control bits:
 
-* Bit 0 is indicates if ACK is required
+* Bit 0 is indicates if retransmission is offered. The sender tells the recipient, that no retransmission will happen
 * Bits 1-2: 
   * 00: No ACK/Data with 24bit,
   * 01: No ACK/Data with 48bit,
   * 10: ACK with 24bit/Data with 24bit, 
   * 11: ACK with 48bit/Data with 48bit,
-* Bits 3-7: Receiver window size: 1024 << (bits - 1), 
+* Bits 3-7: Receiver window size: 2^bits, 
+  * 30 is not used for rcv, but means PING
   * 31 is not used for rcv, but means CLOSE
   * Max receiver size is 512GB
 
@@ -447,18 +448,16 @@ Source Code LoC
 ===============================================================================
  Language            Files        Lines         Code     Comments       Blanks
 ===============================================================================
- Go                     17         3698         2788          307          603
- Markdown                1          462            0          360          102
- Shell                   1          179          139           17           23
+ Go                     17         3834         2890          316          628
+ Markdown                1          463            0          361          102
+ Shell                   1          158          119           17           22
 ===============================================================================
- Total                  19         4339         2927          684          728
+ Total                  19         4455         3009          694          752
 ===============================================================================
 Test Code LoC
 ===============================================================================
  Language            Files        Lines         Code     Comments       Blanks
 ===============================================================================
- Go                     13         5950         4155          656         1139
-===============================================================================
- Total                  13         5950         4155          656         1139
+ Go                     13         5922         4143          655         1124
 ===============================================================================
 ```

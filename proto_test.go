@@ -121,7 +121,7 @@ func TestPayloadWithAllFeaturesNoCloseFlag(t *testing.T) {
 
 	assertPayloadMatches(t, original, decoded)
 	assert.Equal(t, originalData, decodedData)
-	assert.Equal(t, uint64(768), decoded.RcvWndSize) // Without close flag, gets encoded value
+	assert.Equal(t, uint64(1024), decoded.RcvWndSize) // Without close flag, gets encoded value
 }
 
 func TestPayloadMultipleFlagsWithAck(t *testing.T) {
@@ -289,19 +289,19 @@ func TestPayloadDecodeRcvWindow(t *testing.T) {
 		desc     string
 	}{
 		{0, 0, "zero"},
-		{1, 768, "768 (middle of 512-1023)"},
-		{2, 1536, "1.5KB"},
-		{3, 3072, "3KB"},
-		{4, 6144, "6KB"},
-		{5, 12288, "12KB"},
-		{7, 49152, "48KB"},
-		{10, 393216, "384KB"},
-		{11, 786432, "768KB"},
-		{12, 1572864, "1.5MB"},
-		{20, 402653184, "384MB"},
-		{30, 412316860416, "384GB"},
+		{1, 512, "512B"},
+		{2, 1024, "1KB"},
+		{3, 2048, "2KB"},
+		{4, 4096, "4KB"},
+		{5, 8192, "8KB"},
+		{7, 32768, "32KB"},
+		{10, 262144, "256KB"},
+		{11, 524288, "512KB"},
+		{12, 1048576, "1MB"},
+		{20, 268435456, "256MB"},
+		{22, 1073741824, "1GB"},
+		{29, 137438953472, "128GB"},
 	}
-
 	for _, tc := range testCases {
 		result := DecodeRcvWindow(tc.input)
 		assert.Equal(t, tc.expected, result, "DecodeRcvWindow(%d) should return %s", tc.input, tc.desc)
@@ -314,62 +314,61 @@ func TestPayloadEncodeRcvWindow(t *testing.T) {
 		expected uint8
 		desc     string
 	}{
-		// Zero and below 512
+		// Zero and below/at 512
 		{0, 0, "zero"},
-		{1, 0, "below 512"},
-		{256, 0, "below 512"},
-		{511, 0, "just below 512"},
-
-		// 512-1023 range
+		{1, 1, "1 byte"},
+		{256, 1, "256 bytes"},
 		{512, 1, "exactly 512"},
-		{700, 1, "between 512-1024"},
-		{1023, 1, "just below 1KB"},
-
-		// Powers of 2
-		{1024, 2, "1KB"},
-		{2048, 3, "2KB"},
-		{4096, 4, "4KB"},
-		{8192, 5, "8KB"},
-		{16384, 6, "16KB"},
-		{32768, 7, "32KB"},
-		{65536, 8, "64KB"},
-		{131072, 9, "128KB"},
-		{262144, 10, "256KB"},
-		{524288, 11, "512KB"},
-		{1048576, 12, "1MB"},
-
+		// 513-1024 range
+		{513, 2, "just above 512"},
+		{700, 2, "between 512-1024"},
+		{1024, 2, "exactly 1KB"},
+		// Higher ranges
+		{1025, 3, "just above 1KB"},
+		{2048, 3, "exactly 2KB"},
+		{2049, 4, "just above 2KB"},
+		{4096, 4, "exactly 4KB"},
+		{4097, 5, "just above 4KB"},
+		{8192, 5, "exactly 8KB"},
+		{8193, 6, "just above 8KB"},
+		{16384, 6, "exactly 16KB"},
+		{16385, 7, "just above 16KB"},
+		{32768, 7, "exactly 32KB"},
+		{32769, 8, "just above 32KB"},
+		{65536, 8, "exactly 64KB"},
+		{65537, 9, "just above 64KB"},
+		{131072, 9, "exactly 128KB"},
+		{131073, 10, "just above 128KB"},
+		{262144, 10, "exactly 256KB"},
+		{262145, 11, "just above 256KB"},
+		{524288, 11, "exactly 512KB"},
+		{524289, 12, "just above 512KB"},
+		{1048576, 12, "exactly 1MB"},
+		{1048577, 13, "just above 1MB"},
 		// Between powers
-		{1500, 2, "between 1-2KB"},
-		{3000, 3, "between 2-4KB"},
-		{5000, 4, "between 4-8KB"},
-		{10000, 5, "between 8-16KB"},
-		{20000, 6, "between 16-32KB"},
-		{50000, 7, "between 32-64KB"},
-		{100000, 8, "between 64-128KB"},
-		{200000, 9, "between 128-256KB"},
-		{400000, 10, "between 256-512KB"},
-		{800000, 11, "between 512KB-1MB"},
-		{1500000, 12, "between 1-2MB"},
-
+		{1500, 3, "between 1-2KB"},
+		{3000, 4, "between 2-4KB"},
+		{5000, 5, "between 4-8KB"},
+		{10000, 6, "between 8-16KB"},
+		{20000, 7, "between 16-32KB"},
+		{50000, 8, "between 32-64KB"},
+		{100000, 9, "between 64-128KB"},
+		{200000, 10, "between 128-256KB"},
+		{400000, 11, "between 256-512KB"},
+		{800000, 12, "between 512KB-1MB"},
+		{1500000, 13, "between 1-2MB"},
 		// Large values
 		{1073741824, 22, "1GB"},
 		{2147483648, 23, "2GB"},
 		{17179869184, 26, "16GB"},
 		{34359738368, 27, "32GB"},
-
-		// Very large values (capped at 30)
-		{1 << 40, 30, "1TB"},
-		{1 << 45, 30, "32TB"},
-		{^uint64(0), 30, "max uint64"},
-
-		// Edge cases
-		{1025, 2, "just above 1KB"},
-		{2047, 2, "just below 2KB"},
-		{2049, 3, "just above 2KB"},
-		{4095, 3, "just below 4KB"},
-		{8191, 4, "just below 8KB"},
+		{68719476736, 28, "64GB"},
+		{137438953472, 29, "128GB"},
+		// Very large values (capped at 29)
+		{1 << 40, 29, "1TB"},
+		{1 << 45, 29, "32TB"},
+		{^uint64(0), 29, "max uint64"},
 	}
-
 	for _, tc := range testCases {
 		result := EncodeRcvWindow(tc.input)
 		assert.Equal(t, tc.expected, result, "EncodeRcvWindow(%d) should return %d (%s)", tc.input, tc.expected, tc.desc)
@@ -384,33 +383,31 @@ func TestPayloadEncodeDecodeRoundTrip(t *testing.T) {
 	}{
 		// Special cases
 		{0, 0, "zero"},
-		{400, 0, "below 512"},
-		{700, 768, "between 512-1024"},
-
-		// Powers of 2
-		{1024, 1536, "1KB"},
-		{2048, 3072, "2KB"},
-		{4096, 6144, "4KB"},
-		{8192, 12288, "8KB"},
-		{16384, 24576, "16KB"},
-		{32768, 49152, "32KB"},
-		{65536, 98304, "64KB"},
-		{131072, 196608, "128KB"},
-		{262144, 393216, "256KB"},
-		{524288, 786432, "512KB"},
-		{1048576, 1572864, "1MB"},
-
-		// Edge cases
-		{1025, 1536, "just above 1KB"},
-		{2047, 1536, "just below 2KB"},
-		{2049, 3072, "just above 2KB"},
-		{4095, 3072, "just below 4KB"},
+		{400, 512, "below 512 -> 512"},
+		{700, 1024, "between 512-1024 -> 1024"},
+		// Powers of 2 decode to themselves
+		{512, 512, "512B"},
+		{1024, 1024, "1KB"},
+		{2048, 2048, "2KB"},
+		{4096, 4096, "4KB"},
+		{8192, 8192, "8KB"},
+		{16384, 16384, "16KB"},
+		{32768, 32768, "32KB"},
+		{65536, 65536, "64KB"},
+		{131072, 131072, "128KB"},
+		{262144, 262144, "256KB"},
+		{524288, 524288, "512KB"},
+		{1048576, 1048576, "1MB"},
+		// Edge cases - values get rounded up to next power
+		{1025, 2048, "just above 1KB -> 2KB"},
+		{2047, 2048, "just below 2KB -> 2KB"},
+		{2049, 4096, "just above 2KB -> 4KB"},
+		{4095, 4096, "just below 4KB -> 4KB"},
 	}
-
 	for _, tc := range testCases {
 		encoded := EncodeRcvWindow(tc.input)
 		decoded := DecodeRcvWindow(encoded)
-		assert.Equal(t, tc.expected, decoded, "Round trip %s: input=%d, decoded=%d", tc.desc, tc.input, decoded)
+		assert.Equal(t, tc.expected, decoded, "Round trip %s: input=%d, encoded=%d, decoded=%d", tc.desc, tc.input, encoded, decoded)
 	}
 }
 
