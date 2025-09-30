@@ -158,7 +158,7 @@ func TestCodecDataSizeZero(t *testing.T) {
 	lAlice, lBob := createTestListeners()
 
 	connAlice := createTestConnection(true, true, false)
-	connAlice.snd = NewSendBuffer(rcvBufferCapacity, nil)
+	connAlice.snd = NewSendBuffer(rcvBufferCapacity)
 	connAlice.rcv = NewReceiveBuffer(12000)
 
 	connId := binary.LittleEndian.Uint64(prvEpAlice.PublicKey().Bytes())
@@ -187,7 +187,7 @@ func TestCodecDataSizeOne(t *testing.T) {
 	lAlice, lBob := createTestListeners()
 
 	connAlice := createTestConnection(true, true, false)
-	connAlice.snd = NewSendBuffer(rcvBufferCapacity, nil)
+	connAlice.snd = NewSendBuffer(rcvBufferCapacity)
 	connAlice.rcv = NewReceiveBuffer(12000)
 
 	connId := binary.LittleEndian.Uint64(prvEpAlice.PublicKey().Bytes())
@@ -215,7 +215,7 @@ func TestCodecDataSizeHundred(t *testing.T) {
 	lAlice, lBob := createTestListeners()
 
 	connAlice := createTestConnection(true, true, false)
-	connAlice.snd = NewSendBuffer(rcvBufferCapacity, nil)
+	connAlice.snd = NewSendBuffer(rcvBufferCapacity)
 	connAlice.rcv = NewReceiveBuffer(12000)
 
 	connId := binary.LittleEndian.Uint64(prvEpAlice.PublicKey().Bytes())
@@ -243,7 +243,7 @@ func TestCodecDataSizeThousand(t *testing.T) {
 	lAlice, lBob := createTestListeners()
 
 	connAlice := createTestConnection(true, true, false)
-	connAlice.snd = NewSendBuffer(rcvBufferCapacity, nil)
+	connAlice.snd = NewSendBuffer(rcvBufferCapacity)
 	connAlice.rcv = NewReceiveBuffer(12000)
 
 	connId := binary.LittleEndian.Uint64(prvEpAlice.PublicKey().Bytes())
@@ -271,7 +271,7 @@ func TestCodecDataSizeLarge(t *testing.T) {
 	lAlice, lBob := createTestListeners()
 
 	connAlice := createTestConnection(true, true, false)
-	connAlice.snd = NewSendBuffer(rcvBufferCapacity, nil)
+	connAlice.snd = NewSendBuffer(rcvBufferCapacity)
 	connAlice.rcv = NewReceiveBuffer(12000)
 
 	connId := binary.LittleEndian.Uint64(prvEpAlice.PublicKey().Bytes())

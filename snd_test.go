@@ -7,7 +7,7 @@ import (
 )
 
 func TestSndInsert(t *testing.T) {
-	sb := NewSendBuffer(1000, nil)
+	sb := NewSendBuffer(1000)
 
 	// Basic insert
 	n, status := sb.QueueData(1, []byte("test"), false)
@@ -21,13 +21,13 @@ func TestSndInsert(t *testing.T) {
 	assert.Equal(t, uint64(0), stream.diffArrayToUserOffset)
 
 	// Test capacity limit
-	sb2 := NewSendBuffer(3, nil)
+	sb2 := NewSendBuffer(3)
 	nr, status := sb2.QueueData(1, []byte("test"), false)
 	assert.Equal(t, InsertStatusSndFull, status)
 	assert.Equal(t, 3, nr)
 
 	// Test 48-bit wrapping (using MaxUint64 as uint48 in go doesn't exist)
-	sb3 := NewSendBuffer(1000, nil)
+	sb3 := NewSendBuffer(1000)
 	stream = NewStreamBuffer()
 	sb3.streams[1] = stream
 	_, status = sb3.QueueData(1, []byte("test"), false)
@@ -38,7 +38,7 @@ func TestSndInsert(t *testing.T) {
 }
 
 func TestSndReadyToSend(t *testing.T) {
-	sb := NewSendBuffer(1000, nil)
+	sb := NewSendBuffer(1000)
 	nowNano := uint64(100)
 
 	// Insert data
@@ -79,7 +79,7 @@ func TestSndReadyToSend(t *testing.T) {
 }
 
 func TestSndReadyToRetransmit(t *testing.T) {
-	sb := NewSendBuffer(1000, nil)
+	sb := NewSendBuffer(1000)
 
 	// Setup test data
 	sb.QueueData(1, []byte("test1"), false)
@@ -107,7 +107,7 @@ func TestSndReadyToRetransmit(t *testing.T) {
 	assert.Equal(t, Data, msgType)
 
 	// Test MTU split scenario with proper MTU that should trigger splitting
-	sb2 := NewSendBuffer(1000, nil)
+	sb2 := NewSendBuffer(1000)
 	sb2.QueueData(1, []byte("testdata"), false)
 	sb2.ReadyToSend(1, Data, nil, 1000, false, 100) // Initial send
 
@@ -129,7 +129,7 @@ func TestSndReadyToRetransmit(t *testing.T) {
 }
 
 func TestSndAcknowledgeRangeBasic(t *testing.T) {
-	sb := NewSendBuffer(1000, nil)
+	sb := NewSendBuffer(1000)
 
 	sb.QueueData(1, []byte("testdata"), false)
 	sb.ReadyToSend(1, Data, nil, 1000, false, 100)
@@ -147,7 +147,7 @@ func TestSndAcknowledgeRangeBasic(t *testing.T) {
 }
 
 func TestSndAcknowledgeRangeNonExistentStream(t *testing.T) {
-	sb := NewSendBuffer(1000, nil)
+	sb := NewSendBuffer(1000)
 
 	status, sentTime, _ := sb.AcknowledgeRange(&Ack{
 		streamID: 1,
@@ -159,7 +159,7 @@ func TestSndAcknowledgeRangeNonExistentStream(t *testing.T) {
 }
 
 func TestSndAcknowledgeRangeNonExistentRange(t *testing.T) {
-	sb := NewSendBuffer(1000, nil)
+	sb := NewSendBuffer(1000)
 
 	stream := NewStreamBuffer()
 	sb.streams[1] = stream
@@ -174,7 +174,7 @@ func TestSndAcknowledgeRangeNonExistentRange(t *testing.T) {
 }
 
 func TestSndEmptyData(t *testing.T) {
-	sb := NewSendBuffer(1000, nil)
+	sb := NewSendBuffer(1000)
 
 	n, status := sb.QueueData(1, []byte{}, false)
 	assert.Equal(t, InsertStatusNoData, status)
@@ -186,7 +186,7 @@ func TestSndEmptyData(t *testing.T) {
 }
 
 func TestSndMultipleStreams(t *testing.T) {
-	sb := NewSendBuffer(1000, nil)
+	sb := NewSendBuffer(1000)
 
 	// Add data to multiple streams
 	sb.QueueData(1, []byte("stream1"), false)
@@ -213,7 +213,7 @@ func TestSndMultipleStreams(t *testing.T) {
 
 // Test gaps: when middle packets are acked before earlier ones
 func TestSndAcknowledgeGaps(t *testing.T) {
-	sb := NewSendBuffer(1000, nil)
+	sb := NewSendBuffer(1000)
 	
 	// Queue 12 bytes
 	sb.QueueData(1, []byte("012345678901"), false)
@@ -255,7 +255,7 @@ func TestSndAcknowledgeGaps(t *testing.T) {
 }
 
 func TestSndAcknowledgeComplexGaps(t *testing.T) {
-	sb := NewSendBuffer(1000, nil)
+	sb := NewSendBuffer(1000)
 	
 	// Queue 20 bytes
 	sb.QueueData(1, []byte("01234567890123456789"), false)
@@ -289,7 +289,7 @@ func TestSndAcknowledgeComplexGaps(t *testing.T) {
 }
 
 func TestSndRetransmitWithGaps(t *testing.T) {
-	sb := NewSendBuffer(1000, nil)
+	sb := NewSendBuffer(1000)
 	sb.QueueData(1, []byte("0123456789"), false)
 	
 	// Send two packets with 5-byte payload each
@@ -314,7 +314,7 @@ func TestSndRetransmitWithGaps(t *testing.T) {
 }
 
 func TestSndCloseWithoutGaps(t *testing.T) {
-	sb := NewSendBuffer(1000, nil)
+	sb := NewSendBuffer(1000)
 
 	// Queue with close flag
 	sb.QueueData(1, []byte("test"), true)
@@ -331,7 +331,7 @@ func TestSndCloseWithoutGaps(t *testing.T) {
 }
 
 func TestSndCloseWithGaps(t *testing.T) {
-	sb := NewSendBuffer(1000, nil)
+	sb := NewSendBuffer(1000)
 
 	sb.QueueData(1, []byte("01234567"), true)
 
@@ -352,7 +352,7 @@ func TestSndCloseWithGaps(t *testing.T) {
 }
 
 func TestSndPingWithGaps(t *testing.T) {
-	sb := NewSendBuffer(1000, nil)
+	sb := NewSendBuffer(1000)
 
 	// Queue and send some data
 	sb.QueueData(1, []byte("test"), false)
@@ -374,7 +374,7 @@ func TestSndPingWithGaps(t *testing.T) {
 }
 
 func TestSndDuplicateAck(t *testing.T) {
-	sb := NewSendBuffer(1000, nil)
+	sb := NewSendBuffer(1000)
 
 	sb.QueueData(1, []byte("test"), false)
 	sb.ReadyToSend(1, Data, nil, 43, false, 100)

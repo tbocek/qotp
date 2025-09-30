@@ -75,7 +75,7 @@ func NewStreamBuffer() *StreamBuffer {
 	}
 }
 
-func NewSendBuffer(capacity int, callback func()) *SendBuffer {
+func NewSendBuffer(capacity int) *SendBuffer {
 	return &SendBuffer{
 		streams:  make(map[uint32]*StreamBuffer),
 		capacity: capacity,
