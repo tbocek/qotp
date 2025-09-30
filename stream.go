@@ -111,5 +111,5 @@ func (s *Stream) currentOffset() uint64 {
 	if streamBuffer == nil {
 		return 0
 	}
-	return streamBuffer.bytesSentOffset
+	return streamBuffer.bytesSentUserOffset
 }
