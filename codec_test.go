@@ -84,7 +84,7 @@ func getTestRemoteAddr() netip.AddrPort {
 func TestCodecStreamClosed(t *testing.T) {
 	conn := createTestConnection(true, false, true)
 	stream := conn.Stream(1)
-	stream.Close()
+	stream.CloseNow()
 
 	p := &PayloadHeader{}
 	output, err := conn.encode(p, []byte("test data"), conn.msgType())
@@ -95,7 +95,7 @@ func TestCodecStreamClosed(t *testing.T) {
 func TestCodecConnectionClosed(t *testing.T) {
 	conn := createTestConnection(true, false, true)
 	stream := conn.Stream(1)
-	stream.conn.Close()
+	stream.conn.CloseNow()
 
 	p := &PayloadHeader{}
 	output, err := conn.encode(p, []byte("test data"), conn.msgType())

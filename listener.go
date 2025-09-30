@@ -188,7 +188,7 @@ func Listen(options ...ListenFunc) (*Listener, error) {
 	return l, nil
 }
 
-func (l *Listener) Close() error {
+func (l *Listener) CloseNow() error {
 	slog.Debug("ListenerClose", gId())
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -196,7 +196,7 @@ func (l *Listener) Close() error {
 	l.closed = true
 
 	for _, conn := range l.connMap.items {
-		conn.value.Close()
+		conn.value.CloseNow()
 	}
 
 	err := l.localConn.TimeoutReadNow()

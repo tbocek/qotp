@@ -65,13 +65,13 @@ func (c *Conn) msgType() MsgType {
 	}
 }
 
-func (c *Conn) Close() {
+func (c *Conn) CloseNow() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	for _, s := range c.streams.Iterator(nil) {
 		if s != nil {
-			s.Close()
+			s.CloseNow()
 		}
 	}
 }
@@ -100,7 +100,7 @@ func (c *Conn) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uin
 	s = c.Stream(p.StreamID)
 
 	if p.Ack != nil {
-		ackStatus, sentTimeNano := c.snd.AcknowledgeRange(p.Ack) //remove data from rbSnd if we got the ack
+		ackStatus, sentTimeNano, senderClose := c.snd.AcknowledgeRange(p.Ack) //remove data from rbSnd if we got the ack
 		if ackStatus == AckStatusOk {
 			c.dataInFlight -= rawLen
 		} else if ackStatus == AckDup {
@@ -117,7 +117,10 @@ func (c *Conn) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uin
 				return nil, errors.New("stream does not exist")
 			}
 		}
-
+		
+		if senderClose {
+			s.CloseNow()
+		}
 	}
 
 	if len(userData) > 0 {

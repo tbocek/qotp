@@ -55,8 +55,11 @@ func (s *Stream) Read() (userData []byte, err error) {
 	slog.Debug("Read", gId(), s.debug(), slog.String("b…", string(data[:min(16, len(data))])))
 	return data, nil
 }
-
 func (s *Stream) Write(userData []byte) (remainingUserData []byte, err error) {
+	return s.WriteWithClose(userData, false)
+}
+
+func (s *Stream) WriteWithClose(userData []byte, close bool) (remainingUserData []byte, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -69,7 +72,7 @@ func (s *Stream) Write(userData []byte) (remainingUserData []byte, err error) {
 	}
 
 	slog.Debug("Write", gId(), s.debug(), slog.String("b…", string(userData[:min(16, len(userData))])))
-	n, status := s.conn.snd.QueueData(s.streamID, userData)
+	n, status := s.conn.snd.QueueData(s.streamID, userData, close)
 	if status != InsertStatusOk {
 		slog.Debug("Status Nok", gId(), s.debug(), slog.Any("status", status))
 	} else {
@@ -84,7 +87,7 @@ func (s *Stream) Write(userData []byte) (remainingUserData []byte, err error) {
 	return remainingUserData, nil
 }
 
-func (s *Stream) Close() {
+func (s *Stream) CloseNow() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -108,5 +111,5 @@ func (s *Stream) currentOffset() uint64 {
 	if streamBuffer == nil {
 		return 0
 	}
-	return streamBuffer.sentOffset
+	return streamBuffer.bytesSentOffset
 }

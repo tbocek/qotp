@@ -276,7 +276,7 @@ func TestStreamCloseInitiatedBySender(t *testing.T) {
 	a1 := []byte("hallo1")
 	_, err := streamA.Write(a1)
 	assert.Nil(t, err)
-	connA.Close()
+	connA.CloseNow()
 	assert.True(t, streamA.state == StreamStateCloseRequest)
 
 	minPacing := connA.listener.Flush(specificNano)
@@ -334,7 +334,7 @@ func TestStreamCloseInitiatedByReceiver(t *testing.T) {
 	// Listener B receives data
 	streamB, err := listenerB.Listen(0, specificNano)
 	assert.Nil(t, err)
-	streamB.conn.Close()
+	streamB.conn.CloseNow()
 	assert.True(t, streamB.state == StreamStateCloseRequest)
 
 	// Verify data received correctly

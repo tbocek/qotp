@@ -1,12 +1,26 @@
 package main
+
 import (
-	"os"
 	"fmt"
 	"log"
-	"bufio"
-	"strings"
+	"os"
+
 	"github.com/tbocek/qotp"
 )
+
+func repeatText(text string, targetBytes int) []byte {
+	if len(text) == 0 {
+		return []byte{}
+	}
+
+	result := make([]byte, 0, targetBytes)
+	for len(result) < targetBytes {
+		result = append(result, []byte(text)...)
+	}
+
+	return result[:targetBytes]
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage:")
@@ -14,6 +28,7 @@ func main() {
 		fmt.Println("  ./example1 client [addr]     # default: 127.0.0.1:8888")
 		os.Exit(1)
 	}
+
 	switch os.Args[1] {
 	case "server":
 		addr := "127.0.0.1:8888"
@@ -32,72 +47,81 @@ func main() {
 		os.Exit(1)
 	}
 }
+
 func runServer(addr string) {
+	// Create server listener (will auto-generate keys)
 	listener, err := qotp.Listen(qotp.WithListenAddr(addr))
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer listener.CloseNow()
+
 	fmt.Printf("Server listening on %s\n", addr)
 	fmt.Println("Waiting for clients...")
-	
+
+	n := 0
+
+	// Handle incoming streams
 	listener.Loop(func(stream *qotp.Stream) bool {
-		if stream == nil {	
+		if stream == nil { //nothing to read
 			return true
 		}
 		data, err := stream.Read()
 		if err != nil {
-			fmt.Println("Server exit loop, %v", err)
 			return false
 		}
-		
+
 		if len(data) > 0 {
-			msg := string(data)
-			fmt.Printf("Server received: %s\n", msg)
-			
-			upper := strings.ToUpper(msg)
-			stream.Write([]byte(upper))
-			stream.CloseNow()
+			n += len(data)
+			fmt.Printf("Server received: [%v] %s\n", n, data)
+
+			// Send reply
+			if n == 2000 {
+				stream.WriteWithClose(repeatText("Hello from server! ", 2000), true)
+			}
 		}
 		return true
 	})
 }
+
 func runClient(serverAddr string) {
+	// Create client listener (will auto-generate keys)
 	listener, err := qotp.Listen()
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer listener.CloseNow()
-	
+
+	// Connect to server without crypto (in-band key exchange)
 	conn, err := listener.DialString(serverAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	fmt.Printf("Connected to server at %s\n", serverAddr)
-	
-	// Read user input
-	fmt.Print("Enter message: ")
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(input)
-	
+
+	// Send message
 	stream := conn.Stream(0)
-	_, err = stream.Write([]byte(input))
+	_, err = stream.Write(repeatText("Hello from client! ", 2000))
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Sent: %s\n", input)
-	
+	fmt.Println("Sent: Hello from client!")
+
+	n := 0
 	// Read reply
 	listener.Loop(func(s *qotp.Stream) bool {
-		if s == nil {
-			return true
+		if s == nil { //nothing to read
+			return true //continue
 		}
 		data, _ := s.Read()
 		if len(data) > 0 {
-			fmt.Printf("Received, exit: %s\n", data)
-			return false
+			n += len(data)
+			fmt.Printf("Received: [%v] %s\n", n, data)
+			if n == 2000 {
+				return false //exit
+			}
 		}
-		return true
+		return true //continue
 	})
 }

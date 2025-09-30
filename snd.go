@@ -47,18 +47,19 @@ type StreamBuffer struct {
 	// which will be in front of the array. Thus, len(userData) would not work.
 	userData []byte
 	// this is the offset of the userData we did not send yet
-	unsentOffset uint64
+	nextFreshOffset uint64
 	// this is the offset of the dataToSend we did send
-	sentOffset uint64
-	// when dataToSend is acked, we Remove the dataToSend, however we don't want to update all the offsets, hence this bias
+	bytesSentOffset uint64
+	// when dataToSend is acked, we Remove the dataToSend, however we don't want to update all the offsets, hence this baseOffset
 	// TODO: check what happens on an 48bit rollover
-	bias uint64
+	baseOffset uint64
 	// inflight dataToSend - key is offset, which is uint48, len in 16bit is added to a 64bit key. value is sentTime
 	// If MTU changes for inflight packets and need to be resent. The range is split. Example:
 	// offset: 500, len/mtu: 50 -> 1 range: 500/50,time
 	// retransmit with mtu:20 -> 3 dataInFlightMap: 500/20,time; 520/20,time; 540/10,time
 	dataInFlightMap *LinkedMap[packetKey, *SendInfo]
 	pingRequest     bool
+	closeAt         uint64
 }
 
 type SendBuffer struct {
@@ -84,10 +85,8 @@ func NewSendBuffer(capacity int, callback func()) *SendBuffer {
 }
 
 // QueueData stores the userData in the dataMap, does not send yet
-func (sb *SendBuffer) QueueData(streamId uint32, userData []byte) (n int, status InsertStatus) {
-	remainingData := userData
-
-	if len(remainingData) <= 0 {
+func (sb *SendBuffer) QueueData(streamId uint32, userData []byte, close bool) (n int, status InsertStatus) {
+	if len(userData) <= 0 {
 		return 0, InsertStatusNoData
 	}
 
@@ -96,20 +95,21 @@ func (sb *SendBuffer) QueueData(streamId uint32, userData []byte) (n int, status
 
 	// Calculate how much userData we can insert
 	remainingCapacitySnd := sb.capacity - sb.size
-	if remainingCapacitySnd <= 0 {
+	if remainingCapacitySnd == 0 {
 		return 0, InsertStatusSndFull
 	}
 
-	// Calculate chunk size
-	chunk := remainingData
-	if len(remainingData) > remainingCapacitySnd {
-		chunk = remainingData[:remainingCapacitySnd]
+	// We fill up the chunk up to the capacity of snd
+	// chunk is then what we will queue, and we report
+	// how much bytes we queued
+	chunk := userData
+	if len(userData) > remainingCapacitySnd {
+		chunk = userData[:remainingCapacitySnd]
 		status = InsertStatusSndFull
-		n = remainingCapacitySnd
 	} else {
 		status = InsertStatusOk
-		n = len(remainingData)
 	}
+	n = len(chunk)
 
 	// Get or create stream buffer
 	stream := sb.streams[streamId]
@@ -120,7 +120,12 @@ func (sb *SendBuffer) QueueData(streamId uint32, userData []byte) (n int, status
 
 	// Store chunk
 	stream.userData = append(stream.userData, chunk...)
-	stream.unsentOffset = stream.unsentOffset + uint64(n)
+	// We need to keep track of where the next fresh offset is
+	// As we may remove userData, if it has bee acked.
+	stream.nextFreshOffset = stream.nextFreshOffset + uint64(n)
+	if close {
+		stream.closeAt = stream.nextFreshOffset
+	}
 	sb.size += n
 
 	return n, status
@@ -156,14 +161,13 @@ func (sb *SendBuffer) ReadyToPing(streamID uint32, nowNano uint64) bool {
 	if !stream.pingRequest {
 		return false
 	}
-
 	stream.pingRequest = false
 
-	// Pack offset and length into key
-	key := createPacketKey(stream.sentOffset, 0)
-	
-	// Track range
-	m := &SendInfo{sentNr: 1, msgType: -1, offset: stream.sentOffset, sentTimeNano: nowNano, noRetry: true}
+	// Pack offset and length into key, offset does not matter as data is 0
+	key := createPacketKey(stream.bytesSentOffset, 0)
+
+	// Track range, important when acked, so we can update stats, but no retransmission of this.
+	m := &SendInfo{sentNr: 1, msgType: -1, offset: stream.bytesSentOffset, sentTimeNano: nowNano, noRetry: true}
 	stream.dataInFlightMap.Put(key, m)
 
 	return true
@@ -184,42 +188,35 @@ func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType MsgType, ack *Ack, mt
 		return nil, 0
 	}
 
-	// Check if there's unsent dataToSend, if true, we have unsent dataToSend
-	if stream.unsentOffset > stream.sentOffset {
-		remainingData := stream.unsentOffset - stream.sentOffset
-
-		maxData := 0
-		if msgType != InitSnd {
-			overhead := calcCryptoOverhead(msgType, ack, stream.sentOffset)
-			maxData = mtu - overhead
-		}
-
-		//the max length we can send
-		length := uint16(min(uint64(maxData), remainingData))
-
-		// Get userData slice accounting for bias
-		offset := stream.sentOffset - stream.bias
-		packetData = stream.userData[offset : offset+uint64(length)]
-
-		// Pack offset and length into key
-		key := createPacketKey(stream.sentOffset, length)
-		// Track range
-		m := &SendInfo{sentNr: 1, msgType: msgType, offset: stream.sentOffset, sentTimeNano: nowNano, noRetry: noRetry}
-		stream.dataInFlightMap.Put(key, m)
-
-		// Update tracking
-		currentOffset := stream.sentOffset
-		stream.sentOffset = stream.sentOffset + uint64(length)
-
-		if noRetry {
-			//TODO: remove data now instead of in the ack or retransmit
-			slog.Debug("we should remove data now, currently we do it later.")
-		}
-
-		return packetData, currentOffset
+	//We have send all queued data for the first time
+	if stream.nextFreshOffset <= stream.bytesSentOffset {
+		return nil, 0
 	}
 
-	return nil, 0
+	maxData := 0
+	if msgType != InitSnd {
+		overhead := calcCryptoOverhead(msgType, ack, stream.bytesSentOffset)
+		maxData = mtu - overhead
+	}
+
+	//the max length we can send
+	dataToSend := stream.nextFreshOffset - stream.bytesSentOffset
+	length := min(uint64(maxData), dataToSend)
+
+	// Get userData slice accounting for bias
+	realOffset := stream.bytesSentOffset - stream.baseOffset
+	packetData = stream.userData[realOffset : realOffset+length]
+
+	// Pack offset and length into key
+	key := createPacketKey(stream.bytesSentOffset, uint16(length))
+	// Track range
+	m := &SendInfo{sentNr: 1, msgType: msgType, offset: stream.bytesSentOffset, sentTimeNano: nowNano, noRetry: noRetry}
+	stream.dataInFlightMap.Put(key, m)
+
+	// Update sent bytes
+	stream.bytesSentOffset = stream.bytesSentOffset + length
+
+	return packetData, m.offset
 }
 
 // ReadyToRetransmit finds expired dataInFlightMap that need to be resent
@@ -255,22 +252,25 @@ func (sb *SendBuffer) ReadyToRetransmit(streamID uint32, ack *Ack, mtu int, expe
 
 	//Timeout
 	if rtoData.noRetry {
-		//just remove as we do not expect a retransmission
-		stream.dataInFlightMap.Remove(packetKey)
-		slog.Debug("removed a packet, which was not acked, we could have done this earlier")
+		//just remove as we do not retransmit
+		sb.removeData(stream, packetKey)
 		return nil, 0, 0, nil
 	}
 
 	// Calculate data slice once
-	rangeOffset := packetKey.offset()
-	rangeLen := packetKey.length()
-	dataOffset := rangeOffset - stream.bias
-	data = stream.userData[dataOffset : dataOffset+uint64(rangeLen)]
+	realOffset := packetKey.offset() - stream.baseOffset
+	length := packetKey.length()
+
+	if length == 0 {
+		return nil, 0, 0, nil
+	}
+
+	data = stream.userData[realOffset : realOffset+uint64(length)]
 
 	// Calculate available space once
 	maxData := 0
 	if rtoData.msgType != InitSnd {
-		overhead := calcCryptoOverhead(rtoData.msgType, ack, dataOffset)
+		overhead := calcCryptoOverhead(rtoData.msgType, ack, rtoData.offset)
 		maxData = mtu - overhead
 	}
 
@@ -278,113 +278,74 @@ func (sb *SendBuffer) ReadyToRetransmit(streamID uint32, ack *Ack, mtu int, expe
 		sentTimeNano:           nowNano,
 		sentNr:                 rtoData.sentNr + 1,
 		msgType:                rtoData.msgType,
-		offset:                 rangeOffset,
+		offset:                 rtoData.offset,
 		expectedRtoBackoffNano: expectedRtoBackoffNano,
 		actualRtoNano:          actualRtoNano,
 	}
 
-	if rangeLen <= uint16(maxData) {
+	if length <= uint16(maxData) {
 		// Resend entire range
-		slog.Debug("Resend", slog.Uint64("free-space", uint64(uint16(maxData)-rangeLen)))
+		slog.Debug("Resend", slog.Uint64("free-space", uint64(uint16(maxData)-length)))
 		stream.dataInFlightMap.Replace(packetKey, packetKey, baseSendInfo)
-		return data, rangeOffset, rtoData.msgType, nil
+		return data, rtoData.offset, rtoData.msgType, nil
 	} else {
 		// Split range
-		leftKey := createPacketKey(rangeOffset, uint16(maxData))
-		remainingOffset := rangeOffset + uint64(maxData)
-		rightKey := createPacketKey(remainingOffset, rangeLen-uint16(maxData))
-
+		leftKey := createPacketKey(rtoData.offset, uint16(maxData))
+		remainingOffset := rtoData.offset + uint64(maxData)
 		stream.dataInFlightMap.Put(leftKey, baseSendInfo)
 
-		rightSendInfo := &SendInfo{
-			sentTimeNano:           rtoData.sentTimeNano,
-			sentNr:                 rtoData.sentNr,
-			msgType:                rtoData.msgType,
-			offset:                 remainingOffset,
-			expectedRtoBackoffNano: rtoData.expectedRtoBackoffNano,
-			actualRtoNano:          rtoData.actualRtoNano,
-		}
-		stream.dataInFlightMap.Replace(packetKey, rightKey, rightSendInfo)
+		// only change the remainingOffset here, the length changes in the key
+		// rest stays the same
+		rightKey := createPacketKey(remainingOffset, length-uint16(maxData))
+		rtoData.offset = remainingOffset
+		stream.dataInFlightMap.Replace(packetKey, rightKey, rtoData)
 
 		slog.Debug("Resend/Split", slog.Uint64("send", uint64(maxData)),
-			slog.Uint64("remain", uint64(rangeLen-uint16(maxData))))
-		return data[:maxData], rangeOffset, rtoData.msgType, nil
+			slog.Uint64("remain", uint64(length-uint16(maxData))))
+		return data[:maxData], rtoData.offset, rtoData.msgType, nil
 	}
 }
 
 // AcknowledgeRange handles acknowledgment of dataToSend
-func (sb *SendBuffer) AcknowledgeRange(ack *Ack) (status AckStatus, sentTimeNano uint64) {
+func (sb *SendBuffer) AcknowledgeRange(ack *Ack) (status AckStatus, sentTimeNano uint64, senderClose bool) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 
 	stream := sb.streams[ack.streamID]
 	if stream == nil {
-		return AckNoStream, 0
+		return AckNoStream, 0, false
 	}
 
 	// Remove range key
 	key := createPacketKey(ack.offset, ack.len)
-	rangePair, ok := stream.dataInFlightMap.Remove(key)
+
+	ok, sentTimeNano, senderClose := sb.removeData(stream, key)
 	if !ok {
-		return AckDup, 0
+		return AckDup, 0, false
 	}
 
-	sentTimeNano = rangePair.sentTimeNano
+	return AckStatusOk, sentTimeNano, senderClose
+}
 
-	// Try to advance the bias and remove acknowledged data
-	if ack.len > 0 {
-		// Find the lowest offset still in flight (excluding ping packets with len=0)
-		minInFlightOffset := stream.sentOffset // Default if no real data in flight
-		hasRealDataInFlight := false
-		
-		for inFlightKey, _ := range stream.dataInFlightMap.Iterator(nil) {
-			offset := inFlightKey.offset()
-			length := inFlightKey.length()
-			
-			// Skip ping packets (length = 0)
-			if length == 0 {
-				continue
-			}
-			
-			if offset < minInFlightOffset {
-				minInFlightOffset = offset
-				hasRealDataInFlight = true
-			}
-		}
-		
-		// If no real data is in flight, we can remove up to sentOffset
-		// Otherwise, we can only remove up to the earliest in-flight data
-		targetBias := minInFlightOffset
-		if !hasRealDataInFlight {
-			targetBias = stream.sentOffset
-		}
-		
-		// Only advance if we're moving forward
-		if targetBias > stream.bias {
-			bytesToRemove := targetBias - stream.bias
-			
-			// Safety check
-			if int(bytesToRemove) > len(stream.userData) {
-				slog.Error("Attempted to remove more data than available",
-					slog.Uint64("bytesToRemove", bytesToRemove),
-					slog.Int("dataLen", len(stream.userData)),
-					slog.Uint64("bias", stream.bias),
-					slog.Uint64("targetBias", targetBias))
-				// Remove what we can
-				bytesToRemove = uint64(len(stream.userData))
-			}
-			
-			stream.userData = stream.userData[bytesToRemove:]
-			sb.size -= int(bytesToRemove)
-			stream.bias = targetBias
-			
-			if rangePair.noRetry {
-				slog.Debug("removed a packet which was acked, we could have done this earlier")
-			}
-		}
+func (sb *SendBuffer) removeData(stream *StreamBuffer, p packetKey) (success bool, sentTimeNano uint64, senderClose bool) {
+	rangePair, ok := stream.dataInFlightMap.Remove(p)
+	if !ok {
+		return false, 0, false
 	}
 
-	return AckStatusOk, sentTimeNano
+	_, _, ok = stream.dataInFlightMap.Previous(p)
+	if !ok {
+		//we are the very first entry, so we can remove everything until this point
+		realOffset := rangePair.offset - stream.baseOffset
+		stream.userData = stream.userData[realOffset+uint64(p.length()):]
+		stream.baseOffset += realOffset + uint64(p.length())
+		
+		//check if we can close this
+		if stream.closeAt > 0 && stream.baseOffset >= stream.closeAt {
+			senderClose = true
+		}
+	}
+	return true, rangePair.sentTimeNano, senderClose
 }
 
 type packetKey uint64
