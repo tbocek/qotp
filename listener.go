@@ -239,7 +239,7 @@ func (l *Listener) Listen(timeoutNano uint64, nowNano uint64) (s *Stream, err er
 
 	var p *PayloadHeader
 	if len(payload) == 0 && msgType == InitSnd { //InitSnd is the only message without any payload
-		p = conn.payloadHeader()
+		p = &PayloadHeader{}
 		data = []byte{}
 	} else {
 		p, data, err = DecodePayload(payload)
@@ -366,7 +366,7 @@ func (l *Listener) newConn(
 		snd:                NewSendBuffer(sndBufferCapacity),
 		rcv:                NewReceiveBuffer(rcvBufferCapacity),
 		Measurements:       NewMeasurements(),
-		rcvWndSize:         rcvBufferCapacity, //initially our capacity, correct value will be sent to us in the 1st handshake
+		rcvWndSize:         rcvBufferCapacity, //initially our capacity, correct value will be sent to us when we need it
 	}
 
 	l.connMap.Put(connId, conn)

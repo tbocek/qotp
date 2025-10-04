@@ -19,15 +19,7 @@ type Stream struct {
 	streamID uint32
 	conn     *Conn
 	state    StreamState
-	noRetry  bool
 	mu       sync.Mutex
-}
-
-func (s *Stream) NoRetry(noRetry bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.noRetry = noRetry
 }
 
 func (s *Stream) NotifyDataAvailable() error {

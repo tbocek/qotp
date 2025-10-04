@@ -1,46 +1,73 @@
 package qotp
 
 import (
+	"bytes"
 	"math"
-	"reflect"
 	"testing"
 )
 
 func FuzzPayload(f *testing.F) {
-    // Add seed corpus with valid and edge case payloads
-    payloads := []*PayloadHeader{
-        {
-            StreamID:     1,
-            StreamOffset: 100,
-            RcvWndSize:   1000,
-            Ack:          &Ack{streamID: 10, offset: 200, len: 10},
-        },
-        {
-            StreamID:     math.MaxUint32,
-            StreamOffset: math.MaxUint64,
-        },
-    }
+	// Add seed corpus
+	payloads := []*PayloadHeader{
+		{
+			StreamID:     1,
+			StreamOffset: 100,
+			Ack:          &Ack{streamID: 10, offset: 200, len: 10, rcvWnd: 1000},
+		},
+		{
+			StreamID:     math.MaxUint32,
+			StreamOffset: math.MaxUint64,
+		},
+	}
+	for _, p := range payloads {
+		originalData := []byte("test data")
+		encoded, _ := EncodePayload(p, originalData)
+		f.Add(encoded)
+	}
 
-    for _, p := range payloads {
-        originalData := []byte("test data")
-        encoded := encodePayload(p, originalData)
-        f.Add(encoded)
-    }
+	f.Fuzz(func(t *testing.T, data []byte) {
+		decoded, payloadData, err := DecodePayload(data)
+		if err != nil {
+			t.Skip()
+		}
 
-    f.Fuzz(func(t *testing.T, data []byte) {
-        decoded, payloadData, err := DecodePayload(data)
-        if err != nil {
-            t.Skip()
-        }
+		// Re-encode and decode
+		reEncoded, _ := EncodePayload(decoded, payloadData)
+		reDecoded, reDecodedData, err := DecodePayload(reEncoded)
+		if err != nil {
+			t.Fatal("Failed to decode our own encoded data:", err)
+		}
 
-        reEncoded := encodePayload(decoded, payloadData)
-        reDecoded, reDecodedData, err := DecodePayload(reEncoded)
-        if err != nil {
-        	t.Fatal("Failed to decode our own encoded data:", err)
-        }
+		// Compare data
+		if !bytes.Equal(payloadData, reDecodedData) {
+			t.Fatal("Data mismatch")
+		}
 
-        if !reflect.DeepEqual(decoded, reDecoded) || !reflect.DeepEqual(payloadData, reDecodedData) {
-            t.Fatal("re-encoded/decoded payload differs from original")
-        }
-    })
+		// Compare payload fields
+		if decoded.IsPing != reDecoded.IsPing ||
+			decoded.IsClose != reDecoded.IsClose ||
+			decoded.StreamID != reDecoded.StreamID ||
+			decoded.StreamOffset != reDecoded.StreamOffset {
+			t.Fatal("Payload fields mismatch")
+		}
+
+		// Compare Ack
+		if (decoded.Ack == nil) != (reDecoded.Ack == nil) {
+			t.Fatal("Ack presence mismatch")
+		}
+		if decoded.Ack != nil {
+			if decoded.Ack.streamID != reDecoded.Ack.streamID ||
+				decoded.Ack.offset != reDecoded.Ack.offset ||
+				decoded.Ack.len != reDecoded.Ack.len {
+				t.Fatal("Ack fields differ")
+			}
+			// rcvWnd has lossy encoding - verify both encode to same value
+			enc1 := EncodeRcvWindow(decoded.Ack.rcvWnd)
+			enc2 := EncodeRcvWindow(reDecoded.Ack.rcvWnd)
+			if enc1 != enc2 {
+				t.Fatalf("rcvWnd encodes differently: %d->%d vs %d->%d",
+					decoded.Ack.rcvWnd, enc1, reDecoded.Ack.rcvWnd, enc2)
+			}
+		}
+	})
 }

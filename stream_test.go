@@ -7,8 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-
-
 func setupStreamTest(t *testing.T) (connA *Conn, listenerB *Listener, connPair *ConnPair) {
     // Setup code   
     connPair = NewConnPair("alice", "bob")
@@ -397,7 +395,7 @@ func TestStreamFlowControl(t *testing.T) {
 	assert.Equal(t, 1, connPair.nrIncomingPacketsSender())
 	streamA, err = connA.listener.Listen(0, specificNano)
 	assert.Nil(t, err)
-	assert.Equal(t, uint64(0x1000000), streamA.conn.rcvWndSize)
+	assert.Equal(t, uint64(0xf00000), streamA.conn.rcvWndSize)
 	
 	//respect pacing
 	for range 10 {
@@ -422,7 +420,7 @@ func TestStreamFlowControl(t *testing.T) {
 	assert.Nil(t, err)
 	
 	//respect time
-	assert.Equal(t, uint64(0x65adb2f0), specificNano)
+	assert.Equal(t, uint64(0x65aa3f2c), specificNano)
 }
 
 /*func TestStreamHighThroughput(t *testing.T) {

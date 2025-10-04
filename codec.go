@@ -124,13 +124,11 @@ func (l *Listener) decode(encData []byte, rAddr netip.AddrPort) (
 	}
 
 	header := encData[0]
-	version := header >> 3
-
-	if version != Version {
+    version := header & 0x1F           // Extract bits 0-4 (mask 0001 1111)
+    if version != CryptoVersion {
 		return nil, nil, 0, errors.New("unsupported version version")
 	}
-
-	msgType = MsgType(header & 0x07)
+    msgType = MsgType(header >> 5)
 
 	connId := Uint64(encData[HeaderSize : ConnIdSize+HeaderSize])
 

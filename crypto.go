@@ -20,15 +20,14 @@ const (
 )
 
 const (
-	Version = 0
+	CryptoVersion = 0
 	MacSize = 16
 	SnSize  = 6 // Sequence number Size is 48bit / 6 bytes
 	//MinPayloadSize is the minimum payload Size in bytes. We need at least 8 bytes as
 	// 8 + the MAC Size (16 bytes) is 24 bytes, which is used as the input for
 	// sealing with chacha20poly1305.NewX().
-	MinPayloadSize = 8
+	
 	PubKeySize     = 32
-
 	HeaderSize         = 1
 	ConnIdSize         = 8
 	MsgInitFillLenSize = 2
@@ -40,7 +39,7 @@ const (
 	MinDataSizeHdr          = HeaderSize + ConnIdSize
 	FooterDataSize          = SnSize + MacSize
 
-	MinPacketSize = MinDataSizeHdr + FooterDataSize + MinPayloadSize
+	MinPacketSize = MinDataSizeHdr + FooterDataSize + MinProtoSize
 )
 
 type Message struct {
@@ -61,7 +60,7 @@ func encryptInitSnd(pubKeyIdSnd *ecdh.PublicKey, pubKeyEpSnd *ecdh.PublicKey, mt
 	// Create the buffer with the correct size
 	headerCryptoDataBuffer := make([]byte, mtu)
 
-	headerCryptoDataBuffer[0] = (Version << 3) | uint8(InitSnd)
+	headerCryptoDataBuffer[0] = (uint8(InitSnd) << 5) | CryptoVersion
 
 	// Directly copy the ephemeral public key to the buffer following the isSender's public key
 	copy(headerCryptoDataBuffer[HeaderSize:], pubKeyEpSnd.Bytes())
@@ -83,14 +82,10 @@ func encryptInitRcv(connId uint64,
 		panic("handshake keys cannot be nil")
 	}
 
-	if len(packetData) < MinPayloadSize {
-		return nil, errors.New("dataToSend too short")
-	}
-
 	// Create the buffer with the correct size, INIT_HANDSHAKE_R0 has 3 public keys
 	headerWithKeys := make([]byte, MinInitRcvSizeHdr)
 
-	headerWithKeys[0] = (Version << 3) | uint8(InitRcv)
+	headerWithKeys[0] = (uint8(InitRcv) << 5) | CryptoVersion
 
 	PutUint64(headerWithKeys[HeaderSize:], connId)
 
@@ -122,14 +117,10 @@ func encryptInitCryptoSnd(
 		panic("handshake keys cannot be nil")
 	}
 
-	if len(packetData) < MinPayloadSize {
-		return 0, nil, errors.New("dataToSend too short")
-	}
-
 	// Create the buffer with the correct size, INIT_WITH_CRYPTO_S0 has 3 public keys
 	headerWithKeys := make([]byte, MinInitCryptoSndSizeHdr)
 
-	headerWithKeys[0] = (Version << 3) | uint8(InitCryptoSnd)
+	headerWithKeys[0] = (uint8(InitCryptoSnd) << 5) | CryptoVersion
 
 	// Directly copy the isSender's public key to the buffer following the connection ID
 	copy(headerWithKeys[HeaderSize:], prvKeyEpSnd.PublicKey().Bytes())
@@ -175,14 +166,10 @@ func encryptInitCryptoRcv(
 		panic("handshake keys cannot be nil")
 	}
 
-	if len(packetData) < MinPayloadSize {
-		return nil, errors.New("dataToSend too short")
-	}
-
 	// Create the buffer with the correct size, INIT_WITH_CRYPTO_R0 has 2 public keys
 	headerWithKeys := make([]byte, MinInitCryptoRcvSizeHdr)
 
-	headerWithKeys[0] = (Version << 3) | uint8(InitCryptoRcv)
+	headerWithKeys[0] = (uint8(InitCryptoRcv) << 5) | CryptoVersion
 
 	PutUint64(headerWithKeys[HeaderSize:], connId)
 
@@ -211,14 +198,10 @@ func encryptData(
 		panic("pubKeyEpSnd/pubKeyEpRcv keys cannot be nil")
 	}
 
-	if len(packetData) < MinPayloadSize {
-		return nil, errors.New("dataToSend too short")
-	}
-
 	// Create the buffer with the correct size, DATA_0 has no public key
 	headerBuffer := make([]byte, HeaderSize+ConnIdSize)
 
-	headerBuffer[0] = (Version << 3) | uint8(Data)
+	headerBuffer[0] = (uint8(Data) << 5) | CryptoVersion
 	PutUint64(headerBuffer[HeaderSize:], connId)
 
 	// Encrypt and write dataToSend

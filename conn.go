@@ -96,9 +96,7 @@ func (c *Conn) Stream(streamID uint32) (s *Stream) {
 }
 
 func (c *Conn) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uint64) (s *Stream, err error) {
-	c.rcvWndSize = p.RcvWndSize
 	s = c.Stream(p.StreamID)
-
 	if p.Ack != nil {
 		ackStatus, sentTimeNano, senderClose := c.snd.AcknowledgeRange(p.Ack) //remove data from rbSnd if we got the ack
 		if ackStatus == AckStatusOk {
@@ -108,6 +106,7 @@ func (c *Conn) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uin
 		} else {
 			slog.Debug("No stream?")
 		}
+		c.rcvWndSize = p.Ack.rcvWnd
 
 		if nowNano > sentTimeNano {
 			if ackStatus == AckStatusOk {
@@ -117,7 +116,7 @@ func (c *Conn) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uin
 				return nil, errors.New("stream does not exist")
 			}
 		}
-		
+
 		if senderClose {
 			s.CloseNow()
 		}
@@ -125,8 +124,7 @@ func (c *Conn) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uin
 
 	if len(userData) > 0 {
 		c.rcv.Insert(s.streamID, p.StreamOffset, userData)
-	}
-	if len(userData) == 0 && p.IsNoRetry {
+	} else if p.IsClose || p.IsPing {
 		c.rcv.EmptyInsert(s.streamID, p.StreamOffset)
 	}
 
@@ -173,14 +171,18 @@ func (c *Conn) cleanupConn() {
 func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, err error) {
 	//update state for receiver
 	ack := c.rcv.GetSndAck()
+	if ack != nil {
+		ack.rcvWnd = uint64(c.rcv.capacity) - uint64(c.rcv.Size())
+	}
 
 	// If close requested, do not send any data, just send ack
-	if s.state == StreamStateCloseReceived {
+	if s.state == StreamStateCloseReceived && ack!=nil {
 		s.state = StreamStateClosed
 		slog.Debug(" Flush/Close", gId(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
 		if ack == nil {
 			return 0, MinDeadLine, nil
 		}
+		//write close
 		return c.writeAck(s, ack, nowNano)
 	}
 
@@ -192,19 +194,21 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 		if ack == nil {
 			return 0, MinDeadLine, nil
 		}
-		return c.writeAck(s, ack, nowNano)
+		return 0, c.nextWriteTime-nowNano, nil
 	}
+	
 	//Respect rwnd
 	if c.dataInFlight+int(c.listener.mtu) > int(c.rcvWndSize) {
 		slog.Debug(" Flush/Rwnd/Rcv", gId(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
 		if ack == nil {
 			return 0, MinDeadLine, nil
 		}
-		return c.writeAck(s, ack, nowNano)
+		return 0, MinDeadLine, nil
 	}
 
 	// Retransmission case
-	splitData, offset, msgType, err := c.snd.ReadyToRetransmit(s.streamID, ack, c.listener.mtu, c.rtoNano(), nowNano)
+	msgType := c.msgType()
+	splitData, offset, err := c.snd.ReadyToRetransmit(s.streamID, ack, c.listener.mtu, c.rtoNano(), msgType, nowNano)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -238,45 +242,18 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 
 	//next check if we can send packets, during handshake we can only send 1 packet
 	if c.isHandshakeDoneOnRcv || !c.isInitSentOnSnd {
-		
-		ping := c.snd.ReadyToPing(s.streamID, nowNano) 
-		if ping {
-			p := &PayloadHeader{
-				IsNoRetry:    true,
-				IsPing:       true,
-				Ack:          ack,
-				StreamID:     s.streamID,
-				StreamOffset: nowNano,
-			}
-			encData, err := c.encode(p, []byte{}, c.msgType())
-			if err != nil {
-				return 0, 0, err
-			}
-			
-			err = c.listener.localConn.WriteToUDPAddrPort(encData, c.remoteAddr, nowNano)
-			if err != nil {
-				return 0, 0, err
-			}
-			
-			pacingNano = c.calcPacing(uint64(len(encData)))
-			c.nextWriteTime = nowNano + pacingNano
-			return 0, pacingNano, nil
-		}
-		
-		splitData, offset := c.snd.ReadyToSend(s.streamID, c.msgType(), ack, c.listener.mtu, s.noRetry, nowNano)
-		if len(splitData) > 0 {
+		splitData, offset := c.snd.ReadyToSend(s.streamID, msgType, ack, c.listener.mtu, nowNano)
+		if splitData != nil {
 			slog.Debug(" Flush/Send", gId(), s.debug(), c.debug())
 
 			p := &PayloadHeader{
-				IsNoRetry:    s.noRetry,
 				IsClose:      s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
-				RcvWndSize:   uint64(s.conn.rcv.capacity) - uint64(s.conn.rcv.Size()),
 				Ack:          ack,
 				StreamID:     s.streamID,
 				StreamOffset: offset,
 			}
 
-			encData, err := c.encode(p, splitData, c.msgType())
+			encData, err := c.encode(p, splitData, msgType)
 			if err != nil {
 				return 0, 0, err
 			}
@@ -302,10 +279,9 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 
 func (c *Conn) writeAck(s *Stream, ack *Ack, nowNano uint64) (data int, pacingNano uint64, err error) {
 	p := &PayloadHeader{
-		IsClose:    s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
-		RcvWndSize: uint64(s.conn.rcv.capacity) - uint64(s.conn.rcv.Size()),
-		Ack:        ack,
-		StreamID:   s.streamID,
+		IsClose:  s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
+		Ack:      ack,
+		StreamID: s.streamID,
 	}
 
 	encData, err := c.encode(p, []byte{}, c.msgType())
@@ -320,12 +296,6 @@ func (c *Conn) writeAck(s *Stream, ack *Ack, nowNano uint64) (data int, pacingNa
 	pacingNano = c.calcPacing(uint64(len(encData)))
 	c.nextWriteTime = nowNano + pacingNano
 	return 0, pacingNano, nil
-}
-
-func (c *Conn) payloadHeader() *PayloadHeader {
-	return &PayloadHeader{
-		RcvWndSize: uint64(c.rcv.capacity) - uint64(c.rcv.Size()),
-	}
 }
 
 func (c *Conn) debug() slog.Attr {

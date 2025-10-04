@@ -36,7 +36,7 @@ func testDoubleEncryptDecrypt(t *testing.T, sn uint64, data []byte, additionalDa
 
 	buf, err := chainedEncrypt(sn, 0, true, sharedSecret, additionalData, data)
 	// too short
-	if len(data) < MinPayloadSize {
+	if len(data) < MinProtoSize {
 		assert.NotNil(t, err)
 		return
 	}
@@ -93,7 +93,7 @@ func TestCryptoDoubleEncryptDecryptLargeAAD(t *testing.T) {
 
 // Corner case: Exactly minimum payload size
 func TestCryptoDoubleEncryptDecryptExactMinPayload(t *testing.T) {
-	testDoubleEncryptDecrypt(t, 123, randomBytes(MinPayloadSize), []byte("AAD"))
+	testDoubleEncryptDecrypt(t, 123, randomBytes(MinProtoSize), []byte("AAD"))
 }
 
 func TestCryptoSecretKey(t *testing.T) {
@@ -168,21 +168,6 @@ func TestCryptoEncodeDecodeInitCryptoSndMaxPayload(t *testing.T) {
 	testEncodeDecodeInitCryptoSnd(t, randomBytes(1303))
 }
 
-// Corner case: Empty payload for InitCryptoSnd (should fail)
-func TestCryptoEncodeDecodeInitCryptoSndEmptyPayload(t *testing.T) {
-	testEncodeDecodeInitCryptoSnd(t, []byte{})
-}
-
-// Corner case: Single byte payload (should fail)
-func TestCryptoEncodeDecodeInitCryptoSndSingleBytePayload(t *testing.T) {
-	testEncodeDecodeInitCryptoSnd(t, []byte("A"))
-}
-
-// Corner case: 7 bytes payload (should fail)
-func TestCryptoEncodeDecodeInitCryptoSnd7BytePayload(t *testing.T) {
-	testEncodeDecodeInitCryptoSnd(t, []byte("1234567"))
-}
-
 // Corner case: Exactly 8 bytes payload (should succeed)
 func TestCryptoEncodeDecodeInitCryptoSnd8BytePayload(t *testing.T) {
 	testEncodeDecodeInitCryptoSnd(t, []byte("12345678"))
@@ -231,16 +216,6 @@ func TestCryptoEncodeDecodeInitCryptoRcvShortPayload(t *testing.T) {
 
 func TestCryptoEncodeDecodeInitCryptoRcvLongPayload(t *testing.T) {
 	testEncodeDecodeInitCryptoRcv(t, randomBytes(100))
-}
-
-// Corner case: Empty payload for InitCryptoRcv (should fail)
-func TestCryptoEncodeDecodeInitCryptoRcvEmptyPayload(t *testing.T) {
-	testEncodeDecodeInitCryptoRcv(t, []byte{})
-}
-
-// Corner case: 7 bytes payload for InitCryptoRcv (should fail)
-func TestCryptoEncodeDecodeInitCryptoRcv7BytePayload(t *testing.T) {
-	testEncodeDecodeInitCryptoRcv(t, []byte("1234567"))
 }
 
 // Corner case: Exactly 8 bytes payload for InitCryptoRcv (should succeed)
@@ -341,32 +316,6 @@ func TestCryptoInitRcvInvalidSize(t *testing.T) {
 	_, _, _, _, err := decryptInitRcv(buffer, generateKeys(t))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "size is below minimum init reply")
-}
-
-// Corner case: Empty payload for InitRcv (might have different rules than InitCrypto)
-func TestCryptoInitRcvEmptyPayload(t *testing.T) {
-	alicePrvKeyEp := generateKeys(t)
-	bobPrvKeyId := generateKeys(t)
-	bobPrvKeyEp := generateKeys(t)
-
-	buffer, err := encryptInitRcv(
-		0,
-		bobPrvKeyId.PublicKey(),
-		alicePrvKeyEp.PublicKey(),
-		bobPrvKeyEp,
-		0,
-		[]byte{})
-
-	// Check if empty payload is allowed for InitRcv
-	if err != nil {
-		assert.Contains(t, err.Error(), "too short")
-		return
-	}
-
-	assert.NoError(t, err)
-	_, _, _, msg, err := decryptInitRcv(buffer, alicePrvKeyEp)
-	assert.NoError(t, err)
-	assert.Empty(t, msg.PayloadRaw)
 }
 
 // Corner case: 8 bytes payload for InitRcv
