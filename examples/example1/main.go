@@ -47,7 +47,7 @@ func runServer(addr string) {
 		}
 		data, err := stream.Read()
 		if err != nil {
-			fmt.Println("Server exit loop, %v", err)
+			fmt.Printf("Server exit loop, %v\n", err)
 			return false
 		}
 		

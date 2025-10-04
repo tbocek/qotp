@@ -124,11 +124,11 @@ func (c *Conn) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uin
 
 	if len(userData) > 0 {
 		c.rcv.Insert(s.streamID, p.StreamOffset, userData)
-	} else if p.IsClose || p.IsPing {
+	} else if p.IsCloseSnd || p.IsPing {
 		c.rcv.EmptyInsert(s.streamID, p.StreamOffset)
 	}
 
-	if p.IsClose {
+	if p.IsCloseSnd {
 		c.rcv.CloseAt(s.streamID, p.StreamOffset)
 	}
 
@@ -176,12 +176,9 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 	}
 
 	// If close requested, do not send any data, just send ack
-	if s.state == StreamStateCloseReceived && ack!=nil {
+	if s.state == StreamStateCloseReceived && ack != nil {
 		s.state = StreamStateClosed
 		slog.Debug(" Flush/Close", gId(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
-		if ack == nil {
-			return 0, MinDeadLine, nil
-		}
 		//write close
 		return c.writeAck(s, ack, nowNano)
 	}
@@ -194,9 +191,9 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 		if ack == nil {
 			return 0, MinDeadLine, nil
 		}
-		return 0, c.nextWriteTime-nowNano, nil
+		return 0, c.nextWriteTime - nowNano, nil
 	}
-	
+
 	//Respect rwnd
 	if c.dataInFlight+int(c.listener.mtu) > int(c.rcvWndSize) {
 		slog.Debug(" Flush/Rwnd/Rcv", gId(), s.debug(), c.debug(), slog.Bool("ack?", ack != nil))
@@ -247,7 +244,7 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 			slog.Debug(" Flush/Send", gId(), s.debug(), c.debug())
 
 			p := &PayloadHeader{
-				IsClose:      s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
+				IsCloseSnd:   s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
 				Ack:          ack,
 				StreamID:     s.streamID,
 				StreamOffset: offset,
@@ -279,9 +276,9 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 
 func (c *Conn) writeAck(s *Stream, ack *Ack, nowNano uint64) (data int, pacingNano uint64, err error) {
 	p := &PayloadHeader{
-		IsClose:  s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
-		Ack:      ack,
-		StreamID: s.streamID,
+		IsCloseSnd: s.state == StreamStateClosed || s.state == StreamStateCloseRequest,
+		Ack:        ack,
+		StreamID:   s.streamID,
 	}
 
 	encData, err := c.encode(p, []byte{}, c.msgType())

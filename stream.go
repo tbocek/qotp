@@ -10,9 +10,11 @@ type StreamState uint8
 
 const (
 	StreamStateOpen StreamState = iota
-	StreamStateCloseRequest
-	StreamStateClosed
-	StreamStateCloseReceived
+	StreamStateCloseRequest //set this state to send the type close (sender side)
+	StreamStateClosed //received the close ACK, so stream is closed (sender side)
+	StreamStateCloseReceived //the other when type close is received (rcv side).
+                             //We send ack back, but keep the ack, we only close and clean up
+                             // when we have all data.
 )
 
 type Stream struct {

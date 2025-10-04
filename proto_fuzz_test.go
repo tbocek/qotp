@@ -45,7 +45,7 @@ func FuzzPayload(f *testing.F) {
 
 		// Compare payload fields
 		if decoded.IsPing != reDecoded.IsPing ||
-			decoded.IsClose != reDecoded.IsClose ||
+			decoded.IsCloseSnd != reDecoded.IsCloseSnd ||
 			decoded.StreamID != reDecoded.StreamID ||
 			decoded.StreamOffset != reDecoded.StreamOffset {
 			t.Fatal("Payload fields mismatch")

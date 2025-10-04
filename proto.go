@@ -16,19 +16,19 @@ const (
 )
 
 type PayloadHeader struct {
-	IsPing       bool
-	IsClose      bool
-	IsCloseAck   bool
+	IsPing     bool
+	IsCloseSnd bool
 	Ack          *Ack
 	StreamID     uint32
 	StreamOffset uint64
 }
 
 type Ack struct {
-	streamID uint32
-	offset   uint64
-	len      uint16
-	rcvWnd   uint64
+	streamID   uint32
+	offset     uint64
+	len        uint16
+	rcvWnd     uint64
+	IsCloseAck bool
 }
 
 /*
@@ -58,12 +58,12 @@ func EncodeRcvWindow(actualBytes uint64) uint8 {
 	if actualBytes <= 128 {
 		return 1
 	}
-	
+
 	highBit := bits.Len64(actualBytes) - 1
-	lowerBits := (actualBytes >> (highBit - 3)) & 0x7  // 8 substeps
-	
+	lowerBits := (actualBytes >> (highBit - 3)) & 0x7 // 8 substeps
+
 	encoded := uint8((highBit-8)*8 + int(lowerBits) + 2)
-	
+
 	if encoded > 254 {
 		return 254
 	}
@@ -77,52 +77,52 @@ func DecodeRcvWindow(encoded uint8) uint64 {
 	if encoded == 1 {
 		return 128
 	}
-	
+
 	adjusted := encoded - 2
 	highBit := int(adjusted/8) + 8
 	subStep := adjusted % 8
-	
+
 	base := uint64(1) << highBit
 	increment := base / 8
-	
+
 	return base + uint64(subStep)*increment
 }
 
 func EncodePayload(p *PayloadHeader, userData []byte) (encoded []byte, offset int) {
 	header := uint8(ProtoVersion) // bits 0-3
-	
+
 	// Determine type (bits 4-5)
 	if p.IsPing {
 		header |= 1 << TypeFlag // type = 01
-	} else if p.IsClose {
+	} else if p.IsCloseSnd {
 		header |= 2 << TypeFlag // type = 10
 	}
 	// else type = 00 (DATA) - nothing to set
-	
+
 	// Determine if 48-bit offset needed
 	isExtend := p.StreamOffset > 0xffffff
 	if p.Ack != nil && p.Ack.offset > 0xffffff {
 		isExtend = true
 	}
-	
+
 	// Set flags
 	isAck := p.Ack != nil
 	if isExtend {
-		header |= 1 << Offset24or48Flag 
+		header |= 1 << Offset24or48Flag
 	}
 	if isAck {
-		header |= 1 << AckFlag 
+		header |= 1 << AckFlag
 	}
-	
+
 	// Allocate buffer
 	overhead := calcProtoOverhead(isAck, isExtend)
 	userDataLen := len(userData)
 	encoded = make([]byte, overhead+userDataLen)
-	
+
 	// Write header
 	encoded[offset] = header
 	offset++
-	
+
 	// Write ACK section if present
 	if p.Ack != nil {
 		offset += PutUint32(encoded[offset:], p.Ack.streamID)
@@ -135,7 +135,7 @@ func EncodePayload(p *PayloadHeader, userData []byte) (encoded []byte, offset in
 		encoded[offset] = EncodeRcvWindow(p.Ack.rcvWnd)
 		offset++
 	}
-	
+
 	// Write Data
 	offset += PutUint32(encoded[offset:], p.StreamID)
 	if isExtend {
@@ -143,11 +143,11 @@ func EncodePayload(p *PayloadHeader, userData []byte) (encoded []byte, offset in
 	} else {
 		offset += PutUint24(encoded[offset:], p.StreamOffset)
 	}
-	
+
 	if userDataLen > 0 {
 		offset += copy(encoded[offset:], userData)
 	}
-	
+
 	return encoded, offset
 }
 
@@ -162,13 +162,16 @@ func DecodePayload(data []byte) (payload *PayloadHeader, userData []byte, err er
 
 	// Decode header byte
 	header := data[0]
-	version := header & 0xF                             // bits 0-3
+	version := header & 0xF // bits 0-3
 	typeFlag := (header >> TypeFlag) & 0x3
-	switch (typeFlag) {
-		case 0: //default is data
-		case 1: payload.IsPing = true
-		case 2: payload.IsClose = true
-		case 3: return nil, nil, errors.New("type not supported")
+	switch typeFlag {
+	case 0: //default is data
+	case 1:
+		payload.IsPing = true
+	case 2:
+		payload.IsCloseSnd = true
+	case 3:
+		return nil, nil, errors.New("type not supported")
 	}
 	isExtend := (header & (1 << Offset24or48Flag)) != 0 // bit 6
 	isAck := (header & (1 << AckFlag)) != 0             // bit 7
