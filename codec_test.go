@@ -414,7 +414,7 @@ func TestCodecInvalidMessageType(t *testing.T) {
 
 	// Test with invalid message type
 	p := &PayloadHeader{}
-	_, err := conn.encode(p, []byte("test"), MsgType(99))
+	_, err := conn.encode(p, []byte("test"), CryptoMsgType(99))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown message type")
 }

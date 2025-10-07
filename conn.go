@@ -48,7 +48,7 @@ type Conn struct {
 	mu sync.Mutex
 }
 
-func (c *Conn) msgType() MsgType {
+func (c *Conn) msgType() CryptoMsgType {
 	if c.isHandshakeDoneOnRcv {
 		return Data
 	}

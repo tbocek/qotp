@@ -136,8 +136,8 @@ func (sb *SendBuffer) QueuePing(streamId uint32) {
 }
 
 // ReadyToSend gets data from dataToSend and creates an entry in dataInFlightMap
-func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType MsgType, ack *Ack, mtu int, nowNano uint64) (
-	packetData []byte, offset uint64, messageType MessageType) {
+func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType CryptoMsgType, ack *Ack, mtu int, nowNano uint64) (
+	packetData []byte, offset uint64, messageType StreamMsgType) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 
@@ -205,8 +205,8 @@ func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType MsgType, ack *Ack, mt
 }
 
 // ReadyToRetransmit finds expired dataInFlightMap that need to be resent
-func (sb *SendBuffer) ReadyToRetransmit(streamID uint32, ack *Ack, mtu int, expectedRtoNano uint64, msgType MsgType, nowNano uint64) (
-	data []byte, offset uint64, messageType MessageType , err error) {
+func (sb *SendBuffer) ReadyToRetransmit(streamID uint32, ack *Ack, mtu int, expectedRtoNano uint64, msgType CryptoMsgType, nowNano uint64) (
+	data []byte, offset uint64, messageType StreamMsgType , err error) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 

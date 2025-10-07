@@ -14,10 +14,10 @@ const (
 	MinProtoSize     = 8
 )
 
-type MessageType uint8
+type StreamMsgType uint8
 
 const (
-	MsgTypeData MessageType = iota
+	MsgTypeData StreamMsgType = iota
 	MsgTypePing
 	MsgTypeClose
 	MsgTypeReserved
@@ -25,7 +25,7 @@ const (
 )
 
 type PayloadHeader struct {
-	MsgType      MessageType
+	MsgType      StreamMsgType
 	Ack          *Ack
 	StreamID     uint32
 	StreamOffset uint64
