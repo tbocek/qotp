@@ -318,8 +318,39 @@ Only if data length is greater than zero:
 
 ### Close
 
-Close can be initiated from both sides. SND CLOSE (offset) -> get ACKed with a RCV CLOSE (same offset), or RTO, until timeout.
-Both sides can set the flag, but needs to be acked, even if its a 0 len ack.
+Stream closure may be initiated by either the sender or receiver.
+
+## Sender-Initiated Closure
+
+**Sender behavior:**
+- Sends CLOSE message
+- Marks `closeAt()` position in send buffer
+- Closes stream immediately once all ACKs up to `closeAt()` are received. Do not send anything beyond `closeAt()`
+
+**Receiver behavior:**
+- Upon receiving CLOSE, marks `closeAt()` position in receive buffer
+- Closes stream once all data up to `closeAt()` has been received
+- Enters 30-second grace period with stream marked as closed
+- During grace period, responds to received data:
+  - If sequence < `closeAt()`: Send ACK with CLOSE_RCV flag
+  - If sequence ≥ `closeAt()`: Send ACK with CLOSE_IGN flag (indicates sender error)
+
+## Receiver-Initiated Closure
+
+**Receiver behavior:**
+- Sends CLOSE message
+- Marks `closeAt()` position in receive buffer
+- Enters 30-second grace period upon receiving any subsequent data
+- During grace period, responds to received data:
+  - If sequence < `closeAt()`: Send ACK with CLOSE_RCV flag
+  - If sequence ≥ `closeAt()`: Send ACK with CLOSE_IGN flag
+
+**Sender behavior:**
+- Upon receiving CLOSE, marks `closeAt()` position in send buffer
+- If data at/beyond `closeAt()` was already transmitted:
+  - Closes stream once all ACKs up to `closeAt()` are received
+- Otherwise: keep sending until `closeAt()`
+  - Closes stream once all ACKs up to `closeAt()` are received
 
 ### Ping
 

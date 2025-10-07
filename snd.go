@@ -24,9 +24,7 @@ const (
 type SendInfo struct {
 	sentTimeNano           uint64
 	sentNr                 int
-	expectedRtoBackoffNano uint64
-	actualRtoNano          uint64
-	noRetry                bool
+	pingRequest            bool
 }
 
 func (s *SendInfo) debug() slog.Attr {
@@ -34,8 +32,8 @@ func (s *SendInfo) debug() slog.Attr {
 		return slog.String("meta", "n/a")
 	}
 	return slog.Group("meta",
-		slog.Uint64("expRto:ms", s.expectedRtoBackoffNano/msNano),
-		slog.Uint64("actRto:ms", s.actualRtoNano/msNano))
+		slog.Uint64("sentTimeNano:ms", s.sentTimeNano/msNano),
+		slog.Int("sentNr", s.sentNr))
 }
 
 // StreamBuffer represents a single stream's userData and metadata
@@ -47,7 +45,7 @@ type StreamBuffer struct {
 	// this is the offset of the dataToSend we did send, this is ever increasing
 	// rolls over after 48bit
 	bytesSentUserOffset uint64
-	// when dataToSend is acked, we Remove the dataToSend, however we don't want to update all the offsets, 
+	// when dataToSend is acked, we Remove the dataToSend, however we don't want to update all the offsets,
 	// hence this diffArrayToUserOffset
 	// TODO: check what happens on an 48bit rollover
 	diffArrayToUserOffset uint64
@@ -55,9 +53,9 @@ type StreamBuffer struct {
 	// If MTU changes for inflight packets and need to be resent. The range is split. Example:
 	// offset: 500, len/mtu: 50 -> 1 range: 500/50,time
 	// retransmit with mtu:20 -> 3 dataInFlightMap: 500/20,time; 520/20,time; 540/10,time
-	dataInFlightMap *LinkedMap[packetKey, *SendInfo]
-	pingRequest     bool
-	closeAt         uint64
+	dataInFlightMap       *LinkedMap[packetKey, *SendInfo]
+	pingRequest           bool
+	closeAtOffset         *uint64
 }
 
 type SendBuffer struct {
@@ -83,7 +81,7 @@ func NewSendBuffer(capacity int) *SendBuffer {
 }
 
 // QueueData stores the userData in the dataMap, does not send yet
-func (sb *SendBuffer) QueueData(streamId uint32, userData []byte, close bool) (n int, status InsertStatus) {
+func (sb *SendBuffer) QueueData(streamId uint32, userData []byte) (n int, status InsertStatus) {
 	if len(userData) <= 0 {
 		return 0, InsertStatusNoData
 	}
@@ -118,11 +116,6 @@ func (sb *SendBuffer) QueueData(streamId uint32, userData []byte, close bool) (n
 
 	// Store chunk
 	stream.userData = append(stream.userData, chunk...)
-	// We need to keep track of where the next fresh offset is
-	// As we may remove userData, if it has bee acked.
-	if close {
-		stream.closeAt = uint64(len(stream.userData))
-	}
 	sb.size += n
 
 	return n, status
@@ -144,35 +137,41 @@ func (sb *SendBuffer) QueuePing(streamId uint32) {
 
 // ReadyToSend gets data from dataToSend and creates an entry in dataInFlightMap
 func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType MsgType, ack *Ack, mtu int, nowNano uint64) (
-	packetData []byte, offset uint64) {
+	packetData []byte, offset uint64, messageType MessageType) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 
 	if len(sb.streams) == 0 {
-		return nil, 0
+		return nil, 0, MsgTypeInvalid
 	}
 
 	stream := sb.streams[streamID]
 	if stream == nil {
-		return nil, 0
+		return nil, 0, MsgTypeInvalid
 	}
-	
+
 	if stream.pingRequest {
 		stream.pingRequest = false
 		// Pack offset and length into key, offset does not matter as data is 0
 		key := createPacketKey(stream.bytesSentUserOffset, 0)
 
 		// Track range, important when acked, so we can update stats, but no retransmission of this.
-		m := &SendInfo{sentNr: 1, sentTimeNano: nowNano, noRetry: true}
+		m := &SendInfo{sentNr: 1, sentTimeNano: nowNano, pingRequest: true}
 		stream.dataInFlightMap.Put(key, m)
 
-		return []byte{}, 0 //not nil, but empty data actually
+		return []byte{}, 0, MsgTypePing //not nil, but empty data actually
 	}
 
 	//We have send all queued data for the first time
 	currentUserOffset := uint64(len(stream.userData)) + stream.diffArrayToUserOffset
 	if currentUserOffset == stream.bytesSentUserOffset {
-		return nil, 0
+		if stream.closeAtOffset == nil || stream.bytesSentUserOffset < *stream.closeAtOffset {
+			return nil, 0, MsgTypeInvalid
+		}
+		key := createPacketKey(stream.bytesSentUserOffset, 0)
+		m := &SendInfo{sentNr: 1, sentTimeNano: nowNano, pingRequest: false}
+		stream.dataInFlightMap.Put(key, m)
+		return []byte{}, key.offset(), MsgTypeClose //not nil, but empty data actually
 	}
 
 	maxData := 0
@@ -192,60 +191,60 @@ func (sb *SendBuffer) ReadyToSend(streamID uint32, msgType MsgType, ack *Ack, mt
 	// Pack offset and length into key
 	key := createPacketKey(stream.bytesSentUserOffset, uint16(length))
 	// Track range
-	m := &SendInfo{sentNr: 1, sentTimeNano: nowNano, noRetry: false}
+
+	m := &SendInfo{sentNr: 1, sentTimeNano: nowNano, pingRequest: false}
 	stream.dataInFlightMap.Put(key, m)
 
 	// Update sent bytes
 	stream.bytesSentUserOffset = stream.bytesSentUserOffset + length
 
-	return packetData, key.offset()
+	if stream.closeAtOffset != nil && stream.bytesSentUserOffset >= *stream.closeAtOffset {
+		messageType = MsgTypeClose
+	}
+	return packetData, key.offset(), messageType
 }
 
 // ReadyToRetransmit finds expired dataInFlightMap that need to be resent
 func (sb *SendBuffer) ReadyToRetransmit(streamID uint32, ack *Ack, mtu int, expectedRtoNano uint64, msgType MsgType, nowNano uint64) (
-	data []byte, offset uint64, err error) {
+	data []byte, offset uint64, messageType MessageType , err error) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 
 	if len(sb.streams) == 0 {
-		return nil, 0, nil
+		return nil, 0, MsgTypeInvalid, nil
 	}
 
 	stream := sb.streams[streamID]
 	if stream == nil {
-		return nil, 0, nil
+		return nil, 0, MsgTypeInvalid, nil
 	}
 
 	// Check oldest range first
 	packetKey, rtoData, ok := stream.dataInFlightMap.First()
 	if !ok {
-		return nil, 0, nil // or continue to next logic
+		return nil, 0, MsgTypeInvalid, nil // or continue to next logic
 	}
 
 	expectedRtoBackoffNano, err := backoff(expectedRtoNano, rtoData.sentNr)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, MsgTypeInvalid, err
 	}
 
 	actualRtoNano := nowNano - rtoData.sentTimeNano
 	if actualRtoNano <= expectedRtoBackoffNano {
-		return nil, 0, nil // or continue to next logic
+		return nil, 0, MsgTypeInvalid, nil // or continue to next logic
 	}
 
 	//Timeout
-	if rtoData.noRetry {
+	if rtoData.pingRequest {
 		//just remove as we do not retransmit
 		sb.trimAckedData(stream, packetKey)
-		return nil, 0, nil
+		return nil, 0, MsgTypeInvalid, nil
 	}
 
 	// Calculate data slice once
 	realOffset := packetKey.offset() - stream.diffArrayToUserOffset
 	length := packetKey.length()
-
-	if length == 0 {
-		return nil, 0, nil
-	}
 
 	data = stream.userData[realOffset : realOffset+uint64(length)]
 
@@ -259,15 +258,17 @@ func (sb *SendBuffer) ReadyToRetransmit(streamID uint32, ack *Ack, mtu int, expe
 	baseSendInfo := &SendInfo{
 		sentTimeNano:           nowNano,
 		sentNr:                 rtoData.sentNr + 1,
-		expectedRtoBackoffNano: expectedRtoBackoffNano,
-		actualRtoNano:          actualRtoNano,
 	}
 
 	if length <= uint16(maxData) {
 		// Resend entire range
 		slog.Debug("Resend", slog.Uint64("free-space", uint64(uint16(maxData)-length)))
 		stream.dataInFlightMap.Replace(packetKey, packetKey, baseSendInfo)
-		return data, packetKey.offset(), nil
+		packetEnd := packetKey.offset() + uint64(length)
+		if stream.closeAtOffset != nil && packetEnd >= *stream.closeAtOffset {
+			messageType = MsgTypeClose
+		}
+		return data, packetKey.offset(), messageType, nil
 	} else {
 		// Split range
 		leftKey := createPacketKey(packetKey.offset(), uint16(maxData))
@@ -281,47 +282,95 @@ func (sb *SendBuffer) ReadyToRetransmit(streamID uint32, ack *Ack, mtu int, expe
 
 		slog.Debug("Resend/Split", slog.Uint64("send", uint64(maxData)),
 			slog.Uint64("remain", uint64(length-uint16(maxData))))
-		return data[:maxData], packetKey.offset(), nil
+		return data[:maxData], packetKey.offset(), MsgTypeData, nil
 	}
 }
 
 // AcknowledgeRange handles acknowledgment of dataToSend
-func (sb *SendBuffer) AcknowledgeRange(ack *Ack) (status AckStatus, sentTimeNano uint64, senderClose bool) {
+func (sb *SendBuffer) AcknowledgeRange(ack *Ack) (status AckStatus, sentTimeNano uint64) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 
 	stream := sb.streams[ack.streamID]
 	if stream == nil {
-		return AckNoStream, 0, false
+		return AckNoStream, 0
 	}
 
 	// Remove range key
 	key := createPacketKey(ack.offset, ack.len)
 
-	ok, sentTimeNano, senderClose := sb.trimAckedData(stream, key)
+	ok, sentTimeNano := sb.trimAckedData(stream, key)
 	if !ok {
-		return AckDup, 0, false
+		return AckDup, 0
 	}
 
-	return AckStatusOk, sentTimeNano, senderClose
+	return AckStatusOk, sentTimeNano
 }
 
-func (sb *SendBuffer) trimAckedData(stream *StreamBuffer, p packetKey) (success bool, sentTimeNano uint64, senderClose bool) {
+func (sb *SendBuffer) GetOffsetAcked(streamID uint32) (offset uint64) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+
+	stream := sb.streams[streamID]
+	if stream == nil {
+		return 0
+	}
+
+	// If there's inflight data, the acked offset is where inflight begins
+	firstKey, _, ok := stream.dataInFlightMap.First()
+	if ok {
+		ackedOffset := firstKey.offset()
+		return ackedOffset
+	}
+
+	// No inflight data means everything sent has been acked
+	return stream.bytesSentUserOffset
+}
+
+func (sb *SendBuffer) GetOffsetClosedAt(streamID uint32) (offset *uint64) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+
+	stream := sb.streams[streamID]
+	if stream == nil {
+		return nil
+	}
+
+	return stream.closeAtOffset
+}
+
+func (sb *SendBuffer) Close(streamID uint32) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+
+	// Get or create stream buffer
+	stream := sb.streams[streamID]
+	if stream == nil {
+		stream = NewStreamBuffer()
+		sb.streams[streamID] = stream
+	}
+	if stream.closeAtOffset == nil {
+		offset := uint64(len(stream.userData)) + stream.diffArrayToUserOffset
+		stream.closeAtOffset = &offset
+	}
+}
+
+func (sb *SendBuffer) trimAckedData(stream *StreamBuffer, p packetKey) (success bool, sentTimeNano uint64) {
 	_, _, okPrev := stream.dataInFlightMap.Previous(p)
-	
+
 	rangePair, okThis := stream.dataInFlightMap.Remove(p)
 	if !okThis {
-		return false, 0, false
+		return false, 0
 	}
-	
+
 	if !okPrev {
 		//we have no prev, so drop everything, including this packet
 		realOffset := p.offset() - stream.diffArrayToUserOffset
 		bytesToTrim := realOffset + uint64(p.length())
-		
+
 		stream.userData = stream.userData[bytesToTrim:]
 		stream.diffArrayToUserOffset += bytesToTrim
-		
+
 		pNext, _, okNext := stream.dataInFlightMap.Next(p)
 		if okNext {
 			//we have no prev, but next, so drop everything until next
@@ -333,15 +382,10 @@ func (sb *SendBuffer) trimAckedData(stream *StreamBuffer, p packetKey) (success 
 			bytesToTrim = stream.bytesSentUserOffset - stream.diffArrayToUserOffset
 			stream.userData = stream.userData[bytesToTrim:]
 			stream.diffArrayToUserOffset += bytesToTrim
-		}	
-		
-		//check if we can close this
-		if stream.closeAt > 0 && stream.diffArrayToUserOffset >= stream.closeAt {
-			senderClose = true
 		}
 	}
-	
-	return true, rangePair.sentTimeNano, senderClose
+
+	return true, rangePair.sentTimeNano
 }
 
 type packetKey uint64
