@@ -209,7 +209,7 @@ func (rb *ReceiveBuffer) Insert(streamID uint32, offset uint64, nowNano uint64, 
 	return RcvInsertOk
 }
 
-func (rb *ReceiveBuffer) Close(streamID uint32) {
+func (rb *ReceiveBuffer) Close(streamID uint32, closeOffset uint64) {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
@@ -220,8 +220,7 @@ func (rb *ReceiveBuffer) Close(streamID uint32) {
 		rb.streams[streamID] = stream
 	}
 	if stream.closeAtOffset == nil {
-		offset := stream.nextInOrderOffsetToWaitFor
-		stream.closeAtOffset = &offset
+		stream.closeAtOffset = &closeOffset
 	}
 }
 

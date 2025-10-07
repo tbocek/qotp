@@ -397,45 +397,48 @@ func TestRcvClose(t *testing.T) {
 	_, data, _ := rb.RemoveOldestInOrder(1)
 	assert.Equal(t, []byte("ABCD"), data)
 
-	// Close after reading
-	rb.Close(1)
+	// Close at offset 10 (peer sent CLOSE at offset 10)
+	rb.Close(1, 10)
 
 	stream := rb.streams[1]
 	assert.NotNil(t, stream.closeAtOffset)
-	assert.Equal(t, uint64(4), *stream.closeAtOffset) // Closes at next expected offset
+	assert.Equal(t, uint64(10), *stream.closeAtOffset)
 }
 
 func TestRcvCloseIdempotent(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 
 	rb.Insert(1, 0, 0, []byte("ABCD"))
-	rb.Close(1)
+	rb.Close(1, 10)
 
 	firstOffset := *rb.streams[1].closeAtOffset
 
 	// Read data
 	rb.RemoveOldestInOrder(1)
 
-	// Close again - offset should not change
-	rb.Close(1)
+	// Close again with different offset - should not change (idempotent)
+	rb.Close(1, 20)
 	secondOffset := *rb.streams[1].closeAtOffset
 
 	assert.Equal(t, firstOffset, secondOffset)
+	assert.Equal(t, uint64(10), secondOffset)
 }
 
 func TestRcvEmptyInsertAndAck(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 	
-	// EmptyInsert before close - no ack added
+	// EmptyInsert - ack should be added
 	status := rb.EmptyInsert(1, 0, 0)
 	assert.Equal(t, RcvInsertOk, status)
 	ack := rb.GetSndAck()
 	assert.NotNil(t, ack)
+	assert.Equal(t, uint64(0), ack.offset)
+	assert.Equal(t, uint16(0), ack.len)
 	
-	// Close stream
-	rb.Close(1)
+	// Close stream at offset 10
+	rb.Close(1, 10)
 	
-	// EmptyInsert after close - ack should be added
+	// EmptyInsert after close - ack should still be added
 	status = rb.EmptyInsert(1, 4, 0)
 	assert.Equal(t, RcvInsertOk, status)
 	
@@ -449,7 +452,8 @@ func TestRcvEmptyInsertAndAck(t *testing.T) {
 func TestRcvInsertAfterClose(t *testing.T) {
 	rb := NewReceiveBuffer(1000)
 	
-	rb.Close(1)
+	// Close at offset 100
+	rb.Close(1, 100)
 	
 	// Insert after close - should add ack
 	status := rb.Insert(1, 0, 0, []byte("ABCD"))
@@ -468,7 +472,11 @@ func TestRcvDuplicateAfterCloseGeneratesAck(t *testing.T) {
 	status := rb.Insert(1, 0, 0, []byte("ABCD"))
 	assert.Equal(t, RcvInsertOk, status)
 	
-	rb.Close(1)
+	// Consume first ACK
+	rb.GetSndAck()
+	
+	// Close at offset 100
+	rb.Close(1, 100)
 	
 	// Duplicate after close - should still generate ack (line 93-94 in rcv.go)
 	status = rb.Insert(1, 0, 0, []byte("ABCD"))

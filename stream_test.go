@@ -336,7 +336,7 @@ func TestStreamCloseInitiatedByReceiver(t *testing.T) {
 
 	// Verify data received correctly
 	buffer, err := streamB.Read()
-	assert.Equal(t, err, io.EOF)
+	assert.Nil(t, err)
 
 	assert.True(t, streamB.IsCloseRequested())
 

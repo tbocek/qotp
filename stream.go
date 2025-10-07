@@ -23,7 +23,6 @@ func (s *Stream) Ping() {
 
 func (s *Stream) Close() {
 	s.conn.snd.Close(s.streamID)
-	s.conn.rcv.Close(s.streamID)
 }
 
 func (s *Stream) IsClosed() bool {
@@ -31,9 +30,7 @@ func (s *Stream) IsClosed() bool {
 }
 
 func (s *Stream) IsCloseRequested() bool {
-	o1 := s.conn.snd.GetOffsetClosedAt(s.streamID)
-	o2 := s.conn.rcv.GetOffsetClosedAt(s.streamID)
-	return o1 !=nil && o2 !=nil
+	return s.conn.snd.GetOffsetClosedAt(s.streamID) !=nil
 }
 
 func (s *Stream) IsOpen() bool {

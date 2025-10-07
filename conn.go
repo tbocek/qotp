@@ -139,8 +139,8 @@ func (c *Conn) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uin
 	}
 
 	if p.MsgType == MsgTypeClose {
-		c.rcv.Close(s.streamID)
-		c.snd.Close(s.streamID)
+		c.rcv.Close(s.streamID, p.StreamOffset)
+		c.snd.Close(s.streamID) //also close the send buffer at the current location
 	}
 
 	return s, nil
