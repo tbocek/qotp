@@ -188,6 +188,11 @@ func Listen(options ...ListenFunc) (*Listener, error) {
 	return l, nil
 }
 
+// PubKey returns the listener's public identity key.
+func (l *Listener) PubKey() *ecdh.PublicKey {
+	return l.prvKeyId.PublicKey()
+}
+
 func (l *Listener) CloseNow() error {
 	slog.Debug("ListenerClose", gId())
 	l.mu.Lock()
