@@ -12,8 +12,6 @@ const (
 	Offset24or48Flag = 6
 	AckFlag          = 7
 	MinProtoSize     = 8
-	CloseIgn         = uint8(254)
-	CloseAck         = uint8(255)
 )
 
 type MessageType uint8
