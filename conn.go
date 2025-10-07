@@ -104,11 +104,10 @@ func (c *Conn) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uin
 		if ackStatus == AckStatusOk {
 			c.dataInFlight -= rawLen
 		} else if ackStatus == AckDup {
-			c.OnDuplicateAck()
+			c.onDuplicateAck()
 		} else {
 			slog.Debug("No stream?")
 		}
-
 		c.rcvWndSize = p.Ack.rcvWnd
 
 		closeOffset := c.snd.GetOffsetClosedAt(p.StreamID)
@@ -120,15 +119,17 @@ func (c *Conn) decode(p *PayloadHeader, userData []byte, rawLen int, nowNano uin
 				s.closedAtNano = nowNano
 			}
 		}
+		slog.Debug("  here2")
 
 		if nowNano > sentTimeNano {
 			if ackStatus == AckStatusOk {
 				rttNano := nowNano - sentTimeNano
-				c.UpdateMeasurements(rttNano, uint64(p.Ack.len), nowNano)
+				c.updateMeasurements(rttNano, uint64(p.Ack.len), nowNano)
 			} else {
 				return nil, errors.New("stream does not exist")
 			}
 		}
+		slog.Debug("  here3")
 	}
 
 	if len(userData) > 0 {
@@ -202,7 +203,7 @@ func (c *Conn) Flush(s *Stream, nowNano uint64) (data int, pacingNano uint64, er
 	}
 
 	if splitData != nil {
-		c.OnPacketLoss()
+		c.onPacketLoss()
 
 		slog.Debug(" Flush/Retransmit", gId(), s.debug(), c.debug())
 

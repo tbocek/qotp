@@ -61,9 +61,8 @@ func (rb *ReceiveBuffer) EmptyInsert(streamID uint32, offset uint64, nowNano uin
 		rb.streams[streamID] = stream
 	}
 
-	if stream.closeAtOffset != nil {
-		rb.ackList = append(rb.ackList, &Ack{streamID: streamID, offset: offset, len: 0})
-	}
+	
+	rb.ackList = append(rb.ackList, &Ack{streamID: streamID, offset: offset, len: 0})
 
 	return RcvInsertOk
 }
@@ -88,9 +87,7 @@ func (rb *ReceiveBuffer) Insert(streamID uint32, offset uint64, nowNano uint64, 
 
 	// Now we need to add the ack to the list even if it's a duplicate,
 	// as the ack may have been lost, we need to send it again
-	if stream.closeAtOffset != nil {
-		rb.ackList = append(rb.ackList, &Ack{streamID: streamID, offset: offset, len: uint16(dataLen)})
-	}
+	rb.ackList = append(rb.ackList, &Ack{streamID: streamID, offset: offset, len: uint16(dataLen)})
 
 	// Check if the incoming segment is completely before the next expected offset.
 	// This means all data in this segment has already been delivered to the user application.

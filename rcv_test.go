@@ -430,7 +430,7 @@ func TestRcvEmptyInsertAndAck(t *testing.T) {
 	status := rb.EmptyInsert(1, 0, 0)
 	assert.Equal(t, RcvInsertOk, status)
 	ack := rb.GetSndAck()
-	assert.Nil(t, ack)
+	assert.NotNil(t, ack)
 	
 	// Close stream
 	rb.Close(1)

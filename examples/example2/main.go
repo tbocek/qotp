@@ -54,7 +54,7 @@ func runServer(addr string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer listener.CloseNow()
+	defer listener.Close()
 
 	fmt.Printf("Server listening on %s\n", addr)
 	fmt.Println("Waiting for clients...")
@@ -77,7 +77,8 @@ func runServer(addr string) {
 
 			// Send reply
 			if n == 2000 {
-				stream.WriteWithClose(repeatText("Hello from server! ", 2000), true)
+				stream.Write(repeatText("Hello from server! ", 2000))
+				stream.Close()
 			}
 		}
 		return true
@@ -90,7 +91,7 @@ func runClient(serverAddr string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer listener.CloseNow()
+	defer listener.Close()
 
 	// Connect to server without crypto (in-band key exchange)
 	conn, err := listener.DialString(serverAddr)

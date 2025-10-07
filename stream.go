@@ -1,14 +1,9 @@
 package qotp
 
 import (
-	"errors"
+	"io"
 	"log/slog"
 	"sync"
-)
-
-var (
-	StreamClosed = errors.New("stream closed")
-	StreamClose = errors.New("close stream")
 )
 
 type Stream struct {
@@ -31,11 +26,11 @@ func (s *Stream) Close() {
 	s.conn.rcv.Close(s.streamID)
 }
 
-func (s *Stream) IsCloseRequested() bool {
+func (s *Stream) IsClosed() bool {
 	return s.closedAtNano != 0
 }
 
-func (s *Stream) IsClosed() bool {
+func (s *Stream) IsCloseRequested() bool {
 	o1 := s.conn.snd.GetOffsetClosedAt(s.streamID)
 	o2 := s.conn.rcv.GetOffsetClosedAt(s.streamID)
 	return o1 !=nil && o2 !=nil
@@ -50,9 +45,9 @@ func (s *Stream) Read() (userData []byte, err error) {
 	defer s.mu.Unlock()
 
 	closeOffset := s.conn.rcv.GetOffsetClosedAt(s.streamID)
-	if s.closedAtNano != 0 || closeOffset != nil {
+	if s.closedAtNano != 0 {
 		slog.Debug("Read/closed", gId(), s.debug())
-		return nil, StreamClosed
+		return nil, io.ErrUnexpectedEOF
 	}
 
 	offset, data, receiveTimeNano := s.conn.rcv.RemoveOldestInOrder(s.streamID)
@@ -64,7 +59,7 @@ func (s *Stream) Read() (userData []byte, err error) {
 			//we got all data, mark as closed //TODO check wrap around
 			s.closedAtNano = receiveTimeNano
 			slog.Debug("Read/close", gId(), s.debug(), slog.String("b…", string(data[:min(16, len(data))])))
-			return data, StreamClose
+			return data, io.EOF
 		}
 	}
 	
@@ -76,7 +71,7 @@ func (s *Stream) Write(userData []byte) (n int, err error) {
 	defer s.mu.Unlock()
 
 	if s.closedAtNano != 0 || s.conn.snd.GetOffsetClosedAt(s.streamID)!=nil {
-		return 0, StreamClosed
+		return 0, io.ErrUnexpectedEOF
 	}
 
 	if len(userData) == 0 {
