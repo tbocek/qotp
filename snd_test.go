@@ -8,18 +8,18 @@ import (
 
 func TestSndInsert(t *testing.T) {
 	sb := NewSendBuffer(1000)
-
+	
 	// Basic insert
 	n, status := sb.QueueData(1, []byte("test"))
 	assert.Equal(t, InsertStatusOk, status)
 	assert.Equal(t, 4, n)
-
+	
 	// Verify stream created correctly
 	stream := sb.streams[1]
-	assert.Equal(t, []byte("test"), stream.userData)
-	assert.Equal(t, uint64(0), stream.bytesSentUserOffset)
-	assert.Equal(t, uint64(0), stream.diffArrayToUserOffset)
-
+	assert.Equal(t, []byte("test"), stream.queuedData)  // Changed from userData
+	assert.Equal(t, uint64(0), stream.bytesSentOffset)  // Changed from bytesSentUserOffset
+	// Removed diffArrayToUserOffset assertion - field no longer exists
+	
 	// Test capacity limit
 	sb2 := NewSendBuffer(3)
 	nr, status := sb2.QueueData(1, []byte("test"))
@@ -29,11 +29,11 @@ func TestSndInsert(t *testing.T) {
 
 func TestSndAcknowledgeRangeBasic(t *testing.T) {
 	sb := NewSendBuffer(1000)
-
+	
 	sb.QueueData(1, []byte("testdata"))
 	sb.ReadyToSend(1, Data, nil, 1000, 100)
 	stream := sb.streams[1]
-
+	
 	status, sentTime := sb.AcknowledgeRange(&Ack{
 		streamID: 1,
 		offset:   0,
@@ -41,8 +41,9 @@ func TestSndAcknowledgeRangeBasic(t *testing.T) {
 	})
 	assert.Equal(t, AckStatusOk, status)
 	assert.Equal(t, uint64(100), sentTime)
-	assert.Equal(t, 0, len(stream.userData))
-	assert.Equal(t, uint64(8), stream.diffArrayToUserOffset)
+	assert.Equal(t, 0, len(stream.queuedData))        // Changed from userData
+	assert.Equal(t, uint64(8), stream.bytesSentOffset) // Now checking bytesSentOffset
+	// Removed diffArrayToUserOffset assertion - field no longer exists
 }
 
 func TestSndAcknowledgeRangeNonExistentStream(t *testing.T) {
@@ -86,71 +87,68 @@ func TestSndEmptyData(t *testing.T) {
 
 func TestSndAcknowledgeGaps(t *testing.T) {
 	sb := NewSendBuffer(1000)
-
 	sb.QueueData(1, []byte("012345678901"))
-
+	
 	// Send in 4-byte chunks
 	sb.ReadyToSend(1, Data, nil, 43, 100)
 	sb.ReadyToSend(1, Data, nil, 43, 100)
 	sb.ReadyToSend(1, Data, nil, 43, 100)
-
+	
 	stream := sb.streams[1]
 	assert.Equal(t, 3, stream.dataInFlightMap.Size())
-
+	
 	// Ack middle packet first
 	status, _ := sb.AcknowledgeRange(&Ack{streamID: 1, offset: 4, len: 4})
 	assert.Equal(t, AckStatusOk, status)
-
-	assert.Equal(t, 12, len(stream.userData))
-	assert.Equal(t, uint64(0), stream.diffArrayToUserOffset)
+	assert.Equal(t, 0, len(stream.queuedData))  // All data was sent
 	assert.Equal(t, 2, stream.dataInFlightMap.Size())
-
+	
 	// Ack last packet
 	status, _ = sb.AcknowledgeRange(&Ack{streamID: 1, offset: 8, len: 4})
 	assert.Equal(t, AckStatusOk, status)
-
-	assert.Equal(t, 12, len(stream.userData))
-	assert.Equal(t, uint64(0), stream.diffArrayToUserOffset)
+	assert.Equal(t, 0, len(stream.queuedData))
 	assert.Equal(t, 1, stream.dataInFlightMap.Size())
-
-	// Ack first packet - triggers trim
+	
+	// Ack first packet - all packets now acked
 	status, _ = sb.AcknowledgeRange(&Ack{streamID: 1, offset: 0, len: 4})
 	assert.Equal(t, AckStatusOk, status)
-
-	assert.Equal(t, 0, len(stream.userData))
-	assert.Equal(t, uint64(12), stream.diffArrayToUserOffset)
+	assert.Equal(t, 0, len(stream.queuedData))
+	assert.Equal(t, uint64(12), stream.bytesSentOffset)
 	assert.Equal(t, 0, stream.dataInFlightMap.Size())
 }
 
 func TestSndAcknowledgeComplexGaps(t *testing.T) {
 	sb := NewSendBuffer(1000)
-
 	sb.QueueData(1, []byte("01234567890123456789"))
-
+	
 	for i := 0; i < 5; i++ {
 		sb.ReadyToSend(1, Data, nil, 43, 100)
 	}
-
+	
 	stream := sb.streams[1]
 	assert.Equal(t, 5, stream.dataInFlightMap.Size())
-
+	
 	// Ack in random order: 2, 4, 1, 3, 0
 	sb.AcknowledgeRange(&Ack{streamID: 1, offset: 8, len: 4})
-	assert.Equal(t, 20, len(stream.userData))
-	assert.Equal(t, uint64(0), stream.diffArrayToUserOffset)
-
+	assert.Equal(t, 0, len(stream.queuedData))  // All sent
+	assert.Equal(t, 4, stream.dataInFlightMap.Size())
+	
 	sb.AcknowledgeRange(&Ack{streamID: 1, offset: 16, len: 4})
-	assert.Equal(t, 20, len(stream.userData))
-
+	assert.Equal(t, 0, len(stream.queuedData))
+	assert.Equal(t, 3, stream.dataInFlightMap.Size())
+	
 	sb.AcknowledgeRange(&Ack{streamID: 1, offset: 4, len: 4})
-	assert.Equal(t, 20, len(stream.userData))
-
+	assert.Equal(t, 0, len(stream.queuedData))
+	assert.Equal(t, 2, stream.dataInFlightMap.Size())
+	
 	sb.AcknowledgeRange(&Ack{streamID: 1, offset: 12, len: 4})
-	assert.Equal(t, 20, len(stream.userData))
-
+	assert.Equal(t, 0, len(stream.queuedData))
+	assert.Equal(t, 1, stream.dataInFlightMap.Size())
+	
 	sb.AcknowledgeRange(&Ack{streamID: 1, offset: 0, len: 4})
-	assert.Equal(t, 0, len(stream.userData))
-	assert.Equal(t, uint64(20), stream.diffArrayToUserOffset)
+	assert.Equal(t, 0, len(stream.queuedData))
+	assert.Equal(t, uint64(20), stream.bytesSentOffset)
+	assert.Equal(t, 0, stream.dataInFlightMap.Size())
 }
 
 func TestSndDuplicateAck(t *testing.T) {
@@ -360,18 +358,22 @@ func TestSndMultipleStreams(t *testing.T) {
 func TestSndRetransmitWithGaps(t *testing.T) {
 	sb := NewSendBuffer(1000)
 	sb.QueueData(1, []byte("0123456789"))
-
+	
 	sb.ReadyToSend(1, Data, nil, 44, 100)
 	sb.ReadyToSend(1, Data, nil, 44, 100)
-
+	
 	stream := sb.streams[1]
 	assert.Equal(t, 2, stream.dataInFlightMap.Size())
-
+	
 	sb.AcknowledgeRange(&Ack{streamID: 1, offset: 5, len: 5})
-
-	assert.Equal(t, 10, len(stream.userData))
-	assert.Equal(t, uint64(0), stream.diffArrayToUserOffset)
-
+	
+	// After ACKing the second packet, we should have:
+	// - No queued data (all was sent)
+	// - 1 packet still in flight (offset 0, len 5)
+	assert.Equal(t, 0, len(stream.queuedData))
+	assert.Equal(t, 1, stream.dataInFlightMap.Size())
+	
+	// Retransmit the first packet (still in flight)
 	data, offset, msgType, err := sb.ReadyToRetransmit(1, nil, 44, 50, Data, 200)
 	assert.Nil(t, err)
 	assert.Equal(t, []byte("01234"), data)

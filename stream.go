@@ -101,11 +101,3 @@ func (s *Stream) debug() slog.Attr {
 
 	return slog.String("net", s.conn.listener.localConn.LocalAddrString())
 }
-
-func (s *Stream) currentOffset() uint64 {
-	streamBuffer := s.conn.snd.streams[s.streamID]
-	if streamBuffer == nil {
-		return 0
-	}
-	return streamBuffer.bytesSentUserOffset
-}

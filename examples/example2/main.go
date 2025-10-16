@@ -76,8 +76,8 @@ func runServer(addr string) {
 			fmt.Printf("Server received: [%v] %s\n", n, data)
 
 			// Send reply
-			if n == 2000 {
-				stream.Write(repeatText("Hello from server! ", 2000))
+			if n == 20000 {
+				stream.Write(repeatText("Hello from server! ", 20000))
 				stream.Close()
 			}
 		}
@@ -103,7 +103,7 @@ func runClient(serverAddr string) {
 
 	// Send message
 	stream := conn.Stream(0)
-	_, err = stream.Write(repeatText("Hello from client! ", 2000))
+	_, err = stream.Write(repeatText("Hello from client! ", 20000))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func runClient(serverAddr string) {
 		if len(data) > 0 {
 			n += len(data)
 			fmt.Printf("Received: [%v] %s\n", n, data)
-			if n == 2000 {
+			if n == 20000 {
 				return false //exit
 			}
 		}
